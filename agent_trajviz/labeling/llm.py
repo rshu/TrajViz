@@ -18,6 +18,11 @@ from .._redact import redact
 
 logger = logging.getLogger(__name__)
 
+# Match the dashboard's dotenv boundary: a trajectory directory must not
+# configure unrelated process settings such as proxy or import locations.
+_DOTENV_PREFIXES = ("ANALYZE_", "LABEL_")
+_DOTENV_KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
 
 def _clean_env_scalar(raw: str) -> str:
     value = raw.strip()
@@ -28,7 +33,7 @@ def _clean_env_scalar(raw: str) -> str:
 
 
 def _load_dotenv(path: str = ".env") -> None:
-    """Fill unset environment variables from a ``KEY=value`` file, if it exists."""
+    """Fill unset LLM settings from a ``KEY=value`` file, if it exists."""
     if not os.path.isfile(path):
         return
     with open(path, encoding="utf-8") as f:
@@ -38,7 +43,9 @@ def _load_dotenv(path: str = ".env") -> None:
                 continue
             key, _, value = line.partition("=")
             key = key.strip()
-            if key and key not in os.environ:
+            if not (_DOTENV_KEY.match(key) and key.startswith(_DOTENV_PREFIXES)):
+                continue
+            if key not in os.environ:
                 os.environ[key] = _clean_env_scalar(value)
 
 

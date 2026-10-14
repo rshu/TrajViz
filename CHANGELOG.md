@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/): before 1.0, a minor version may
 change the public API (the names exported from `agent_trajviz`).
 
+## [Unreleased]
+
+### Fixed
+
+- Keep endpoint URL credentials out of the analysis status and provider error
+  details out of labeler retry logs. Limit labeler `.env` imports to
+  `ANALYZE_*` and `LABEL_*`, matching the dashboard's configuration boundary.
+- Remove dashboard report scratch files when their session unloads or the
+  process exits normally, without removing other viewers' active downloads or
+  standalone CLI/library reports. Failed report rendering/writing no longer
+  leaves a newly allocated scratch directory behind.
+
 ## [0.1.0] - 2026-10-12
 
 First release as the `agent-trajviz` package.

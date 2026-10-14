@@ -357,4 +357,6 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
             .replace("__TV_MIN__", str(FILE_INTERACTION_MIN_HEIGHT)),
         )
 
+        app.unload(upload.cleanup_session_export)
+
     return app

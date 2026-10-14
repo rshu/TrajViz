@@ -211,7 +211,18 @@ def config_status_html(*, loaded_steps: int | None = None) -> str:
         # Name where the trajectory brief goes: the base URL comes from the
         # environment or .env and can point anywhere, so the host is the egress
         # the user is consenting to.
-        host = urlparse(cfg.base_url).netloc or cfg.base_url
+        # netloc includes URL userinfo; never fall back to the raw URL, whose
+        # path/query (or malformed authority) can also contain credentials.
+        try:
+            endpoint = urlparse(cfg.base_url)
+            hostname = endpoint.hostname
+            port = endpoint.port
+            host = f"[{hostname}]" if hostname and ":" in hostname else hostname
+            if host and port is not None:
+                host = f"{host}:{port}"
+        except ValueError:
+            host = None
+        host = host or "(invalid endpoint)"
         bits.append(
             f"<span class='analysis-status-ok'>Ready</span> · "
             f"<code>{_escape(cfg.model)}</code> · {_escape(cfg.provider)} · "

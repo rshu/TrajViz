@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,49 @@ from agent_trajviz.insight.labels import aggregate_labels
 
 
 class LabelerTests(unittest.TestCase):
+    def test_dotenv_only_loads_llm_settings_and_preserves_process_values(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"LABEL_MODEL": "process-model"}, clear=True):
+            env_file = Path(tmp) / ".env"
+            env_file.write_text(
+                "LABEL_MODEL=file-model\n"
+                "LABEL_API_KEY='synthetic-key' # test only\n"
+                "ANALYZE_MODEL=analysis-model\n"
+                "HTTPS_PROXY=https://example.invalid\n"
+                "AWE_DECAF_PATH=/synthetic/untrusted\n"
+                "PYTHONPATH=/synthetic/untrusted\n"
+                "LABEL_INVALID.KEY=ignored\n",
+                encoding="utf-8",
+            )
+            llm._load_dotenv(str(env_file))
+            self.assertEqual(dict(os.environ), {
+                "LABEL_MODEL": "process-model",
+                "LABEL_API_KEY": "synthetic-key",
+                "ANALYZE_MODEL": "analysis-model",
+            })
+
+    def test_retry_logs_never_include_provider_error_details(self):
+        sensitive_message = "https://viewer:synthetic-password@example.invalid/v1?key=synthetic-query"
+        with (
+            patch.object(llm, "call_llm", side_effect=RuntimeError(sensitive_message)) as call,
+            patch.object(labeler.time, "sleep"),
+            self.assertLogs(labeler.logger, level="WARNING") as logs,
+        ):
+            result = labeler._classify(
+                {"index": 1, "text_preview": "synthetic prompt"},
+                base_url="https://example.invalid/v1", api_key="synthetic-key", model="test-model",
+                system_prompt="test", valid=(set(), set(), {}), provider="openai", temperature=None,
+                max_tokens=None, max_content_chars=8000,
+            )
+        self.assertIsNone(result)
+        self.assertEqual(call.call_count, 2)
+        output = "\n".join(logs.output)
+        self.assertIn("RuntimeError", output)
+        self.assertIn("retrying", output)
+        self.assertIn("labeled unknown", output)
+        self.assertNotIn("synthetic-password", output)
+        self.assertNotIn("synthetic-query", output)
+        self.assertNotIn("example.invalid", output)
+
     def test_refuses_to_overwrite_input_trajectory(self):
         with tempfile.TemporaryDirectory() as tmp:
             trajectory_path = Path(tmp) / "trajectory.json"

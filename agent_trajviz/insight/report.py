@@ -10,6 +10,7 @@ from __future__ import annotations
 import html
 import os
 import re
+import shutil
 import tempfile
 from datetime import UTC, datetime
 from typing import Any
@@ -204,16 +205,24 @@ def write_report_file(
     """
     session = _as_session(source, file_path=file_path)
     name = _report_basename(session.path)
+    # Rendering can fail; do not allocate an unowned scratch directory first.
+    html_out = build_report_html(session, dark=dark, inline_plotly=inline_plotly)
+    temporary_directory = None
     if dest is None:
-        dest = os.path.join(tempfile.mkdtemp(prefix="trajviz-report-"), name)
+        temporary_directory = tempfile.mkdtemp(prefix="trajviz-report-")
+        dest = os.path.join(temporary_directory, name)
     elif os.path.isdir(dest):
         dest = _free_report_path(dest, name, _source_sha(session))
-    html_out = build_report_html(session, dark=dark, inline_plotly=inline_plotly)
-    parent = os.path.dirname(os.path.abspath(dest))
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-    with open(dest, "w", encoding="utf-8") as handle:
-        handle.write(html_out)
+    try:
+        parent = os.path.dirname(os.path.abspath(dest))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(dest, "w", encoding="utf-8") as handle:
+            handle.write(html_out)
+    except BaseException:
+        if temporary_directory:
+            shutil.rmtree(temporary_directory, ignore_errors=True)
+        raise
     return dest
 
 

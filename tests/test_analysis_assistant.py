@@ -124,6 +124,21 @@ class AnalysisConfigTests(unittest.TestCase):
             finally:
                 os.chdir(previous)
 
+    def test_endpoint_status_displays_only_host_and_port(self):
+        for url, expected in (
+            ("https://viewer:synthetic-password@example.invalid:8443/private?token=synthetic-query", "example.invalid:8443"),
+            ("http://viewer:synthetic-password@[::1]:8080/v1", "[::1]:8080"),
+            ("synthetic-password", "(invalid endpoint)"),
+            ("https://viewer:synthetic-password@[broken", "(invalid endpoint)"),
+            ("https://example.invalid:synthetic-password", "(invalid endpoint)"),
+        ):
+            with self.subTest(url=url), patch.object(llm_config, "resolve_analysis_config", return_value=_cfg(base_url=url)):
+                status = config_status_html()
+                self.assertIn(expected, status)
+                self.assertNotIn("synthetic-password", status)
+                self.assertNotIn("synthetic-query", status)
+                self.assertNotIn("viewer", status)
+
 
 class AnalysisBriefTests(unittest.TestCase):
     def test_brief_includes_task_health_bottlenecks_and_errors(self):

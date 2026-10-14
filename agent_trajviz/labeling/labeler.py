@@ -123,11 +123,14 @@ def _classify(step: dict[str, Any], *, system_prompt: str, valid: tuple[set[str]
             )
             return parse_label_response(response, *valid)
         except Exception as exc:  # network, HTTP or response-shape errors from the provider
+            # HTTP errors can echo endpoint credentials; malformed provider
+            # responses can echo prompt text. Log the error class, not its body.
+            error_type = type(exc).__name__
             if attempt == 0:
-                logger.warning("labeling index %s failed (%s); retrying", step.get("index"), exc)
+                logger.warning("labeling index %s failed (%s); retrying", step.get("index"), error_type)
                 time.sleep(1)
             else:
-                logger.error("labeling index %s failed again (%s); labeled unknown", step.get("index"), exc)
+                logger.error("labeling index %s failed again (%s); labeled unknown", step.get("index"), error_type)
     return None
 
 
