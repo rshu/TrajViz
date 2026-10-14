@@ -6,6 +6,7 @@ import atexit
 import os
 import shutil
 import logging
+import tempfile
 from dataclasses import dataclass
 from threading import Lock
 from typing import Any
@@ -182,13 +183,24 @@ def prepare_html_export(source, _steps=None, dark=False, request: gr.Request | N
         payload = source if isinstance(source, dict) else {}
         if not payload or payload.get("_error"):
             return _export_off()
+    directory = path = None
     try:
-        path = write_report_file(payload, dark=bool(dark))
+        # Gradio otherwise copies DownloadButton files into its shared,
+        # content-addressed cache after this callback returns. Create the report
+        # inside that cache so postprocessing serves this session-owned path
+        # directly; cleanup then removes the actual served file too.
+        cache_root = gr.utils.get_upload_folder()
+        os.makedirs(cache_root, exist_ok=True)
+        directory = tempfile.mkdtemp(prefix=_TEMP_EXPORT_PREFIX, dir=cache_root)
+        path = write_report_file(payload, dest=directory, dark=bool(dark))
     except ReportError:
         return _export_off()
     except Exception:
         logger.exception("writing the HTML report failed")
         return _export_off()
+    finally:
+        if path is None:
+            _remove_temp_export_dir(directory)
     # Gradio injects *request* on a browser call (annotation-driven) and leaves
     # it None for a direct call, which is the key library callers share.
     _replace_temp_export_dir(path, getattr(request, "session_hash", None))

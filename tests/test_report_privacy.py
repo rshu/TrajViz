@@ -1,5 +1,6 @@
 """Temporary dashboard reports must not outlive their owning sessions."""
 
+import asyncio
 import json
 import os
 import subprocess
@@ -8,6 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import gradio as gr
+from gradio.processing_utils import async_move_files_to_cache
 
 from agent_trajviz import Trajectory
 from agent_trajviz.insight import report
@@ -61,27 +64,79 @@ def test_normal_process_exit_removes_only_dashboard_owned_reports(tmp_path):
     # reports returned to the caller must remain usable after that process ends.
     script = """
 import json
+import asyncio
 import tempfile
+import gradio as gr
+from gradio.processing_utils import async_move_files_to_cache
 from agent_trajviz import Trajectory
 from agent_trajviz.insight.report import write_report_file
 from agent_trajviz.insight.session import session_from_run
-from agent_trajviz.insight.ui.upload import _replace_temp_export_dir
+from agent_trajviz.insight.ui.upload import prepare_html_export
 tempfile.tempdir = __import__('sys').argv[1]
-session = session_from_run(Trajectory.from_steps([{'role': 'assistant', 'text_preview': 'synthetic'}]))
+run = Trajectory.from_steps([{'role': 'assistant', 'text_preview': 'synthetic'}])
+session = session_from_run(run)
 standalone = write_report_file(session)
-dashboard = write_report_file(session)
-_replace_temp_export_dir(dashboard, 'synthetic-session')
+update = prepare_html_export(run)
+button = gr.DownloadButton()
+served = asyncio.run(async_move_files_to_cache(button.postprocess(update['value']), button, postprocess=True))
+dashboard = served['path']
+assert dashboard == update['value']
 print(json.dumps([standalone, dashboard]))
 """
     result = subprocess.run(
         [sys.executable, "-c", script, str(tmp_path)],
         cwd=tmp_path,
-        env={**os.environ, "GRADIO_ANALYTICS_ENABLED": "False"},
+        env={**os.environ, "GRADIO_ANALYTICS_ENABLED": "False", "GRADIO_TEMP_DIR": str(tmp_path / "gradio-cache")},
         text=True, capture_output=True, check=True,
     )
     standalone, dashboard = map(Path, json.loads(result.stdout.strip()))
     assert standalone.is_file()
     assert not dashboard.parent.exists()
+
+
+def test_gradio_serves_session_owned_files_without_leaving_cached_copies(tmp_path, monkeypatch):
+    monkeypatch.setenv("GRADIO_TEMP_DIR", str(tmp_path / "gradio-cache"))
+    monkeypatch.setattr(upload, "_last_temp_export_dirs", {})
+    # Identical report bytes would normally share Gradio's content-hash cache.
+    # Neither viewer may lose a download when the other unloads.
+    monkeypatch.setattr(report, "build_report_html", lambda *args, **kwargs: "synthetic identical report")
+    run = Trajectory.from_steps([{"role": "assistant", "text_preview": "synthetic"}])
+    button = gr.DownloadButton()
+
+    def prepare(session):
+        update = upload.prepare_html_export(run, request=SimpleNamespace(session_hash=session))
+        served = asyncio.run(async_move_files_to_cache(button.postprocess(update["value"]), button, postprocess=True))
+        assert served["path"] == update["value"]
+        return Path(served["path"])
+
+    first, second = prepare("first"), prepare("second")
+    assert first != second
+    assert first.read_bytes() == second.read_bytes()
+    assert set(tmp_path.rglob("*.html")) == {first, second}
+
+    upload.cleanup_session_export(SimpleNamespace(session_hash="first"))
+    assert not first.exists()
+    assert second.is_file()
+    assert set(tmp_path.rglob("*.html")) == {second}
+
+    replacement = prepare("second")
+    assert not second.exists()
+    assert set(tmp_path.rglob("*.html")) == {replacement}
+    upload.cleanup_session_export(SimpleNamespace(session_hash="second"))
+    assert list(tmp_path.rglob("*.html")) == []
+
+
+def test_failed_dashboard_export_leaves_no_report_in_gradio_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv("GRADIO_TEMP_DIR", str(tmp_path / "gradio-cache"))
+
+    def fail_render(*args, **kwargs):
+        raise report.ReportError("synthetic render failure")
+
+    monkeypatch.setattr(report, "build_report_html", fail_render)
+    run = Trajectory.from_steps([{"role": "assistant", "text_preview": "synthetic"}])
+    update = upload.prepare_html_export(run)
+    assert update["value"] is None
+    assert list((tmp_path / "gradio-cache").iterdir()) == []
 
 
 def test_render_failure_allocates_no_scratch_directory(tmp_path, monkeypatch):

@@ -16,6 +16,8 @@ change the public API (the names exported from `agent_trajviz`).
   process exits normally, without removing other viewers' active downloads or
   standalone CLI/library reports. Failed report rendering/writing no longer
   leaves a newly allocated scratch directory behind.
+- Create dashboard reports inside Gradio's cache so the download serves the
+  session-owned file directly instead of retaining a second cached copy.
 
 ## [0.1.0] - 2026-10-12
 
