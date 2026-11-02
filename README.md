@@ -268,8 +268,10 @@ model and request options. Connection details can be remembered in this browser;
 API keys stay in the current session. You can also set `ANALYZE_BASE_URL`,
 `ANALYZE_API_KEY` and `ANALYZE_MODEL` in `.env`. See
 [.env.example](https://github.com/rshu/TrajViz/blob/main/.env.example) for provider,
-language and timeout options. Analysis sends trajectory excerpts to the
-configured provider.
+language and timeout options. Reasoning models spend output tokens on hidden
+thinking; if a reply comes back empty or cut off, raise Max output tokens
+(default 8192). Anthropic-style endpoints accept the base URL with or without
+`/v1`. Analysis sends trajectory excerpts to the configured provider.
 
 For step labeling, set `LABEL_BASE_URL`, `LABEL_API_KEY` and `LABEL_MODEL`, then:
 

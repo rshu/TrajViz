@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import requests
+from urllib3.exceptions import ProtocolError, ReadTimeoutError
 
 from agent_trajviz.insight import assistant, llm_config
 from agent_trajviz.insight.llm_config import (
@@ -32,6 +33,43 @@ def _cfg(**overrides) -> AnalysisLLMConfig:
     )
     base.update(overrides)
     return AnalysisLLMConfig(**base)
+
+
+class _FakeResponse:
+    """A 200 response carrying *payload*, for a patched ``requests.post``."""
+
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return self._payload
+
+
+def _openai_reply(content, finish_reason: str) -> dict:
+    return {"choices": [{"index": 0, "finish_reason": finish_reason,
+                         "message": {"role": "assistant", "content": content}}]}
+
+
+def _anthropic_reply(blocks: list[dict], stop_reason: str) -> dict:
+    return {"type": "message", "role": "assistant", "content": blocks, "stop_reason": stop_reason}
+
+
+def _http_error(status: int) -> requests.HTTPError:
+    response = requests.models.Response()
+    response.status_code = status
+    return requests.HTTPError(f"{status} Client Error", response=response)
+
+
+def _raising(exc: BaseException):
+    """A chat_fn whose request fails with *exc*."""
+
+    def chat_fn(*_args, **_kwargs):
+        raise exc
+
+    return chat_fn
 
 
 def _step(index, role="assistant", *, duration=1.0, tokens=10, tools=None, preview=""):
@@ -89,6 +127,14 @@ class AnalysisConfigTests(unittest.TestCase):
         self.assertEqual(cfg.model, "label-model")
         self.assertEqual(cfg.provider, "anthropic")
         self.assertEqual(cfg.source, "label")
+
+    def test_default_output_budget_leaves_room_for_reasoning(self):
+        # Reasoning models spend part of max_tokens on hidden thinking before the visible reply.
+        for env in ({}, {"LABEL_MAX_TOKENS": "0"}, {"ANALYZE_MAX_TOKENS": "-5"}):
+            with self.subTest(env=env), patch.dict(os.environ, env, clear=True):
+                self.assertEqual(resolve_analysis_config().max_tokens, 8192)
+        with patch.dict(os.environ, {"ANALYZE_MAX_TOKENS": "4096"}, clear=True):
+            self.assertEqual(resolve_analysis_config().max_tokens, 4096)
 
     def test_missing_key_is_not_ready(self):
         env = {
@@ -264,6 +310,15 @@ class AnalysisChatTests(unittest.TestCase):
         self.assertEqual(body["messages"][0], {"role": "system", "content": "SYS"})
         self.assertEqual(body["model"], "demo-model")
 
+    def test_anthropic_request_goes_to_the_v1_messages_endpoint(self):
+        # The base without /v1, as the official SDKs take it, must not 404 (DeepSeek serves both).
+        cfg = _cfg(provider="anthropic", base_url="https://api.deepseek.com/anthropic")
+        reply = _anthropic_reply([{"type": "text", "text": "ok"}], "end_turn")
+        with patch.object(assistant.requests, "post", return_value=_FakeResponse(reply)) as post:
+            text = assistant._call_anthropic(cfg, "SYS", [{"role": "user", "content": "q"}])
+        self.assertEqual(text, "ok")
+        self.assertEqual(post.call_args[0][0], "https://api.deepseek.com/anthropic/v1/messages")
+
     def test_every_prompt_names_the_metrics_to_cite(self):
         for prompt in (assistant.SYSTEM_PROMPT, assistant.system_prompt("Simplified Chinese"),
                        assistant.system_prompt("German")):
@@ -294,6 +349,186 @@ class AnalysisChatTests(unittest.TestCase):
         self.assertIn("## Main performance bottlenecks", captured["system"])
         self.assertEqual(history[-1]["content"], "Step 1 is the bottleneck.")
         self.assertTrue(history[-1]["content"])
+
+
+_PARTIAL = "## Main performance bottlenecks\n\n1. **Step 10** is slow because the model re-reads"
+_THINKING = {"type": "thinking", "thinking": "Let me look at the bottlenecks.", "signature": "s"}
+_BUDGET_SPENT_ENV = (
+    "The model used its entire output budget of 2048 tokens before writing a reply (reasoning "
+    "models spend it on hidden thinking). Raise ANALYZE_MAX_TOKENS (or Max output tokens in "
+    "Settings), or choose a non-reasoning model."
+)
+_BUDGET_SPENT_SETTINGS = (
+    "The model used its entire output budget of 2048 tokens before writing a reply (reasoning "
+    "models spend it on hidden thinking). Raise Max output tokens in Settings › Request options, "
+    "or choose a non-reasoning model."
+)
+_CUT_OFF_ENV = ("⚠ Reply cut off at the output limit of 2048 tokens. "
+                "Raise ANALYZE_MAX_TOKENS (or Max output tokens in Settings).")
+_CUT_OFF_SETTINGS = ("⚠ Reply cut off at the output limit of 2048 tokens. "
+                     "Raise Max output tokens in Settings › Request options.")
+
+
+class OutputBudgetTests(unittest.TestCase):
+    """A reply the output limit stopped says so and names where to raise the limit.
+
+    Reasoning models spend the budget on hidden thinking first, so at a small limit the
+    visible reply comes back empty or stops mid-sentence.
+    """
+
+    @staticmethod
+    def _ask(payload, *, language="English", **cfg_overrides):
+        with patch.object(assistant.requests, "post", return_value=_FakeResponse(payload)):
+            history = assistant.answer_question(
+                "Why?", [], "## HEALTH\n- ok", config=_cfg(**cfg_overrides), language=language,
+            )
+        return history[-1]["content"]
+
+    def test_openai_budget_spent_on_reasoning_names_the_budget(self):
+        wordings = (("session", _BUDGET_SPENT_SETTINGS), ("analyze", _BUDGET_SPENT_ENV))
+        for content in (None, "", " \n"):
+            for source, expected in wordings:
+                with self.subTest(content=content, source=source):
+                    reply = self._ask(_openai_reply(content, "length"), source=source)
+                    self.assertEqual(reply, expected)
+
+    def test_openai_reply_cut_off_keeps_the_text_and_marks_it(self):
+        for source, marker in (("analyze", _CUT_OFF_ENV), ("session", _CUT_OFF_SETTINGS)):
+            with self.subTest(source=source):
+                reply = self._ask(_openai_reply(_PARTIAL + "   \n", "length"), source=source)
+                self.assertEqual(reply, _PARTIAL + "\n\n" + marker)
+
+    def test_anthropic_thinking_only_reply_names_the_budget(self):
+        reply = self._ask(_anthropic_reply([_THINKING], "max_tokens"), provider="anthropic",
+                          source="session")
+        self.assertEqual(reply, _BUDGET_SPENT_SETTINGS)
+        self.assertNotIn("ValueError", reply)
+
+    def test_anthropic_reply_cut_off_keeps_the_text_and_marks_it(self):
+        blocks = [_THINKING, {"type": "text", "text": _PARTIAL}]
+        reply = self._ask(_anthropic_reply(blocks, "max_tokens"), provider="anthropic")
+        self.assertEqual(reply, _PARTIAL + "\n\n" + _CUT_OFF_ENV)
+
+    def test_cut_off_marker_follows_the_reply_language(self):
+        markers = {
+            "session": "⚠ 回复在 2048 个输出 token 的上限处被截断。"
+                       "请在 Settings › Request options 中提高 Max output tokens。",
+            "analyze": "⚠ 回复在 2048 个输出 token 的上限处被截断。"
+                       "请提高 ANALYZE_MAX_TOKENS（或 Settings 中的 Max output tokens）。",
+        }
+        for source, marker in markers.items():
+            with self.subTest(source=source):
+                reply = self._ask(_openai_reply(_PARTIAL, "length"), language="Simplified Chinese",
+                                  source=source)
+                self.assertEqual(reply, _PARTIAL + "\n\n" + marker)
+
+    def test_replies_that_did_not_reach_the_limit_are_unchanged(self):
+        self.assertEqual(self._ask(_openai_reply("Step 4.", "stop")), "Step 4.")
+        self.assertEqual(self._ask(_openai_reply("", "stop")),
+                         "(The model returned an empty reply.)")
+        self.assertEqual(self._ask(_anthropic_reply([_THINKING], "end_turn"), provider="anthropic"),
+                         "The analysis model request failed: ValueError.")
+
+    def test_public_error_text_for_the_budget_defaults_to_the_variable_names(self):
+        exc = assistant.OutputBudgetExhausted(2048)
+        self.assertEqual(assistant._public_http_error(exc), _BUDGET_SPENT_ENV)
+        self.assertEqual(assistant._public_http_error(exc, _cfg(source="session")),
+                         _BUDGET_SPENT_SETTINGS)
+
+
+class ErrorRemedyTests(unittest.TestCase):
+    """A failed request names the remedy where the connection was configured.
+
+    Settings connections ignore the ANALYZE_* variables, so naming them there is inert advice.
+    """
+
+    def test_settings_connection_errors_name_the_settings_fields(self):
+        cases = [
+            ("timeout", requests.Timeout(),
+             "The analysis model timed out. "
+             "Retry, or raise Timeout (seconds) in Settings › Request options."),
+            ("401", _http_error(401),
+             "The analysis API rejected the key (HTTP 401). Check the API key in Settings."),
+            ("403", _http_error(403),
+             "The analysis API rejected the key (HTTP 403). Check the API key in Settings."),
+            ("404", _http_error(404),
+             "The analysis API returned HTTP 404. Check the Base URL and Model in Settings."),
+            ("500", _http_error(500), "The analysis API returned HTTP 500."),
+            ("unreachable", requests.ConnectionError("refused"),
+             "Could not reach the analysis API. Check the Base URL in Settings and the network."),
+        ]
+        for case, exc, expected in cases:
+            with self.subTest(case=case):
+                history = assistant.answer_question(
+                    "Why?", [], "brief", config=_cfg(source="session"), chat_fn=_raising(exc),
+                )
+                self.assertEqual(history[-1]["content"], expected)
+
+    def test_environment_connection_errors_keep_the_variable_names(self):
+        cases = [
+            ("timeout", requests.Timeout(),
+             "The analysis model timed out. Retry, or raise ANALYZE_TIMEOUT."),
+            ("401", _http_error(401),
+             "The analysis API rejected the key (HTTP 401). Check ANALYZE_API_KEY."),
+            ("403", _http_error(403),
+             "The analysis API rejected the key (HTTP 403). Check ANALYZE_API_KEY."),
+            ("404", _http_error(404),
+             "The analysis API returned HTTP 404. Check ANALYZE_BASE_URL and ANALYZE_MODEL."),
+            ("500", _http_error(500), "The analysis API returned HTTP 500."),
+            ("unreachable", requests.ConnectionError("refused"),
+             "Could not reach the analysis API. Check ANALYZE_BASE_URL and the network."),
+        ]
+        for case, exc, expected in cases:
+            with self.subTest(case=case, config="none"):
+                # The one-argument form stays the environment wording.
+                self.assertEqual(assistant._public_http_error(exc), expected)
+            for source in ("analyze", "label", "mixed"):
+                with self.subTest(case=case, source=source):
+                    text = assistant._public_http_error(exc, _cfg(source=source))
+                    self.assertEqual(text, expected)
+
+    def test_body_read_timeout_is_reported_as_a_timeout(self):
+        # requests raises ReadTimeout only while waiting for headers. A provider that sends
+        # HTTP 200 headers at once and the body when the model finishes times out in the body
+        # read, which requests re-raises as ConnectionError(urllib3 ReadTimeoutError).
+        def read_timeout():
+            return ReadTimeoutError(None, None, "Read timed out.")
+
+        try:
+            try:
+                raise read_timeout()
+            except ReadTimeoutError as inner:
+                # As Response.iter_content raises it: chained implicitly, not with `from`.
+                raise requests.ConnectionError(inner)  # noqa: B904
+        except requests.ConnectionError as raised:
+            as_raised = raised
+        in_args = requests.ConnectionError(read_timeout())
+        as_cause = requests.ConnectionError("Read timed out.")
+        as_cause.__cause__ = read_timeout()
+        as_context = requests.ConnectionError("Read timed out.")
+        as_context.__context__ = read_timeout()
+        deeper = requests.ConnectionError("Read timed out.")
+        deeper.__context__ = ProtocolError("Connection broken.")
+        deeper.__context__.__cause__ = read_timeout()
+        for case, exc in [("as raised", as_raised), ("args", in_args), ("cause", as_cause),
+                          ("context", as_context), ("deeper", deeper)]:
+            with self.subTest(case=case):
+                self.assertEqual(assistant._public_http_error(exc),
+                                 "The analysis model timed out. Retry, or raise ANALYZE_TIMEOUT.")
+                self.assertEqual(assistant._public_http_error(exc, _cfg(source="session")),
+                                 "The analysis model timed out. "
+                                 "Retry, or raise Timeout (seconds) in Settings › Request options.")
+
+    def test_other_connection_errors_still_read_as_unreachable(self):
+        refused = requests.ConnectionError(ProtocolError("Connection aborted."))
+        cyclic = requests.ConnectionError("Connection reset.")
+        cyclic.__context__ = ProtocolError("Connection broken.")
+        cyclic.__context__.__context__ = cyclic
+        for case, exc in [("refused", refused), ("cyclic chain", cyclic)]:
+            with self.subTest(case=case):
+                self.assertEqual(assistant._public_http_error(exc),
+                                 "Could not reach the analysis API. "
+                                 "Check ANALYZE_BASE_URL and the network.")
 
 
 class AnalysisUiTests(unittest.TestCase):

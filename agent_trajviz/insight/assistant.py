@@ -8,7 +8,9 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import requests
+from urllib3.exceptions import ReadTimeoutError
 
+from .._endpoints import anthropic_messages_url
 from .._redact import redact
 from .analytics import compute_step_analytics
 from .diagnostics import (
@@ -635,6 +637,16 @@ def _history_for_api(history: list[dict]) -> list[dict[str, str]]:
     return cleaned[-_HISTORY_TURNS:]
 
 
+class OutputBudgetExhausted(RuntimeError):
+    """The model hit ``max_tokens``; ``text`` is whatever visible text arrived ("" when it all
+    went to reasoning)."""
+
+    def __init__(self, limit: int, text: str = "") -> None:
+        super().__init__("model hit the output token limit")
+        self.limit = limit
+        self.text = text
+
+
 def complete_chat(
     config: AnalysisLLMConfig,
     system: str,
@@ -644,6 +656,9 @@ def complete_chat(
 
     This is where the sidebar and the Issues judge leave the machine, so every
     outgoing string is redacted here (see :mod:`agent_trajviz._redact`).
+
+    Raises :class:`OutputBudgetExhausted` when the model stopped at ``max_tokens``, so a
+    cut-off reply is never passed off as complete.
     """
     system, redacted = redact(system)
     outgoing: list[dict[str, str]] = []
@@ -679,12 +694,13 @@ def _call_openai(
     response = requests.post(url, json=body, headers=headers, timeout=config.timeout)
     response.raise_for_status()
     data = response.json()
-    content = data["choices"][0]["message"]["content"]
-    if content is None:
-        return ""
-    if not isinstance(content, str):
+    choice = data["choices"][0]
+    content = choice["message"]["content"]
+    if content is not None and not isinstance(content, str):
         raise ValueError("OpenAI response content is not text")
-    return content.strip()
+    if choice.get("finish_reason") == "length":
+        raise OutputBudgetExhausted(config.max_tokens, (content or "").strip())
+    return (content or "").strip()
 
 
 def _call_anthropic(
@@ -692,7 +708,7 @@ def _call_anthropic(
     system: str,
     messages: list[dict[str, str]],
 ) -> str:
-    url = f"{config.base_url}/messages"
+    url = anthropic_messages_url(config.base_url)
     headers = {
         "Content-Type": "application/json",
         "x-api-key": config.api_key,
@@ -711,25 +727,123 @@ def _call_anthropic(
     data = response.json()
     blocks = data.get("content", [])
     texts = [block["text"] for block in blocks if isinstance(block, dict) and block.get("type") == "text"]
+    if data.get("stop_reason") == "max_tokens":
+        raise OutputBudgetExhausted(config.max_tokens, "\n".join(texts).strip())
     if not texts:
         raise ValueError("Anthropic response contained no text blocks")
     return "\n".join(texts).strip()
 
 
-def _public_http_error(exc: BaseException) -> str:
-    """Human error without response bodies that might echo secrets."""
-    if isinstance(exc, requests.Timeout):
-        return "The analysis model timed out. Retry, or raise ANALYZE_TIMEOUT."
+# Failure texts for the panel and the Issues banner: constants with at most an integer filled
+# in, never a URL, host, key, response body or provider message. Each remedy comes in two
+# wordings: the ANALYZE_* variables, and the Settings fields for a connection applied in
+# Settings, which those variables no longer affect.
+_TIMED_OUT_ENV = "The analysis model timed out. Retry, or raise ANALYZE_TIMEOUT."
+_TIMED_OUT_SETTINGS = (
+    "The analysis model timed out. Retry, or raise Timeout (seconds) in Settings › Request options."
+)
+_KEY_REJECTED_ENV = "The analysis API rejected the key (HTTP {status}). Check ANALYZE_API_KEY."
+_KEY_REJECTED_SETTINGS = (
+    "The analysis API rejected the key (HTTP {status}). Check the API key in Settings."
+)
+_NOT_FOUND_ENV = "The analysis API returned HTTP 404. Check ANALYZE_BASE_URL and ANALYZE_MODEL."
+_NOT_FOUND_SETTINGS = (
+    "The analysis API returned HTTP 404. Check the Base URL and Model in Settings."
+)
+_UNREACHABLE_ENV = "Could not reach the analysis API. Check ANALYZE_BASE_URL and the network."
+_UNREACHABLE_SETTINGS = (
+    "Could not reach the analysis API. Check the Base URL in Settings and the network."
+)
+_BUDGET_SPENT_ENV = (
+    "The model used its entire output budget of {limit} tokens before writing a reply (reasoning "
+    "models spend it on hidden thinking). Raise ANALYZE_MAX_TOKENS (or Max output tokens in "
+    "Settings), or choose a non-reasoning model."
+)
+_BUDGET_SPENT_SETTINGS = (
+    "The model used its entire output budget of {limit} tokens before writing a reply (reasoning "
+    "models spend it on hidden thinking). Raise Max output tokens in Settings › Request options, "
+    "or choose a non-reasoning model."
+)
+# Appended, in the reply language, to a reply the output limit cut off.
+_CUT_OFF_ENV = (
+    "⚠ Reply cut off at the output limit of {limit} tokens. "
+    "Raise ANALYZE_MAX_TOKENS (or Max output tokens in Settings)."
+)
+_CUT_OFF_SETTINGS = (
+    "⚠ Reply cut off at the output limit of {limit} tokens. "
+    "Raise Max output tokens in Settings › Request options."
+)
+_CUT_OFF_ENV_CHINESE = (
+    "⚠ 回复在 {limit} 个输出 token 的上限处被截断。"
+    "请提高 ANALYZE_MAX_TOKENS（或 Settings 中的 Max output tokens）。"
+)
+_CUT_OFF_SETTINGS_CHINESE = (
+    "⚠ 回复在 {limit} 个输出 token 的上限处被截断。"
+    "请在 Settings › Request options 中提高 Max output tokens。"
+)
+
+
+def _from_settings(config: AnalysisLLMConfig | None) -> bool:
+    """True for a connection applied in Settings, which ignores the ANALYZE_* variables."""
+    return config is not None and config.source == "session"
+
+
+def _body_read_timed_out(exc: BaseException) -> bool:
+    """True for the ConnectionError requests raises when the response body read times out.
+
+    requests raises ReadTimeout (a Timeout) only while it waits for the headers. A provider
+    that sends HTTP 200 headers at once and the body when the model finishes times out in
+    the body read instead, which requests re-raises as a plain ConnectionError carrying
+    urllib3's ReadTimeoutError in its args and context.
+    """
+    if not isinstance(exc, requests.ConnectionError):
+        return False
+    if any(isinstance(arg, ReadTimeoutError) for arg in exc.args):
+        return True
+    seen: set[int] = set()
+    pending: list[BaseException | None] = [exc]
+    while pending:
+        link = pending.pop()
+        if link is None or id(link) in seen:
+            continue
+        if isinstance(link, ReadTimeoutError):
+            return True
+        seen.add(id(link))
+        pending += [link.__cause__, link.__context__]
+    return False
+
+
+def _public_http_error(exc: BaseException, config: AnalysisLLMConfig | None = None) -> str:
+    """Human error without response bodies that might echo secrets.
+
+    *config* is the connection that failed: its remedy names the Settings fields when it
+    was applied in Settings, and the ANALYZE_* variables otherwise (or when omitted).
+    """
+    settings = _from_settings(config)
+    if isinstance(exc, OutputBudgetExhausted):
+        return (_BUDGET_SPENT_SETTINGS if settings else _BUDGET_SPENT_ENV).format(limit=exc.limit)
+    if isinstance(exc, requests.Timeout) or _body_read_timed_out(exc):
+        return _TIMED_OUT_SETTINGS if settings else _TIMED_OUT_ENV
     if isinstance(exc, requests.HTTPError) and exc.response is not None:
         status = exc.response.status_code
         if status in {401, 403}:
-            return f"The analysis API rejected the key (HTTP {status}). Check ANALYZE_API_KEY."
+            return (_KEY_REJECTED_SETTINGS if settings else _KEY_REJECTED_ENV).format(status=status)
         if status == 404:
-            return f"The analysis API returned HTTP {status}. Check ANALYZE_BASE_URL and ANALYZE_MODEL."
+            return _NOT_FOUND_SETTINGS if settings else _NOT_FOUND_ENV
         return f"The analysis API returned HTTP {status}."
     if isinstance(exc, requests.RequestException):
-        return "Could not reach the analysis API. Check ANALYZE_BASE_URL and the network."
+        return _UNREACHABLE_SETTINGS if settings else _UNREACHABLE_ENV
     return f"The analysis model request failed: {type(exc).__name__}."
+
+
+def _truncation_marker(limit: int, config: AnalysisLLMConfig, chinese: bool) -> str:
+    """The note that marks a reply cut off at *limit* tokens and names where to raise it."""
+    settings = _from_settings(config)
+    if chinese:
+        template = _CUT_OFF_SETTINGS_CHINESE if settings else _CUT_OFF_ENV_CHINESE
+    else:
+        template = _CUT_OFF_SETTINGS if settings else _CUT_OFF_ENV
+    return template.format(limit=limit)
 
 
 def answer_question(
@@ -775,8 +889,14 @@ def answer_question(
             reply = chat_fn(cfg, system, api_messages)
         else:
             reply = complete_chat(cfg, system, api_messages)
+    except OutputBudgetExhausted as exc:
+        # Keep what arrived, marked as cut off; with nothing visible, say where the budget went.
+        if exc.text:
+            reply = exc.text + "\n\n" + _truncation_marker(exc.limit, cfg, chinese)
+        else:
+            reply = _public_http_error(exc, cfg)
     except Exception as exc:  # noqa: BLE001 — surface a safe message in the panel
-        reply = _public_http_error(exc)
+        reply = _public_http_error(exc, cfg)
     if not reply:
         reply = "(模型返回了空回复。)" if chinese else "(The model returned an empty reply.)"
     history.append({"role": "assistant", "content": reply})
