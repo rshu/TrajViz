@@ -639,16 +639,26 @@ def _compute_timing_metrics(steps: list[dict]) -> dict:
     ``time_to_first_token`` / ``time_to_last_token`` are **response latencies**,
     not token-level measurements despite their names: each is the first user
     message's creation stamp to the first (resp. last) assistant message's
-    *completion* stamp, so the whole turn is inside the figure. No supported
-    export records streaming or first-delta timing — the step model carries
-    only ``time_created_ms``/``time_completed_ms`` — so a true time-to-first-token
-    is not computable here. The names are kept because callers already read them.
+    *completion* stamp, so the whole turn is inside the figure. The first
+    response is the first assistant message that began and completed at or
+    after that user message. One that began earlier answered something else,
+    and counting it gave a negative or a zero latency: a Codex sub-agent's
+    first task arrives as a non-user message, and a turn cut off before
+    ``task_complete`` is taken to end where the next message begins, which
+    can be that user message. "At" keeps a reply that whole-second stamps put
+    in its question's second. A message without a creation stamp is judged by
+    its completion alone, since nothing shows it began earlier. With no such
+    message ``time_to_first_token`` is ``None``; it is never negative.
+    No supported export records streaming or first-delta timing — the step
+    model carries only ``time_created_ms``/``time_completed_ms`` — so a true
+    time-to-first-token is not computable here. The names are kept because
+    callers already read them.
 
     Output throughput is :func:`output_throughput` over every assistant step.
     """
     first_user_created = None
-    first_asst_completed = None
-    last_asst_completed = None
+    # (created or None, completed) of each assistant step with a completion, in step order.
+    asst_spans: list[tuple[int | float | None, int | float]] = []
 
     for s in steps:
         role = s.get("role", "")
@@ -657,9 +667,16 @@ def _compute_timing_metrics(steps: list[dict]) -> dict:
         if role == "user" and first_user_created is None and isinstance(t_created, (int, float)):
             first_user_created = t_created
         if role == "assistant" and isinstance(t_completed, (int, float)):
-            if first_asst_completed is None:
-                first_asst_completed = t_completed
-            last_asst_completed = t_completed
+            began = t_created if isinstance(t_created, (int, float)) else None
+            asst_spans.append((began, t_completed))
+
+    first_asst_completed = None
+    if first_user_created is not None:
+        first_asst_completed = next((
+            ended for began, ended in asst_spans
+            if ended >= first_user_created and (began is None or began >= first_user_created)
+        ), None)
+    last_asst_completed = asst_spans[-1][1] if asst_spans else None
 
     result: dict = {}
     if first_user_created is not None and first_asst_completed is not None:
