@@ -9,6 +9,23 @@ change the public API (the names exported from `agent_trajviz`).
 
 ### Fixed
 
+- Mark a reply the model cut off at the output-token limit as cut, with the limit and how to
+  raise it, and explain when the whole budget went to hidden reasoning, instead of showing
+  "(The model returned an empty reply.)" or "The analysis model request failed: ValueError."
+- Name the Settings fields in analysis error messages when the connection came from Settings,
+  and report a read timeout as a timeout rather than as an unreachable API.
+- Accept Anthropic-style base URLs with or without `/v1` in the dashboard and the labeler; the
+  documented `https://api.anthropic.com` returned HTTP 404.
+- Keep the analysis brief's bottleneck, failure, error and step sections for sessions with many
+  sub-agents by listing at most 24 agents and 50 insights, and name the sections a truncated
+  brief dropped.
+- Make `agent-trajviz-label` exit with status 2 and write no sidecar when the API rejects its
+  credentials or every classification fails, name HTTP statuses in its log, retry replies that
+  were all hidden reasoning, and count only written records in `--assistant-only` sidecars.
+- End each Codex turn at its `task_complete` event so idle time between turns is not reported
+  as inference, and never report a negative first-response latency.
+- Surface DeepSeek Harness model-request failures (`assistant/attempt` and `turn/end` errors)
+  as error steps with load warnings.
 - Reject label sidecars with conflicting native-session identity and allow selecting a
   captured reference session for pairwise comparison.
 - Keep shell counts, formatter arguments and executable invocations out of file-
@@ -18,6 +35,14 @@ change the public API (the names exported from `agent_trajviz`).
 - Order automatic failure attribution reliably, distinguish AWE evidence numbering, and
   show evidence qualifications and untested counterfactual checks.
 - Improve mobile attribution layouts and remove empty warning and reasoning panels.
+
+### Changed
+
+- The default Max output tokens is 8192 for the dashboard (`ANALYZE_MAX_TOKENS`) and 4096 for
+  `agent-trajviz-label` (`LABEL_MAX_TOKENS`), up from 2048 and 1024, so reasoning models can
+  finish a reply.
+- Steps whose model request failed (`finish` "error") count in the Errors health check and
+  appear under ERROR_STEPS in the analysis brief for every format, including OpenCode and Pi.
 
 ### Added
 
