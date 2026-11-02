@@ -12,6 +12,7 @@ from datetime import datetime, UTC
 from typing import Any
 
 from ...errors import LoadError
+from .common import as_text
 from .parse import _JSONL_LINE_RE, _normalize_payload, _parse_trajectory_text
 
 # DeepSeek Harness tools are lowercase with JSON-string arguments. Map them
@@ -307,10 +308,66 @@ def _dsh_tool_result_payload(data: dict) -> tuple[str, str, bool]:
     return call_id, output, is_error
 
 
-def _dsh_session_to_messages(events: list[dict]) -> tuple[dict, list[dict], str, str, str]:
+# A failed model request writes no ``assistant/message``: its failed attempt
+# or ``turn/end`` is the only trace, and the helpers below read it.
+
+
+def _dsh_turn(data: dict) -> int | None:
+    turn = data.get("turn")
+    return turn if isinstance(turn, int) and not isinstance(turn, bool) else None
+
+
+def _dsh_attempt_finish_reason(data: dict) -> Any:
+    """The ``reason`` of an ``assistant/attempt``'s finish chunk, if it streamed one."""
+    stream = data.get("stream")
+    for entry in reversed(stream) if isinstance(stream, list) else ():
+        chunk = entry.get("chunk") if isinstance(entry, dict) else None
+        if isinstance(chunk, dict) and chunk.get("type") == "finish":
+            return chunk.get("reason")
+    return None
+
+
+def _dsh_failure_code(reason: Any) -> str | None:
+    """The error code when a finish or ``turn/end`` *reason* is an error, else None.
+
+    An attempt's finish chunk keeps the details under ``failure``, a
+    ``turn/end`` under ``error``. A reason without details is still a failure,
+    with the code ``unknown``. The recorded message is not read: see
+    :func:`_dsh_failure_texts`.
+    """
+    if not isinstance(reason, dict) or reason.get("kind") != "error":
+        return None
+    details = next((value for value in (reason.get("failure"), reason.get("error"))
+                    if isinstance(value, dict)), {})
+    return as_text(details.get("code")).strip() or "unknown"
+
+
+def _dsh_failure_texts(turn: int | None, code: str) -> tuple[str, str]:
+    """The step text and the load warning for one failed model request.
+
+    Both name the recorded code, never the recorded message: the message can
+    come from the provider, and provider messages can carry URLs, hostnames,
+    keys or response bodies, which TrajViz's error texts never repeat. The
+    code (for example ``NO_ADAPTER``) already says which failure it was.
+    """
+    turn_label = "?" if turn is None else turn
+    return f"Model request failed ({code})", f"DSH turn {turn_label} ended with error {code}"
+
+
+def _dsh_session_to_messages(
+    events: list[dict],
+    *,
+    warnings: list[str] | None = None,
+) -> tuple[dict, list[dict], str, str, str]:
     """Convert one DSH session's events into internal messages.
 
     Returns ``(session_header, messages, last_model, last_provider, title)``.
+
+    A model request that failed -- an ``assistant/attempt`` whose finish reason
+    is an error, or a ``turn/end`` error that no such attempt in that turn
+    already shows -- becomes an assistant message with ``finish == "error"``,
+    which ``step_errors`` counts as a system error, and its warning is added
+    to *warnings*. Without it a run whose only request failed looked healthy.
     """
     session: dict = {}
     body: list[dict] = []
@@ -345,6 +402,7 @@ def _dsh_session_to_messages(events: list[dict]) -> tuple[dict, list[dict], str,
     title = ""
     modern = isinstance(session.get("version"), int) and session["version"] >= 4
     request_starts: dict[tuple[Any, Any], int | None] = {}
+    failed_turns: set[int | None] = set()
 
     def _append(role: str, ts: int | None, parts: list, tokens: dict | None = None, extra: dict | None = None) -> None:
         info: dict[str, Any] = {
@@ -365,6 +423,17 @@ def _dsh_session_to_messages(events: list[dict]) -> tuple[dict, list[dict], str,
         if extra:
             info.update(extra)
         messages.append({"info": info, "parts": parts})
+
+    def _append_failure(ts: int | None, turn: int | None, code: str,
+                        tokens: dict | None = None) -> None:
+        text, warning = _dsh_failure_texts(turn, code)
+        _append("assistant", ts, [{"type": "text", "text": text}], tokens=tokens, extra={
+            "modelID": current_model, "providerID": current_provider, "finish": "error",
+        })
+        # One warning per failure, even when two read the same: the text names
+        # no session, so a parent and a sub-agent failing alike stay two lines.
+        if warnings is not None:
+            warnings.append(warning)
 
     for event in body:
         etype = event.get("type")
@@ -462,6 +531,21 @@ def _dsh_session_to_messages(events: list[dict]) -> tuple[dict, list[dict], str,
             if parts:
                 extra = {"id": data.get("id") or ""}
                 _append("user", ts, parts, extra=extra)
+            continue
+        if etype == "assistant/attempt":
+            # A request that succeeded is persisted as ``assistant/message``;
+            # one that failed leaves only its attempt.
+            code = _dsh_failure_code(_dsh_attempt_finish_reason(data))
+            if code:
+                turn = _dsh_turn(data)
+                failed_turns.add(turn)
+                _append_failure(ts, turn, code, _dsh_extract_usage(data.get("usage")))
+            continue
+        if etype == "turn/end":
+            code = _dsh_failure_code(data.get("reason"))
+            turn = _dsh_turn(data)
+            if code and turn not in failed_turns:
+                _append_failure(ts, turn, code)
             continue
         if etype != "assistant/message":
             continue
@@ -835,14 +919,18 @@ def _convert_dsh_to_internal(
     DSH emits newline-delimited JSON with a ``session`` header and slash-typed
     body events (``user/message``, ``assistant/message``, ``tool/call``,
     ``tool/result``). Streaming chunk rows are ignored in favour of the
-    completed ``assistant/message`` (which carries usage). Child sessions live
+    completed ``assistant/message`` (which carries usage), except a failed
+    request's: it has no message, so its error becomes the step (see
+    :func:`_dsh_session_to_messages`) and a load warning. Child sessions live
     under a sibling ``subagents/<id>/session.jsonl`` directory (or the same
     layout inside an export zip, including nested ``subagents/<id>/subagents/``)
     and are merged when present.
     """
-    session, messages, model, provider, title = _dsh_session_to_messages(events)
-    session_id = session.get("id", "") if isinstance(session.get("id"), str) else ""
     load_warnings: list[str] = list(child_warnings or [])
+    session, messages, model, provider, title = _dsh_session_to_messages(
+        events, warnings=load_warnings,
+    )
+    session_id = session.get("id", "") if isinstance(session.get("id"), str) else ""
     child_logs: list[tuple[str | None, list[dict]]]
     child_hashes: dict[str, str] = {}
     hashes_by_path: dict[str, str] = {}
@@ -879,12 +967,17 @@ def _convert_dsh_to_internal(
     for child_path, child_events in child_logs:
         if not child_events:
             continue
-        child_session, child_messages, child_model, child_provider, child_title = _dsh_session_to_messages(child_events)
+        child_failures: list[str] = []
+        child_session, child_messages, child_model, child_provider, child_title = (
+            _dsh_session_to_messages(child_events, warnings=child_failures)
+        )
         child_id = child_session.get("id")
         if isinstance(child_id, str) and child_id:
             if child_id in sub_agent_ids:
                 continue
             sub_agent_ids.add(child_id)
+        # Only a child whose messages are merged reports its failed requests.
+        load_warnings.extend(child_failures)
         if child_path:
             # Recorded only AFTER the dedupe above, so the list names the files
             # whose events actually reach `messages` — nothing else.

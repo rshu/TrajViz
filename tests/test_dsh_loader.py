@@ -8,7 +8,10 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
+import agent_trajviz as tv
+from agent_trajviz import llm
 from agent_trajviz.converge.canonical import canonicalize_steps
+from agent_trajviz.insight.assistant import _error_step_lines, _timeline_row
 from agent_trajviz.insight.charts import bind_timeline_agents, build_file_interaction_chart
 from agent_trajviz.insight.charts.activity import (
     FILE_PATH_LABEL_LIMIT,
@@ -19,6 +22,7 @@ from agent_trajviz.insight.charts.activity import (
 from agent_trajviz.insight.diagnostics import extract_file_interactions
 from agent_trajviz.insight.formatting import format_performance_md
 from agent_trajviz.insight.loaders import (
+    _convert_dsh_to_internal,
     _dsh_drop_seed_prefix,
     _zip_dsh_members,
     detect_format,
@@ -901,6 +905,303 @@ class DshLoaderTests(unittest.TestCase):
         user_previews = [s.get("text_preview") or "" for s in steps if s["role"] == "user"]
         self.assertTrue(all("Background subagent" not in p for p in user_previews))
         self.assertGreaterEqual(len(user_previews), 1)
+
+
+# A real DSH v4 session ended this way: its only model request failed before
+# any output (seq 15, ``assistant/attempt``) and the turn ended with the same
+# error (seq 17, ``turn/end``). Field names are as recorded.
+_NO_ADAPTER = 'no adapter registered for provider "deepseek"'
+_T_FAILED = 1_793_009_705_715
+
+
+def _attempt_failed(seq, time, *, code="NO_ADAPTER", message=_NO_ADAPTER, turn=1, usage=None):
+    data = {"turn": turn, "step": 1, "stream": [{
+        "type": "chunk",
+        "time": time,
+        "chunk": {"type": "finish",
+                  "reason": {"kind": "error", "failure": {"message": message, "code": code}}},
+    }]}
+    if usage is not None:
+        data["usage"] = usage
+    return _evt("assistant/attempt", seq, time, data)
+
+
+def _turn_end(seq, time, reason, *, turn=1):
+    return _evt("turn/end", seq, time, {"turn": turn, "reason": reason})
+
+
+def _turn_error(code="NO_ADAPTER", message=_NO_ADAPTER):
+    return {"kind": "error", "error": {"message": message, "code": code}}
+
+
+class DshModelFailureTests(unittest.TestCase):
+    """A failed model request must surface; it used to leave a healthy-looking empty run."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = tmp.name
+
+    def _run(self, tail, name="session.v4.jsonl"):
+        # As recorded: header, turn and step start, the prompt, then the request.
+        events = [
+            _session(version=4, id="session-failed", isSeeded=False),
+            _evt("turn/start", 4, _T_FAILED + 1, {"turn": 1}),
+            _evt("step/start", 6, _T_FAILED + 2, {"turn": 1, "step": 1}),
+            _user(8, _T_FAILED + 289, "Implement the audit command"),
+            _evt("request/context", 13, _T_FAILED + 290,
+                 {"provider": "deepseek", "model": "deepseek-flash"}),
+            *tail,
+        ]
+        return tv.load(_write(self.tmp, name, events))
+
+    @staticmethod
+    def _failed(run):
+        return [step for step in run.steps if step["finish"] == "error"]
+
+    def test_failed_attempt_becomes_one_error_step_and_warning(self):
+        run = self._run([
+            _attempt_failed(15, _T_FAILED + 302),
+            _evt("step/end", 16, _T_FAILED + 302, {"turn": 1, "step": 1}),
+            _turn_end(17, _T_FAILED + 303, _turn_error()),
+        ])
+        self.assertGreaterEqual(len(run.steps), 2)
+        # The turn/end repeats the attempt's failure: one step and one warning.
+        [step] = self._failed(run)
+        self.assertEqual(step["role"], "assistant")
+        self.assertEqual(step["model_id"], "deepseek-flash")
+        self.assertEqual(
+            [(part["type"], part["text"]) for part in step["parts"]],
+            [("text", "Model request failed (NO_ADAPTER)")],
+        )
+        self.assertEqual(run.warnings, ("DSH turn 1 ended with error NO_ADAPTER",))
+
+    def test_failed_turn_without_failed_attempt_becomes_error_step(self):
+        run = self._run([
+            _turn_end(17, _T_FAILED + 303, _turn_error("TURN_FAILED", "runtime stopped the turn")),
+        ])
+        self.assertEqual([[part["text"] for part in step["parts"]] for step in self._failed(run)],
+                         [["Model request failed (TURN_FAILED)"]])
+        self.assertEqual(run.warnings, ("DSH turn 1 ended with error TURN_FAILED",))
+
+    def test_failed_attempt_covers_only_its_own_turn(self):
+        run = self._run([
+            _attempt_failed(15, _T_FAILED + 302),
+            _turn_end(17, _T_FAILED + 303, _turn_error()),
+            _evt("turn/start", 18, _T_FAILED + 400, {"turn": 2}),
+            _turn_end(19, _T_FAILED + 500, _turn_error("RATE_LIMITED", "slow down"), turn=2),
+        ])
+        self.assertEqual([step["parts"][0]["text"] for step in self._failed(run)], [
+            "Model request failed (NO_ADAPTER)",
+            "Model request failed (RATE_LIMITED)",
+        ])
+        self.assertEqual(run.warnings, (
+            "DSH turn 1 ended with error NO_ADAPTER",
+            "DSH turn 2 ended with error RATE_LIMITED",
+        ))
+
+    def test_each_failed_request_adds_a_warning(self):
+        # One warning per error step, even when two lines read the same.
+        run = self._run([
+            _attempt_failed(15, _T_FAILED + 302),
+            _attempt_failed(16, _T_FAILED + 310),
+            _turn_end(17, _T_FAILED + 311, _turn_error()),
+        ])
+        self.assertEqual(len(self._failed(run)), 2)
+        self.assertEqual(run.warnings, ("DSH turn 1 ended with error NO_ADAPTER",) * 2)
+
+    def test_failed_attempt_keeps_its_usage(self):
+        run = self._run([_attempt_failed(15, _T_FAILED + 302, usage={
+            "inputTokens": 1200, "outputTokens": 7, "cacheReadTokens": 1000,
+        })])
+        [step] = self._failed(run)
+        self.assertEqual(
+            {key: step["tokens"][key] for key in ("total", "input", "output", "cache_read")},
+            {"total": 2207, "input": 1200, "output": 7, "cache_read": 1000},
+        )
+
+    def test_failure_texts_leave_out_the_recorded_message(self):
+        # A provider's message can carry URLs, hostnames, keys or response bodies,
+        # so the step text and the warning name the recorded code only.
+        message = ('POST https://api.example.test/v1/chat failed: 401 {"error": "invalid '
+                   'api-key-0000"} ' + "x" * 300)
+        run = self._run([
+            _attempt_failed(15, _T_FAILED + 302, code="UPSTREAM", message=message),
+            _turn_end(17, _T_FAILED + 400, _turn_error("TURN_FAILED", message), turn=2),
+        ])
+        self.assertEqual([step["parts"][0]["text"] for step in self._failed(run)],
+                         ["Model request failed (UPSTREAM)", "Model request failed (TURN_FAILED)"])
+        self.assertEqual(run.warnings, ("DSH turn 1 ended with error UPSTREAM",
+                                        "DSH turn 2 ended with error TURN_FAILED"))
+        brief = llm.brief(run)
+        for fragment in ("api.example.test", "api-key-0000", "xxxxxxxx"):
+            self.assertNotIn(fragment, brief)
+
+    def test_failure_without_details_still_surfaces(self):
+        run = self._run([_evt("turn/end", 17, _T_FAILED + 303, {"reason": {"kind": "error"}})])
+        self.assertEqual([step["parts"][0]["text"] for step in self._failed(run)],
+                         ["Model request failed (unknown)"])
+        self.assertEqual(run.warnings, ("DSH turn ? ended with error unknown",))
+
+    def test_sub_agent_failure_is_merged_with_its_warning(self):
+        export = os.path.join(self.tmp, "export")
+        parent = _write(export, "session.jsonl", [
+            _session(),
+            _user(1, _T_FAILED + 1, "delegate the review"),
+            _assistant(2, _T_FAILED + 2, [{"type": "text", "text": "Delegated."}]),
+        ])
+        _write(export, os.path.join("subagents", "child-1", "session.jsonl"), [
+            _session(id="child-1", origin="subagent", parentSession="session-parent"),
+            _user(1, _T_FAILED + 3, "review the diff", msg_id="child-user"),
+            _turn_end(2, _T_FAILED + 4, _turn_error()),
+        ])
+        run = tv.load(parent)
+        [step] = self._failed(run)
+        self.assertEqual(step["session_id"], "child-1")
+        self.assertTrue(step["is_sub_agent"])
+        self.assertEqual(run.warnings, ("DSH turn 1 ended with error NO_ADAPTER",))
+
+    def test_parent_and_sub_agent_failing_alike_add_a_warning_each(self):
+        # The warning names no session, so two failures must stay two lines.
+        export = os.path.join(self.tmp, "export")
+        parent = _write(export, "session.jsonl", [
+            _session(),
+            _user(1, _T_FAILED + 1, "delegate the review"),
+            _turn_end(2, _T_FAILED + 2, _turn_error()),
+        ])
+        _write(export, os.path.join("subagents", "child-1", "session.jsonl"), [
+            _session(id="child-1", origin="subagent", parentSession="session-parent"),
+            _user(1, _T_FAILED + 3, "review the diff", msg_id="child-user"),
+            _turn_end(2, _T_FAILED + 4, _turn_error()),
+        ])
+        run = tv.load(parent)
+        self.assertEqual([step["session_id"] for step in self._failed(run)],
+                         ["session-parent", "child-1"])
+        self.assertEqual(run.warnings, ("DSH turn 1 ended with error NO_ADAPTER",) * 2)
+
+    def test_a_sub_agent_log_read_twice_adds_its_failure_once(self):
+        # A child already merged is skipped whole: no second step, no second warning.
+        child = [
+            _session(id="child-1", origin="subagent", parentSession="session-parent"),
+            _user(1, _T_FAILED + 3, "review the diff", msg_id="child-user"),
+            _turn_end(2, _T_FAILED + 4, _turn_error()),
+        ]
+        raw = _convert_dsh_to_internal(
+            [_session(), _user(1, _T_FAILED + 1, "delegate the review")],
+            child_event_lists=[child, list(child)],
+        )
+        failed = [msg for msg in raw["messages"] if msg["info"].get("finish") == "error"]
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(raw["_load_warnings"], ["DSH turn 1 ended with error NO_ADAPTER"])
+
+    def test_failed_request_counts_in_the_errors_health_check(self):
+        run = self._run([
+            _attempt_failed(15, _T_FAILED + 302),
+            _turn_end(17, _T_FAILED + 303, _turn_error()),
+        ])
+        self.assertNotEqual({verdict["status"] for verdict in run.health}, {"good"})
+        [errors] = [verdict for verdict in run.health if verdict["metric"] == "Errors"]
+        self.assertEqual(errors, {"metric": "Errors", "status": "warn", "label": "1",
+                                  "detail": "1 failed model request(s)"})
+
+    def test_errors_health_check_adds_failed_requests_to_failed_tool_calls(self):
+        failed_tool = [
+            _assistant(14, _T_FAILED + 300, [{"type": "tool-call", "id": "call-1", "name": "bash",
+                                              "arguments": json.dumps({"command": "make"})}]),
+            _tool_call(15, _T_FAILED + 301, "call-1", "bash", {"command": "make"}),
+            _tool_result(16, _T_FAILED + 302, "call-1", "make: *** [all] Error 2", is_error=True),
+        ]
+        cases = {
+            "healthy": ([_assistant(14, _T_FAILED + 300, [{"type": "text", "text": "Done."}])],
+                        ("good", "0", "No failed tool calls")),
+            "tool-and-request": ([*failed_tool, _attempt_failed(17, _T_FAILED + 400)],
+                                 ("warn", "2", "1 failed tool call(s), 1 failed model request(s)")),
+            "three-requests": (
+                [_turn_end(16 + turn, _T_FAILED + 400 + turn, _turn_error(), turn=turn)
+                 for turn in (1, 2, 3)],
+                ("bad", "3", "3 failed model request(s)"),
+            ),
+        }
+        for name, (tail, expected) in cases.items():
+            with self.subTest(name):
+                run = self._run(tail, name=os.path.join(name, "session.v4.jsonl"))
+                [errors] = [verdict for verdict in run.health if verdict["metric"] == "Errors"]
+                self.assertEqual((errors["status"], errors["label"], errors["detail"]), expected)
+
+    def test_brief_lists_the_failed_request_among_error_steps(self):
+        # The analysis model reads only the brief: the failure must be in it.
+        cases = {
+            "failed": ([_attempt_failed(15, _T_FAILED + 302),
+                        _turn_end(17, _T_FAILED + 303, _turn_error())],
+                       ["- step 1 model request failed",
+                        "  output: Model request failed (NO_ADAPTER)"]),
+            "healthy": ([_assistant(14, _T_FAILED + 300, [{"type": "text", "text": "Done."}])],
+                        ["(no tool errors)"]),
+        }
+        for name, (tail, expected) in cases.items():
+            with self.subTest(name):
+                brief = llm.brief(self._run(tail, name=os.path.join(name, "session.v4.jsonl")))
+                section = brief.split("## ERROR_STEPS\n", 1)[1].split("\n\n", 1)[0]
+                self.assertEqual(section.splitlines(), expected)
+
+    def test_brief_caps_error_steps_listing_failed_requests(self):
+        # 20 failed turns: like tool errors, the list stops at 32 lines plus "- …".
+        run = self._run([_turn_end(16 + turn, _T_FAILED + 400 + turn, _turn_error(), turn=turn)
+                         for turn in range(1, 21)])
+        section = llm.brief(run).split("## ERROR_STEPS\n", 1)[1].split("\n\n", 1)[0]
+        lines = section.splitlines()
+        self.assertEqual(len(lines), 33)
+        self.assertEqual(lines[-2:], ["  output: Model request failed (NO_ADAPTER)", "- …"])
+
+    def test_brief_step_index_flags_the_failed_request(self):
+        # STEP_INDEX must agree with ERROR_STEPS: the failed request is an error step.
+        cases = {
+            "failed": ([_attempt_failed(15, _T_FAILED + 302),
+                        _turn_end(17, _T_FAILED + 303, _turn_error())],
+                       ["0 user - 0tok - Implement the audit command",
+                        "1 assistant - 0tok - ERR"]),
+            "healthy": ([_assistant(14, _T_FAILED + 300, [{"type": "text", "text": "Done."}])],
+                        ["0 user - 0tok - Implement the audit command",
+                         "1 assistant 0.3s 130tok -"]),
+        }
+        for name, (tail, expected) in cases.items():
+            with self.subTest(name):
+                brief = llm.brief(self._run(tail, name=os.path.join(name, "session.v4.jsonl")))
+                section = brief.split("## STEP_INDEX\n", 1)[1].split("\n\n", 1)[0]
+                self.assertEqual(section.splitlines(), expected)
+
+    def test_brief_flags_only_the_error_finish(self):
+        # DSH records no other finish, but other formats mark healthy steps "stop" etc.
+        steps = [
+            {"index": 1, "role": "assistant", "finish": "stop", "text_preview": "Done."},
+            {"index": 2, "role": "assistant", "finish": "tool-calls"},
+            {"index": 3, "role": "assistant", "finish": "error",
+             "text_preview": "Model request failed (NO_ADAPTER)"},
+        ]
+        self.assertEqual([_timeline_row(step) for step in steps], [
+            "1 assistant - 0tok -", "2 assistant - 0tok -", "3 assistant - 0tok - ERR",
+        ])
+        self.assertEqual(_error_step_lines(steps), [
+            "- step 3 model request failed", "  output: Model request failed (NO_ADAPTER)",
+        ])
+
+    def test_lifecycle_events_without_errors_change_nothing(self):
+        answer = _assistant(15, _T_FAILED + 302, [{"type": "text", "text": "Done."}])
+        plain = self._run([answer], name=os.path.join("plain", "session.v4.jsonl"))
+        observed = self._run([
+            _evt("assistant/attempt", 14, _T_FAILED + 301, {"turn": 1, "step": 1, "stream": [{
+                "type": "chunk", "time": _T_FAILED + 301,
+                "chunk": {"type": "finish", "reason": {"kind": "stop"}},
+            }]}),
+            answer,
+            _evt("step/end", 16, _T_FAILED + 303, {"turn": 1, "step": 1}),
+            _turn_end(17, _T_FAILED + 304, {"kind": "completed"}),
+            _turn_end(19, _T_FAILED + 305, {"kind": "aborted", "reason": {"kind": "parent"}},
+                      turn=2),
+        ], name=os.path.join("observed", "session.v4.jsonl"))
+        self.assertEqual(observed.steps, plain.steps)
+        self.assertEqual(observed.warnings, plain.warnings)
+        self.assertEqual(observed.health, plain.health)
 
 
 def _asst(index, *, agent="", session_id="", is_sub_agent=None, title=""):

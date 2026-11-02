@@ -1316,11 +1316,22 @@ def compute_health_verdict(metrics: dict, step_analytics: list[dict]) -> list[di
     # Failed tool calls — tool_fail counts failing tool CALLS (already reflected
     # in Tool Success); label accordingly rather than as "error steps".
     failed_calls = metrics.get("tool_fail", 0)
+    # A failed model request fails no tool call. Loaders record it as a step
+    # with finish "error" (a system error to step_errors); without counting it
+    # here, a run whose only request failed rated "good".
+    finishes = metrics.get("finish_breakdown")
+    failed_requests = finishes.get("error", 0) if isinstance(finishes, dict) else 0
+    error_count = failed_calls + failed_requests
     if metrics.get("tool_unknown_outcomes", 0):
         status, detail = "unavailable", (
             f"{failed_calls} observed failed call(s); "
             f"{metrics['tool_unknown_outcomes']} tool outcomes were not recorded"
         )
+    elif failed_requests:
+        status = "warn" if error_count <= 2 else "bad"
+        detail = f"{failed_requests} failed model request(s)"
+        if failed_calls:
+            detail = f"{failed_calls} failed tool call(s), {detail}"
     elif failed_calls == 0:
         status, detail = "good", "No failed tool calls"
     elif failed_calls <= 2:
@@ -1328,7 +1339,8 @@ def compute_health_verdict(metrics: dict, step_analytics: list[dict]) -> list[di
     else:
         status, detail = "bad", f"{failed_calls} failed tool calls — agent may be struggling"
     verdicts.append({"metric": "Errors", "status": status,
-                     "label": "N/A" if status == "unavailable" else str(failed_calls), "detail": detail})
+                     "label": "N/A" if status == "unavailable" else str(error_count),
+                     "detail": detail})
 
     return verdicts
 

@@ -515,6 +515,16 @@ def _waste_lines(streaks: list[dict], flags: list[dict]) -> list[str]:
 def _error_step_lines(steps: list[dict], limit: int = 16) -> list[str]:
     lines: list[str] = []
     for step in steps:
+        if step.get("finish") == "error":
+            # A failed model request fails no tool call, yet it is often where
+            # the run stopped; HEALTH counts it, so name it here as well.
+            lines.append(f"- step {step.get('index')} model request failed")
+            text = _clip(str(step.get("text_preview") or ""), _OUTPUT_CLIP)
+            if text:
+                lines.append(f"  output: {text}")
+            if len(lines) >= limit * 2:
+                lines.append("- …")
+                return lines
         if not step.get("error_count"):
             continue
         for tool_call in step.get("tool_calls") or []:
@@ -560,7 +570,9 @@ def _timeline_row(step: dict) -> str:
     dur = step.get("duration")
     dur_s = f"{dur:.1f}s" if isinstance(dur, (int, float)) else "-"
     tok = (step.get("tokens") or {}).get("total", 0) if isinstance(step.get("tokens"), dict) else 0
-    err = " ERR" if step.get("error_count") else ""
+    # A failed model request is an error step without a failed tool call;
+    # ERROR_STEPS lists it, so the index flags it too.
+    err = " ERR" if step.get("error_count") or step.get("finish") == "error" else ""
     tool_s = ",".join(tools[:6]) if tools else "-"
     preview = ""
     if role == "user":
