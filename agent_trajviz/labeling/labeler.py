@@ -80,6 +80,14 @@ _ABORT_ALL_FAILED = (
     "labeling aborted: all {count} assistant steps failed ({summary}); no sidecar written"
 )
 _SOME_FAILED = "%d of %d assistant steps could not be classified (%s)"
+#: What :func:`_failure_name` calls a request whose output budget ran out before any answer.
+_BUDGET_SPENT = llm.LabelBudgetExhausted.__name__
+#: Appended to both summaries when a step ran out of output budget: the class name alone
+#: does not say what to change.
+_BUDGET_REMEDY = (
+    "; raise --max-tokens / LABEL_MAX_TOKENS "
+    "(reasoning models spend the budget on hidden thinking)"
+)
 
 
 def _ensure_output_is_not_input(trajectory_path: str | Path, output_path: str | Path) -> None:
@@ -193,7 +201,7 @@ def _stop_if_rejected(failures: list[str | None]) -> None:
     401, 403 and 404 mean a bad key, a missing permission or a wrong URL or model, which
     no later step will get past; labeling on would only file every step as unknown.
     """
-    statuses = [_REJECTED.get(failure) for failure in failures]
+    statuses = [_REJECTED.get(failure) if failure else None for failure in failures]
     if None in statuses:
         return
     status = statuses[-1]  # the latest status picks the remedy if they differ
@@ -283,10 +291,14 @@ def label_trajectory(
     failed = [failure for failure in failures if failure is not None]
     if failed:
         # Each kind of failure with its count, most frequent first: "HTTPError 503 ×26".
-        summary = ", ".join(f"{name} ×{count}" for name, count in Counter(failed).most_common())
+        kinds = Counter(failed)
+        summary = ", ".join(f"{name} ×{count}" for name, count in kinds.most_common())
+        remedy = _BUDGET_REMEDY if _BUDGET_SPENT in kinds else ""
+        # Both summaries count the steps sent to the model; an empty assistant step never is.
         if len(failed) == len(failures):
-            raise LabelingAborted(_ABORT_ALL_FAILED.format(count=len(failed), summary=summary))
-        logger.warning(_SOME_FAILED, len(failed), assistant_count, summary)
+            message = _ABORT_ALL_FAILED.format(count=len(failures), summary=summary)
+            raise LabelingAborted(message + remedy)
+        logger.warning(_SOME_FAILED + remedy, len(failed), len(failures), summary)
 
     output = {
         "schema_version": SIDECAR_SCHEMA,

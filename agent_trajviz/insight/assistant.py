@@ -990,7 +990,11 @@ def answer_question(
     except OutputBudgetExhausted as exc:
         # Keep what arrived, marked as cut off; with nothing visible, say where the budget went.
         if exc.text:
-            reply = exc.text + "\n\n" + _truncation_marker(exc.limit, cfg, chinese)
+            text = exc.text
+            if text.count("```") % 2:
+                # The cut came inside a code block; close it so the marker is not shown as code.
+                text += "\n```"
+            reply = text + "\n\n" + _truncation_marker(exc.limit, cfg, chinese)
         else:
             reply = _public_http_error(exc, cfg)
     except Exception as exc:  # noqa: BLE001 — surface a safe message in the panel

@@ -41,6 +41,10 @@ def _error_reply(status):
 VALID_ANSWER = '{"phase":"understand","action":"code_reading"}'
 # Request details that must never reach a log line or an error message.
 PRIVATE = ("example.invalid", "synthetic-query", "synthetic-secret-body", "synthetic-key")
+# Appended to the failure summaries when a step ran out of output budget: the class name
+# alone does not say what to change.
+BUDGET_REMEDY = ("; raise --max-tokens / LABEL_MAX_TOKENS "
+                 "(reasoning models spend the budget on hidden thinking)")
 
 
 def _step(index, role="assistant", text="Reading the code"):
@@ -429,9 +433,11 @@ class FailureReportingTests(unittest.TestCase):
         self.assertEqual(labels[2], ("understand", "code_reading", "llm"))
         output = "\n".join(logs.output)
         for line in ("labeling index 1 failed (LabelBudgetExhausted); retrying",
-                     "labeling index 1 failed again (LabelBudgetExhausted); labeled unknown",
-                     "1 of 2 assistant steps could not be classified (LabelBudgetExhausted ×1)"):
+                     "labeling index 1 failed again (LabelBudgetExhausted); labeled unknown"):
             self.assertIn(line, output)
+        warning = ("1 of 2 assistant steps could not be classified (LabelBudgetExhausted ×1)"
+                   + BUDGET_REMEDY)
+        self.assertIn(f"WARNING:agent_trajviz.labeling.labeler:{warning}", logs.output)
 
     def test_http_failures_log_the_status_but_never_the_url_or_body(self):
         with (
@@ -524,6 +530,9 @@ class FailedRunTests(unittest.TestCase):
             (_steps(2), _error_reply(401), "all 2 assistant steps failed (HTTPError 401 ×2)"),
             (_steps(3), outage,
              "all 3 assistant steps failed (HTTPError 503 ×2, ConnectionError ×1)"),
+            # The empty assistant step (index 1) is never sent, so it is not counted.
+            ([_step(0, "user"), _step(1, text=""), _step(2), _step(3)], _error_reply(503),
+             "all 2 assistant steps failed (HTTPError 503 ×2)"),
         )
         for steps, replies, expected in cases:
             with self.subTest(expected=expected), tempfile.TemporaryDirectory() as tmp:
@@ -535,6 +544,41 @@ class FailedRunTests(unittest.TestCase):
                 self.assertEqual(str(raised.exception),
                                  f"labeling aborted: {expected}; no sidecar written")
                 self.assertEqual(list(Path(tmp).iterdir()), [])
+
+    def test_a_run_that_spent_every_budget_says_what_to_raise(self):
+        empty = _openai_reply("", "length")
+        cases = (
+            (_steps(2), empty, "all 2 assistant steps failed (LabelBudgetExhausted ×2)"),
+            # Named whenever a step ran out of budget, not only when that failure is the commonest.
+            (_steps(3), [*[_error_reply(503)] * 4, empty, empty],
+             "all 3 assistant steps failed (HTTPError 503 ×2, LabelBudgetExhausted ×1)"),
+        )
+        for steps, replies, expected in cases:
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as tmp:
+                with (
+                    _model_answers(steps, replies),
+                    self.assertRaises(labeler.LabelingAborted) as raised,
+                ):
+                    _label_to(Path(tmp) / "labeled.json", max_tokens=64)
+                self.assertEqual(str(raised.exception),
+                                 f"labeling aborted: {expected}; no sidecar written{BUDGET_REMEDY}")
+                self.assertEqual(list(Path(tmp).iterdir()), [])
+
+    def test_the_partial_warning_counts_only_the_steps_sent(self):
+        # The empty assistant step (index 1) is never sent; 1 of the 3 steps sent failed.
+        steps = [_step(0, "user"), _step(1, text=""), _step(2), _step(3), _step(4)]
+        replies = [_error_reply(503), _error_reply(503), *[_openai_reply(VALID_ANSWER)] * 2]
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            _model_answers(steps, replies) as post,
+            self.assertLogs(labeler.logger, level="WARNING") as logs,
+        ):
+            result = _label_to(Path(tmp) / "labeled.json")
+        self.assertEqual(post.call_count, 4)
+        sources = [s["label_source"] for s in result["steps"]]
+        self.assertEqual(sources, ["default", "fallback", "fallback", "llm", "llm"])
+        warning = "1 of 3 assistant steps could not be classified (HTTPError 503 ×1)"
+        self.assertIn(f"WARNING:agent_trajviz.labeling.labeler:{warning}", logs.output)
 
     def test_the_command_exits_2_when_every_call_fails(self):
         with tempfile.TemporaryDirectory() as tmp:

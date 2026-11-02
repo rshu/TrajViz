@@ -600,6 +600,17 @@ class OutputBudgetTests(unittest.TestCase):
                                   source=source)
                 self.assertEqual(reply, _PARTIAL + "\n\n" + marker)
 
+    def test_cut_off_inside_a_code_block_closes_it_before_the_marker(self):
+        # Left open, the fence would render the marker as code.
+        fenced = "Step 10 re-reads the file:\n\n```python\nfor line in open(path):"
+        reply = self._ask(_openai_reply(fenced, "length"))
+        self.assertEqual(reply, fenced + "\n```" + "\n\n" + _CUT_OFF_ENV)
+
+    def test_cut_off_after_a_closed_code_block_adds_no_fence(self):
+        balanced = "Step 10 runs:\n\n```bash\npytest -q\n```\n\nIt is slow because the model"
+        reply = self._ask(_openai_reply(balanced, "length"))
+        self.assertEqual(reply, balanced + "\n\n" + _CUT_OFF_ENV)
+
     def test_replies_that_did_not_reach_the_limit_are_unchanged(self):
         self.assertEqual(self._ask(_openai_reply("Step 4.", "stop")), "Step 4.")
         self.assertEqual(self._ask(_openai_reply("", "stop")),
