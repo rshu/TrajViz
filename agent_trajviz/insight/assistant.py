@@ -361,11 +361,58 @@ def _verdict_lines(verdicts: list[dict]) -> list[str]:
     return lines
 
 
+#: Most agent rows the brief lists (see ``_agent_lines``).
+_AGENT_LINE_CAP = 24
+#: Stands in for the agents past the cap; only integers are interpolated.
+_AGENTS_OMITTED_LINE = (
+    "- … {omitted} more sub-agents not listed (showing the {shown} longest-running): "
+    "{steps} assistant steps, {tokens} tok, {tools} tools, {errors} errors in total"
+)
+#: Most insight lines the brief lists (see ``_agent_lines``). An agent raises at
+#: most two (no prompt caching, error rate) and only one agent can take over 60%
+#: of the tokens or 70% of the tool calls, so a session of up to
+#: ``_AGENT_LINE_CAP`` agents never exceeds it and keeps every insight.
+_INSIGHT_LINE_CAP = 2 * _AGENT_LINE_CAP + 2
+#: Stands in for the insights past the cap; only an integer is interpolated.
+_INSIGHTS_OMITTED_LINE = "- … {omitted} more insights not listed"
+
+
 def _agent_lines(summaries: list[dict]) -> list[str]:
+    """One line per agent, then the insights, each list capped.
+
+    Both lists grow with the number of agents. A Claude Code session with 257
+    sub-agents filled the whole brief with agent lines, and the tail cut then
+    dropped every step-level section the model is told to cite. Past
+    ``_AGENT_LINE_CAP`` the parent stays first (``compute_agent_summary``
+    orders agents by first appearance, so it is the first summary), the
+    longest-running sub-agents fill the other lines and one line totals the
+    rest. The insights still read every summary, so an omitted sub-agent can
+    still be flagged. Each agent can raise two of them, though, so a few hundred
+    uncached or erroring sub-agents could crowd out the same sections; past
+    ``_INSIGHT_LINE_CAP`` the first insights, in the order
+    ``generate_agent_insights`` gives them, stay and one line counts the rest.
+    """
     if not summaries:
         return ["(single-agent or unlabeled)"]
+    listed = summaries
+    omitted: list[dict] = []
+    if len(summaries) > _AGENT_LINE_CAP:
+        def rank(value: Any) -> float:
+            # A duration or token count the export did not record ranks last.
+            return float(value) if isinstance(value, (int, float)) else float("-inf")
+
+        others = sorted(
+            summaries[1:],
+            key=lambda agent: (
+                rank(agent.get("total_duration_s")),
+                rank(agent.get("total_tokens")),
+            ),
+            reverse=True,
+        )
+        listed = [summaries[0], *others[: _AGENT_LINE_CAP - 1]]
+        omitted = others[_AGENT_LINE_CAP - 1 :]
     lines = []
-    for agent in summaries:
+    for agent in listed:
         gen_rate = agent.get("output_tokens_per_sec")
         lines.append(
             f"- {agent.get('label')}: {agent.get('step_count')} assistant steps, "
@@ -374,8 +421,27 @@ def _agent_lines(summaries: list[dict]) -> list[str]:
             f"cache {_pct_or_na(agent.get('cache_efficiency_pct'))}, "
             f"gen {'n/a' if gen_rate is None else gen_rate} tok/s"
         )
-    for insight in generate_agent_insights(summaries):
+    if omitted:
+        # Unrecorded counts (None on OTLP rows) add nothing rather than failing.
+        totals = {
+            name: sum(
+                int(agent[key]) for agent in omitted if isinstance(agent.get(key), (int, float))
+            )
+            for name, key in (
+                ("steps", "step_count"),
+                ("tokens", "total_tokens"),
+                ("tools", "tool_call_count"),
+                ("errors", "error_count"),
+            )
+        }
+        lines.append(
+            _AGENTS_OMITTED_LINE.format(omitted=len(omitted), shown=len(listed) - 1, **totals)
+        )
+    insights = generate_agent_insights(summaries)
+    for insight in insights[:_INSIGHT_LINE_CAP]:
         lines.append(f"- insight: {insight}")
+    if len(insights) > _INSIGHT_LINE_CAP:
+        lines.append(_INSIGHTS_OMITTED_LINE.format(omitted=len(insights) - _INSIGHT_LINE_CAP))
     return lines
 
 
@@ -502,6 +568,10 @@ def _timeline_row(step: dict) -> str:
     return f"{step.get('index')} {role} {dur_s} {tok}tok {tool_s}{err}{preview}"
 
 
+#: Ends a brief cut to ``_BRIEF_CHAR_LIMIT``; ``{sections}`` is filled from the fixed titles only.
+_BRIEF_TRUNCATED_MARKER = "\n…[truncated; sections cut: {sections}]\n"
+
+
 def _compose_brief(
     *,
     raw: dict,
@@ -533,13 +603,29 @@ def _compose_brief(
         ("STEP_INDEX", _timeline_lines(steps)),
     ]
     chunks = ["# Trajectory analysis brief", ""]
+    section_ends: list[tuple[str, int]] = []
     for title, lines in sections:
         chunks.append(f"## {title}")
         chunks.extend(lines)
+        # Offset just past this section's last line in the joined brief.
+        section_ends.append((title, len("\n".join(chunks))))
         chunks.append("")
     brief = "\n".join(chunks).strip() + "\n"
     if len(brief) > _BRIEF_CHAR_LIMIT:
-        brief = brief[: _BRIEF_CHAR_LIMIT - 20] + "\n…[truncated]\n"
+        # A bare "[truncated]" left the model guessing what it could not see;
+        # name every section whose text runs past the cut (header lost, or
+        # only some of its lines kept). Naming more sections lengthens the
+        # marker, which moves the cut earlier and can reach one more section,
+        # so repeat until the set stops growing (at most once per section).
+        cut: list[str] = []
+        while True:
+            marker = _BRIEF_TRUNCATED_MARKER.format(sections=", ".join(cut))
+            keep = max(0, _BRIEF_CHAR_LIMIT - len(marker))
+            lost = [title for title, end in section_ends if end > keep]
+            if lost == cut:
+                break
+            cut = lost
+        brief = brief[:keep] + marker
     return brief
 
 

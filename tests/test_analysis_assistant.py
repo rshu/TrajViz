@@ -186,6 +186,39 @@ class AnalysisConfigTests(unittest.TestCase):
                 self.assertNotIn("viewer", status)
 
 
+#: The brief's sections, in the order ``_compose_brief`` writes them.
+_BRIEF_SECTIONS = (
+    "SESSION", "HEALTH", "PERFORMANCE", "AGENTS", "FILES", "TOOL_SEQUENCES",
+    "BOTTLENECKS", "FAILURES", "WASTE", "ERROR_STEPS", "STEP_INDEX",
+)
+
+
+def _agent_summary(label, *, steps=5, tokens=10_000, duration=10.0, tools=4, errors=0,
+                   cache=80.0, gen=40.0, cache_read=8_000):
+    """A ``compute_agent_summary`` row with every field the brief and the insights read."""
+    return {
+        "agent_id": label,
+        "label": label,
+        "step_count": steps,
+        "total_tokens": tokens,
+        "total_duration_s": duration,
+        "tool_call_count": tools,
+        "error_count": errors,
+        "cache_efficiency_pct": cache,
+        "cache_read_tokens": cache_read,
+        "output_tokens_per_sec": gen,
+    }
+
+
+def _brief_with(steps, agents):
+    """``_compose_brief`` over *steps* and *agents*, every other input empty."""
+    return assistant._compose_brief(
+        raw={}, steps=steps, metrics={}, wall_fmt="10m 0s", verdicts=[], agents=agents,
+        bottlenecks=[], fail_pats=[], chains=[], chain_metrics={}, streaks=[],
+        bash_flags=[], tool_seqs=[], file_interactions=[],
+    )
+
+
 class AnalysisBriefTests(unittest.TestCase):
     def test_brief_includes_task_health_bottlenecks_and_errors(self):
         steps = [
@@ -221,6 +254,151 @@ class AnalysisBriefTests(unittest.TestCase):
         brief = assistant.build_analysis_brief(steps, {})
         self.assertNotIn(huge, brief)
         self.assertLess(len(brief), assistant._BRIEF_CHAR_LIMIT)
+
+    def test_many_agents_leave_room_for_every_section(self):
+        # B3: one line per sub-agent let a 257-agent session fill the brief, and
+        # the tail cut then dropped every step-level section the model must cite.
+        steps = [_step(0, "user", duration=None, tokens=0, preview="Port the parser")]
+        steps += [_step(i, duration=1.0, tokens=10) for i in range(1, 80)]
+        # The parent ran briefly, so only its being the parent keeps it listed.
+        main = _agent_summary("main", steps=40, tokens=500_000, duration=0.5, tools=50,
+                              cache_read=450_000)
+        subs = [_agent_summary(f"a{i:016x}", duration=float(i)) for i in range(1, 300)]
+        subs[0]["error_count"] = 3  # the shortest run: omitted, yet still in the insights
+        brief = _brief_with(steps, [main, *subs])
+
+        self.assertEqual([title for title in _BRIEF_SECTIONS if f"\n## {title}\n" not in brief], [])
+        section = brief.split("\n## AGENTS\n", 1)[1].split("\n\n## FILES\n", 1)[0].splitlines()
+        omitted = [line for line in section if line.startswith("- … ")]
+        insights = [line for line in section if line.startswith("- insight: ")]
+        listed = [line for line in section if line not in omitted and line not in insights]
+        self.assertLessEqual(len(listed), 24)
+        self.assertEqual(
+            [line.split(":", 1)[0] for line in listed],
+            ["- main", *(f"- a{i:016x}" for i in range(299, 276, -1))],
+        )
+        self.assertEqual(omitted, [
+            "- … 276 more sub-agents not listed (showing the 23 longest-running): "
+            "1380 assistant steps, 2760000 tok, 1104 tools, 3 errors in total",
+        ])
+        self.assertEqual(insights, [
+            "- insight: Agent a0000000000000001 has 60% error rate (3 errors in 5 steps)",
+        ])
+
+    def test_agent_lines_at_or_below_the_cap_are_unchanged(self):
+        # Not in duration order, so a cap that re-sorted short lists would show.
+        summaries = [
+            _agent_summary("main", steps=12, tokens=90_000, duration=120.5, tools=20,
+                           cache=85.0, gen=42.5, cache_read=76_500),
+            _agent_summary("explore", steps=3, tokens=4_000, duration=15.25, tools=6, errors=1,
+                           cache=None, gen=None, cache_read=0),
+            _agent_summary("plan", steps=2, tokens=3_000, duration=9.0, tools=2, cache=70.0,
+                           gen=12.0, cache_read=2_100),
+            _agent_summary("review", steps=4, tokens=2_000, duration=30.0, tools=4, cache=50.0,
+                           gen=8.5, cache_read=1_000),
+            _agent_summary("fix", steps=1, tokens=1_000, duration=2.0, tools=3, cache=60.0,
+                           gen=20.0, cache_read=600),
+        ]
+        self.assertEqual(assistant._agent_lines(summaries), [
+            "- main: 12 assistant steps, 90000 tok, 120.5s, 20 tools, 0 errors, "
+            "cache 85.0%, gen 42.5 tok/s",
+            "- explore: 3 assistant steps, 4000 tok, 15.25s, 6 tools, 1 errors, "
+            "cache n/a, gen n/a tok/s",
+            "- plan: 2 assistant steps, 3000 tok, 9.0s, 2 tools, 0 errors, "
+            "cache 70.0%, gen 12.0 tok/s",
+            "- review: 4 assistant steps, 2000 tok, 30.0s, 4 tools, 0 errors, "
+            "cache 50.0%, gen 8.5 tok/s",
+            "- fix: 1 assistant steps, 1000 tok, 2.0s, 3 tools, 0 errors, "
+            "cache 60.0%, gen 20.0 tok/s",
+            "- insight: Agent main consumed 90% of total tokens",
+            "- insight: Agent explore has 33% error rate (1 errors in 3 steps)",
+        ])
+
+    def test_agents_over_the_cap_list_main_then_the_longest_running(self):
+        # OTLP rows: the insights skip them, and they may lack a duration or a
+        # count. Unrecorded values rank last and add nothing to the totals.
+        long_runs = [_agent_summary(f"long-{i:02d}", duration=100.0 + i) for i in range(22)]
+        summaries = [
+            _agent_summary("main", duration=0.5),
+            _agent_summary("untimed", steps=4, tokens=None, duration=None, tools=3, errors=None),
+            _agent_summary("tie-fewer-tokens", steps=2, tokens=200, duration=10.0, tools=1),
+            *long_runs,
+            _agent_summary("tie-more-tokens", tokens=300, duration=10.0),
+            _agent_summary("short", steps=3, tokens=50, duration=1.0, tools=2, errors=1),
+        ]
+        for row in summaries:
+            row["data_quality"] = {"source": "otlp"}
+
+        # Exactly at the cap nothing is re-ordered or folded.
+        at_cap = assistant._agent_lines(summaries[:24])
+        self.assertEqual([line.split(":", 1)[0] for line in at_cap],
+                         [f"- {row['label']}" for row in summaries[:24]])
+
+        lines = assistant._agent_lines(summaries)
+        self.assertEqual(
+            [line.split(":", 1)[0] for line in lines[:24]],
+            ["- main", *(f"- long-{i:02d}" for i in range(21, -1, -1)), "- tie-more-tokens"],
+        )
+        self.assertEqual(lines[24:], [
+            "- … 3 more sub-agents not listed (showing the 23 longest-running): "
+            "9 assistant steps, 250 tok, 6 tools, 1 errors in total",
+        ])
+
+    def test_flagged_agents_leave_room_for_every_section(self):
+        # B3 again, through the insights: each sub-agent here caches nothing and
+        # errs on one step in five, so it raises two insight lines. With only the
+        # agent lines capped, 200 such sub-agents still cut FILES..STEP_INDEX.
+        steps = [_step(0, "user", duration=None, tokens=0, preview="Port the parser")]
+        steps += [_step(i, duration=1.0, tokens=10) for i in range(1, 80)]
+        main = _agent_summary("main", steps=40, tokens=500_000, duration=0.5, tools=50,
+                              cache_read=450_000)
+        subs = [_agent_summary(f"a{i:016x}", duration=float(i), errors=1, cache=0.0, cache_read=0)
+                for i in range(1, 300)]
+        brief = _brief_with(steps, [main, *subs])
+
+        self.assertEqual([title for title in _BRIEF_SECTIONS if f"\n## {title}\n" not in brief], [])
+        self.assertNotIn("…[truncated", brief)
+        section = brief.split("\n## AGENTS\n", 1)[1].split("\n\n## FILES\n", 1)[0].splitlines()
+        insights = [line for line in section if line.startswith("- insight: ")]
+        self.assertEqual(len(insights), 50)
+        self.assertEqual(section[-1], "- … 548 more insights not listed")
+
+    def test_insight_lines_stop_at_the_cap_and_count_the_rest(self):
+        # An agent raises at most two insights (no prompt caching, error rate)
+        # and only one agent can take over 60% of the tokens or 70% of the tool
+        # calls, so 24 agents raise at most 2 * 24 + 2 = 50. Here main raises
+        # all four and every sub-agent two: at the agent cap all 50 are listed.
+        def flagged(label, **fields):
+            return _agent_summary(label, errors=1, cache=0.0, cache_read=0, **fields)
+
+        summaries = [flagged("main", tokens=1_000_000, tools=1_000, duration=500.0)]
+        summaries += [flagged(f"sub-{i:02d}", duration=float(i)) for i in range(1, 25)]
+
+        every = [f"- insight: {text}" for text in assistant.generate_agent_insights(summaries[:24])]
+        self.assertEqual(len(every), 50)
+        self.assertEqual(assistant._agent_lines(summaries[:24])[24:], every)
+
+        # One more agent: the first 50 stay in order and one line counts the rest.
+        every = [f"- insight: {text}" for text in assistant.generate_agent_insights(summaries)]
+        self.assertEqual(len(every), 52)
+        self.assertEqual(assistant._agent_lines(summaries)[25:],
+                         [*every[:50], "- … 2 more insights not listed"])
+
+    def test_truncation_marker_names_every_section_it_cut(self):
+        steps = [_step(0, "user", duration=None, tokens=0, preview="Port the parser"),
+                 _step(1, duration=2.0, tokens=10)]
+        with patch.object(assistant, "_BRIEF_CHAR_LIMIT", 600):
+            brief = _brief_with(steps, [])
+        self.assertLessEqual(len(brief), 600)
+        # SESSION and HEALTH survive whole; PERFORMANCE keeps its header but
+        # loses lines, so it is named along with every section after it.
+        self.assertIn("\n## HEALTH\n", brief)
+        self.assertIn("\n## PERFORMANCE\n", brief)
+        marker = (
+            "\n…[truncated; sections cut: PERFORMANCE, AGENTS, FILES, TOOL_SEQUENCES, "
+            "BOTTLENECKS, FAILURES, WASTE, ERROR_STEPS, STEP_INDEX]\n"
+        )
+        self.assertEqual(brief[-len(marker):], marker)
 
 
 class AnalysisChatTests(unittest.TestCase):
