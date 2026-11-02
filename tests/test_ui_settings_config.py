@@ -227,7 +227,7 @@ def test_invalid_environment_temperature_has_finite_form_default_without_mutatin
         assert repr(config_before) == repr(config_after)
 
 
-@pytest.mark.parametrize("field,default", [("MAX_TOKENS", 2048), ("TIMEOUT", 120)])
+@pytest.mark.parametrize("field,default", [("MAX_TOKENS", 8192), ("TIMEOUT", 120)])
 def test_overflow_environment_integers_have_valid_form_defaults(field, default):
     with patch.dict(os.environ, ENV | {"ANALYZE_" + field: str(10**400)}, clear=True):
         original = resolve_session_settings().config
@@ -235,6 +235,24 @@ def test_overflow_environment_integers_have_valid_form_defaults(field, default):
         assert defaults[field.lower()] == default
         assert getattr(original, field.lower()) == 10**400
         json.dumps(defaults, allow_nan=False)
+
+
+def test_default_form_budget_leaves_room_for_reasoning():
+    with patch.dict(os.environ, {}, clear=True):
+        assert nonsecret_settings()["max_tokens"] == 8192
+
+
+def test_max_output_tokens_field_explains_the_reasoning_budget():
+    import gradio as gr
+
+    from agent_trajviz.insight.ui import settings as settings_ui
+
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("ANALYZE_", "LABEL_"))}
+    with patch.dict(os.environ, env, clear=True), gr.Blocks(analytics_enabled=False):
+        refs = settings_ui.layout()
+    assert refs.max_tokens.value == 8192
+    assert refs.max_tokens.info == ("Reasoning models spend part of this on hidden thinking; "
+                                    "raise it if replies come back empty or cut off.")
 
 
 def test_omitted_environment_temperature_stays_omitted_in_form_defaults():

@@ -9,6 +9,10 @@ including the ones that resolved their task. ``task_complete`` is Codex's own
 statement that a turn ended normally; it now marks that turn's final assistant
 message ``stop``, the value the other formats use. A rollout cut off before
 ``task_complete`` keeps an empty finish and still reads as not finished.
+
+``task_complete`` is also the only record of when a turn ended. A turn's final
+assistant message used to be completed at the next turn's start instead, so the
+idle time between two turns read as that step's LLM inference.
 """
 
 from __future__ import annotations
@@ -19,11 +23,14 @@ import tempfile
 import unittest
 
 from agent_trajviz.converge.alignment import _detect_success
+from agent_trajviz.insight.metrics import _compute_timing_metrics
 from agent_trajviz.insight.session import LoadedSession, load_session
 
 
 def _ev(ts: int, etype: str, payload: dict) -> dict:
-    return {"timestamp": f"2026-01-01T00:00:{ts:02d}Z", "type": etype, "payload": payload}
+    # ``ts`` counts seconds from midnight, so a turn can start minutes after the last.
+    stamp = f"2026-01-01T{ts // 3600:02d}:{ts // 60 % 60:02d}:{ts % 60:02d}Z"
+    return {"timestamp": stamp, "type": etype, "payload": payload}
 
 
 def _user(ts: int, text: str) -> dict:
@@ -61,6 +68,21 @@ def _load(events: list[dict]) -> LoadedSession:
 
 def _assistant_steps(session: LoadedSession) -> list[dict]:
     return [s for s in session.steps if s.get("role") == "assistant"]
+
+
+def _two_turns_ten_minutes_apart() -> LoadedSession:
+    return _load(_session(
+        _user(0, "first task"), _assistant(5, "first done"),
+        _ev(8, "event_msg", {"type": "task_complete"}),
+        _user(608, "second task"), _assistant(612, "second done"),
+        _ev(615, "event_msg", {"type": "task_complete"}),
+    ))
+
+
+def _timed(role: str, created_s: int, completed_s: int) -> dict:
+    """A parsed step reduced to the fields the response latencies read."""
+    return {"role": role, "time_created_ms": created_s * 1000,
+            "time_completed_ms": completed_s * 1000}
 
 
 class CodexCompletionTests(unittest.TestCase):
@@ -104,6 +126,103 @@ class CodexCompletionTests(unittest.TestCase):
         s = _load(_session(_user(1, "hello"), _ev(2, "event_msg", {"type": "task_complete"}),
                            _assistant(3, "late reply")))
         self.assertEqual(_assistant_steps(s)[-1]["finish"], "")
+
+
+class CodexTurnTimingTests(unittest.TestCase):
+    """A turn's final assistant step ends at that turn's ``task_complete``.
+
+    Ending it at the next turn's start booked the idle time between turns as
+    the step's own generation time: ten idle minutes made a 3-second step read
+    as 603 seconds of LLM inference, and pushed the first response out to the
+    start of the second turn.
+    """
+
+    def test_a_turns_final_step_ends_at_task_complete_not_at_the_next_turns_start(self):
+        first, last = _assistant_steps(_two_turns_ten_minutes_apart())
+        self.assertEqual(first["duration"], 3.0)  # 5 s -> 8 s, not 5 s -> 608 s
+        self.assertEqual(last["duration"], 3.0)
+
+    def test_the_last_turn_ends_at_its_task_complete_not_at_the_end_of_the_file(self):
+        # A next turn that has started but recorded nothing yet is not part of
+        # the last step; without the stamp the end-of-file backfill booked it.
+        s = _load(_session(
+            _user(0, "task"), _assistant(5, "done"),
+            _ev(8, "event_msg", {"type": "task_complete"}),
+            _ev(608, "event_msg", {"type": "task_started"}),
+        ))
+        self.assertEqual(_assistant_steps(s)[-1]["duration"], 3.0)
+
+    def test_a_later_turn_without_a_reply_does_not_move_this_turns_end(self):
+        # The second task_complete finds the same final message; its recorded
+        # end stays put.
+        s = _load(_session(
+            _user(0, "task"), _assistant(5, "done"),
+            _ev(8, "event_msg", {"type": "task_complete"}),
+            _ev(600, "event_msg", {"type": "task_started"}),
+            _ev(608, "event_msg", {"type": "task_complete"}),
+        ))
+        self.assertEqual(_assistant_steps(s)[-1]["duration"], 3.0)
+
+    def test_a_task_complete_stamped_before_its_message_does_not_end_it(self):
+        # Out-of-order stamps (a hand-edited file) give no valid end, not a
+        # negative duration.
+        s = _load(_session(_user(0, "task"), _assistant(5, "done"),
+                           _ev(3, "event_msg", {"type": "task_complete"})))
+        self.assertIsNone(_assistant_steps(s)[-1]["duration"])
+
+    def test_first_response_latency_ends_at_the_first_turns_task_complete(self):
+        self.assertEqual(_two_turns_ten_minutes_apart().metrics["time_to_first_token"], 8.0)
+
+    def test_a_cut_off_turn_ahead_of_the_first_user_step_is_not_its_response(self):
+        # A sub-agent's first task arrives as a developer message. Its turn is
+        # cut off before task_complete, so it is taken to end where the next
+        # message begins: the user's question at 10 s.
+        s = _load(_session(
+            _ev(1, "response_item", {"type": "message", "role": "developer",
+                                     "content": [{"type": "input_text", "text": "sub-task"}]}),
+            _assistant(5, "early"),
+            _user(10, "question"), _assistant(15, "answer"),
+            _ev(18, "event_msg", {"type": "task_complete"}),
+        ))
+        self.assertEqual(s.metrics["time_to_first_token"], 8.0)  # 10 s -> 18 s, not 0.0
+
+
+class FirstResponseLatencyTests(unittest.TestCase):
+    """The first response began and completed at or after the first user step.
+
+    A Codex sub-agent's first task arrives as a non-user message, so a turn
+    can run before the first user step exists. Measured from that later user
+    step, its completion gave a negative latency, or 0.0 when the turn was cut
+    off and taken to end where the user step begins.
+    """
+
+    def test_a_step_completed_before_the_first_user_step_is_not_its_response(self):
+        steps = [_timed("assistant", 0, 1), _timed("user", 5, 5)]
+        self.assertIsNone(_compute_timing_metrics(steps)["time_to_first_token"])
+
+    def test_latency_runs_to_the_first_step_after_the_first_user_step(self):
+        steps = [_timed("assistant", 0, 1), _timed("user", 5, 5), _timed("assistant", 6, 9)]
+        self.assertEqual(_compute_timing_metrics(steps)["time_to_first_token"], 4.0)
+
+    def test_a_step_that_began_before_the_first_user_step_is_not_its_response(self):
+        # It completes exactly as the user step begins.
+        steps = [_timed("assistant", 5, 10), _timed("user", 10, 10), _timed("assistant", 15, 18)]
+        self.assertEqual(_compute_timing_metrics(steps)["time_to_first_token"], 8.0)
+
+    def test_a_reply_stamped_in_its_questions_second_is_the_first_response(self):
+        # Second-resolution stamps can put a fast reply in the same second.
+        steps = [_timed("user", 5, 5), _timed("assistant", 5, 5), _timed("assistant", 6, 9)]
+        self.assertEqual(_compute_timing_metrics(steps)["time_to_first_token"], 0.0)
+
+    def test_a_step_stamped_completed_before_it_began_gives_no_negative_latency(self):
+        steps = [_timed("user", 5, 5), _timed("assistant", 6, 4)]
+        self.assertIsNone(_compute_timing_metrics(steps)["time_to_first_token"])
+
+    def test_a_step_without_a_creation_stamp_is_judged_by_its_completion(self):
+        # Nothing shows it began before the user step.
+        steps = [_timed("user", 5, 5),
+                 {"role": "assistant", "time_created_ms": None, "time_completed_ms": 9_000}]
+        self.assertEqual(_compute_timing_metrics(steps)["time_to_first_token"], 4.0)
 
 
 if __name__ == "__main__":

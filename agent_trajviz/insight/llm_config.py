@@ -185,9 +185,11 @@ def resolve_analysis_config() -> AnalysisLLMConfig:
         temperature = _env_float("LABEL_TEMPERATURE", 0.2)
     else:
         temperature = 0.2
-    max_tokens = _env_int("ANALYZE_MAX_TOKENS", 0) or _env_int("LABEL_MAX_TOKENS", 2048)
+    # Reasoning models spend part of the budget on hidden thinking before the visible
+    # reply; at 2048 most first passes came back empty or cut off.
+    max_tokens = _env_int("ANALYZE_MAX_TOKENS", 0) or _env_int("LABEL_MAX_TOKENS", 8192)
     if max_tokens <= 0:
-        max_tokens = 2048
+        max_tokens = 8192
     timeout = _env_int("ANALYZE_TIMEOUT", 120)
     if timeout <= 0:
         timeout = 120
@@ -264,7 +266,7 @@ def nonsecret_settings(settings: AnalysisSettings | None = None) -> dict[str, ob
     try:
         max_tokens = _positive_integer(cfg.max_tokens, "Maximum output tokens")
     except ValueError:
-        max_tokens = 2048
+        max_tokens = 8192
     try:
         timeout = _positive_integer(cfg.timeout, "Timeout")
     except ValueError:

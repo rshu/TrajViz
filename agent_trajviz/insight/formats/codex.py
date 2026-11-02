@@ -377,12 +377,21 @@ def _convert_codex_to_internal(events: list[dict], *, source_path: str = "",
                 # step's finish, so record it as `stop`, the value the other
                 # formats use. Only the turn's final assistant message is marked;
                 # a rollout cut off before task_complete keeps an empty finish.
+                # The event's timestamp is also the turn's only recorded end:
+                # without it that message would run on to the next turn's start
+                # and book the idle time between turns as its inference. A stamp
+                # earlier than the message itself is no end at all.
                 for prior in reversed(messages):
                     prior_info = prior.get("info") or {}
                     if prior_info.get("role") == "user":
                         break
                     if prior_info.get("role") == "assistant":
                         prior_info.setdefault("finish", "stop")
+                        turn_time = prior_info["time"]
+                        created = turn_time.get("created")
+                        if (isinstance(ts, int) and isinstance(created, (int, float))
+                                and ts >= created):
+                            turn_time.setdefault("completed", ts)
                         break
 
     # Drain tool calls that never received a function_call_output (session
@@ -404,14 +413,16 @@ def _convert_codex_to_internal(events: list[dict], *, source_path: str = "",
     # Flush any remaining parts
     _flush_message()
 
-    # Approximate each turn's completion as the next turn's start so per-step
-    # durations exist (Codex is single-session; parse_steps backfills the final
-    # turn from the session end timestamp).
+    # Approximate each remaining completion as the next message's start so
+    # per-step durations exist (Codex is single-session; parse_steps backfills
+    # a final message left open from the session end timestamp). A completion
+    # task_complete already recorded is never replaced: the next turn's start
+    # would put the idle time between turns inside the earlier turn's step.
     for i in range(len(messages) - 1):
         cur_t = messages[i]["info"]["time"].get("created")
         nxt_t = messages[i + 1]["info"]["time"].get("created")
         if isinstance(cur_t, (int, float)) and isinstance(nxt_t, (int, float)) and nxt_t >= cur_t:
-            messages[i]["info"]["time"]["completed"] = nxt_t
+            messages[i]["info"]["time"].setdefault("completed", nxt_t)
 
     first_ts_iso = events[0].get("timestamp") if events and isinstance(events[0], dict) else None
     last_ts_iso = events[-1].get("timestamp") if events and isinstance(events[-1], dict) else None
