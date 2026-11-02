@@ -15,7 +15,9 @@ change the public API (the names exported from `agent_trajviz`).
 - Name the Settings fields in analysis error messages when the connection came from Settings,
   and report a read timeout as a timeout rather than as an unreachable API.
 - Accept Anthropic-style base URLs with or without `/v1` in the dashboard and the labeler; the
-  documented `https://api.anthropic.com` returned HTTP 404.
+  documented `https://api.anthropic.com` returned HTTP 404. A base URL without `/v1` now posts
+  to `<base>/v1/messages` (previously `<base>/messages`), so a gateway that served only the old
+  path must also serve `<base>/v1/messages`.
 - Keep the analysis brief's bottleneck, failure, error and step sections for sessions with many
   sub-agents by listing at most 24 agents and 50 insights, and name the sections a truncated
   brief dropped.
@@ -42,7 +44,8 @@ change the public API (the names exported from `agent_trajviz`).
   `agent-trajviz-label` (`LABEL_MAX_TOKENS`), up from 2048 and 1024, so reasoning models can
   finish a reply.
 - Steps whose model request failed (`finish` "error") count in the Errors health check and
-  appear under ERROR_STEPS in the analysis brief for every format, including OpenCode and Pi.
+  appear under ERROR_STEPS in the analysis brief for every format, including OpenCode and Pi,
+  and are also flagged `ERR` in the brief's STEP_INDEX.
 
 ### Added
 
