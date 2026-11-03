@@ -36,9 +36,9 @@ def main() -> None:
         reference.mkdir()
         settings = EvaluationSettings(reference_root=reference, output_root=root / "outputs")
         catalog = run_operation("catalog", settings)
-        assert catalog.success, catalog.reason
+        assert catalog.success, f"{catalog.reason}\n{catalog.logs}"
         controlled = run_operation("fault_injection", settings, payload={"language": "python"})
-        assert controlled.success, controlled.reason
+        assert controlled.success, f"{controlled.reason}\n{controlled.logs}"
         controls = json.loads((Path(controlled.output_dir) / "fault-injection.json").read_text(encoding="utf-8"))
         assert controls["summary"]["passed"] and controls["summary"]["cases_passed"] > 0
         print(json.dumps({"version": agent_trajviz.__version__, "package": agent_trajviz.__file__,

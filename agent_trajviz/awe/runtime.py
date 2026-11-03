@@ -450,7 +450,8 @@ def run_operation(operation: str, settings: EvaluationSettings, *, agent: str | 
                 (job / name).write_text(json.dumps(doc, allow_nan=False), encoding="utf-8")
         environment = {name: value for name, value in os.environ.items()
                        if name in {"PATH", "SYSTEMROOT", "WINDIR", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL"}}
-        environment.update({"HOME": str(job), "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1",
+        environment.update({"HOME": str(job), "USERPROFILE": str(job),
+                            "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1",
                             "AWE_ARGUS_ROOT": str(reference), "AWE_PROJECT_DATA": str(output),
                             "AWE_OUTPUT_DATA": str(output), "AWE_JUDGE_TEMPERATURE": str(settings.temperature),
                             "AWE_JUDGE_MAX_TOKENS": str(settings.max_tokens),

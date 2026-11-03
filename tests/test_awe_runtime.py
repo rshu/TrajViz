@@ -92,6 +92,24 @@ def test_offline_pipeline_has_isolated_code_inputs_and_descendant_network_policy
     assert "pipeline.json" in manifest["artifact_sha256"]
 
 
+def test_private_worker_home_resolves_on_windows_without_inheriting_user_profile(engine, monkeypatch):
+    root, settings = engine
+    monkeypatch.setenv("HOME", "/unrelated-original-home")
+    monkeypatch.setenv("USERPROFILE", "C:/unrelated-original-profile")
+    (root / "scripts" / "run_awe.py").write_text(
+        "import json,ntpath,os\nfrom pathlib import Path\n"
+        "out=Path(__file__).parent.parent/'data'/'home.json'\n"
+        "out.write_text(json.dumps({'home':os.environ.get('HOME'),"
+        "'profile':os.environ.get('USERPROFILE'),'windows_home':ntpath.expanduser('~')}),encoding='utf-8')\n",
+        encoding="utf-8")
+    result = runtime.run_operation("pipeline", settings)
+    assert result.success, (result.reason, result.logs)
+    observed = json.loads((Path(result.output_dir) / "home.json").read_text(encoding="utf-8"))
+    private_home = str(Path(result.project_data).parents[1])
+    assert observed == {"home": private_home, "profile": private_home, "windows_home": private_home}
+    assert "unrelated-original" not in json.dumps(result.to_dict())
+
+
 def test_model_operations_need_explicit_network_or_offline_mode(engine):
     _, settings = engine
     rejected = runtime.run_operation("judge", settings)
