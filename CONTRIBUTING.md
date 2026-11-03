@@ -16,8 +16,8 @@ uv run --with mypy mypy --strict agent_trajviz/__init__.py agent_trajviz/api.py 
 ```
 
 CI runs the same commands on Python 3.11 to 3.14, with the oldest allowed
-dependencies, on macOS, and from the built wheel on Windows. Tests that need
-the optional DECAF checkout skip without it.
+dependencies, on macOS, and from the built wheel on Windows. The bundled evaluation
+engine and its synthetic regression tests run without an external checkout.
 
 ## Ground rules
 

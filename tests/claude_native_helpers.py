@@ -1,7 +1,7 @@
 """Small native Claude Code event builders shared by regression tests.
 
 The flat entries keep individual assertions readable; only native records are
-written to disk. The reference DECAF files remain byte-for-byte unchanged.
+written to disk. The reference ATTRIBUTION files remain byte-for-byte unchanged.
 """
 
 from __future__ import annotations

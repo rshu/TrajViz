@@ -1,4 +1,4 @@
-"""Fixture hygiene — runs in EVERY environment (no DECAF or real-data dependency, so
+"""Fixture hygiene — runs in EVERY environment (no ATTRIBUTION or real-data dependency, so
 it is NOT skipped in standalone CI).
 
 Asserts no credential-shaped strings are committed in tests/fixtures. Failures

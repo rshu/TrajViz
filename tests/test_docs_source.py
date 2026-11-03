@@ -15,11 +15,19 @@ source = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(source)
 
 
-def _current(root: Path) -> None:
+def _builder(*, awe: bool = False) -> bytes:
+    guides = ("index", "quickstart", "guides", "data-reference", *(("awe",) if awe else ()))
+    return f"GUIDES = {guides!r}\n".encode()
+
+
+def _current(root: Path, *, awe: bool = False) -> None:
     for name in (*source.PAGES, *source.SCRIPTS):
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("maintained source", encoding="utf-8")
+    (root / source.SCRIPTS[0]).write_bytes(_builder(awe=awe))
+    if awe:
+        (root / "docs/awe.md").write_text("maintained evaluation guide", encoding="utf-8")
     (root / "docs/private-note.md").write_text("private note", encoding="utf-8")
 
 
@@ -47,6 +55,8 @@ def test_tagged_sources_are_used_and_private_paths_are_excluded(tmp_path):
             return "\n".join(files).encode("utf-8")
         if args[0] == "show":
             assert args[1].startswith("v0.4.0:")
+            if args[1].endswith(source.SCRIPTS[0]):
+                return _builder()
             return b"released source"
         return b"release-sha"
     with patch.object(source, "_git", side_effect=git):
@@ -60,13 +70,51 @@ def test_tagged_sources_are_used_and_private_paths_are_excluded(tmp_path):
 
 def test_reviewed_documentation_correction_can_use_current_guides(tmp_path):
     repo = tmp_path / "repo"
-    _current(repo)
+    _current(repo, awe=True)
     def git(_root, *args):
         return "\n".join((*source.PAGES, *source.SCRIPTS)).encode("utf-8") if args[0] == "ls-tree" else b"current-sha"
     with patch.object(source, "_git", side_effect=git):
         result = source.prepare(repo, "v0.4.0", tmp_path / "output", current_guides=True)
     assert result["source_mode"] == "documentation-update"
     assert result["docs_source"] == "current-sha"
+    assert (tmp_path / "output/docs/awe.md").read_text(encoding="utf-8") == "maintained evaluation guide"
+    assert not (tmp_path / "output/docs/private-note.md").exists()
+
+
+@pytest.mark.parametrize("guide_present", [True, False])
+def test_release_builder_required_evaluation_guide_is_copied_or_rejected(tmp_path, guide_present):
+    files = [*source.PAGES, *source.SCRIPTS, "docs/private-note.md"]
+    if guide_present:
+        files.append("docs/awe.md")
+    def git(_root, *args):
+        if args[0] == "ls-tree":
+            return "\n".join(files).encode("utf-8")
+        if args[0] == "show":
+            return _builder(awe=True) if args[1].endswith(source.SCRIPTS[0]) else b"released guide"
+        return b"release-sha"
+    with patch.object(source, "_git", side_effect=git):
+        if not guide_present:
+            with pytest.raises(ValueError, match="missing a guide"):
+                source.prepare(tmp_path, "v0.4.0", tmp_path / "output")
+            return
+        result = source.prepare(tmp_path, "v0.4.0", tmp_path / "output")
+    assert result["source_mode"] == "release-tag"
+    assert (tmp_path / "output/docs/awe.md").read_bytes() == b"released guide"
+    assert not (tmp_path / "output/docs/private-note.md").exists()
+
+
+def test_optional_guide_does_not_make_historical_release_incomplete(tmp_path):
+    files = [*source.PAGES, *source.SCRIPTS]
+    def git(_root, *args):
+        if args[0] == "ls-tree":
+            return "\n".join(files).encode("utf-8")
+        if args[0] == "show":
+            return _builder() if args[1].endswith(source.SCRIPTS[0]) else b"historical source"
+        return b"historical-sha"
+    with patch.object(source, "_git", side_effect=git):
+        result = source.prepare(tmp_path, "v0.3.2", tmp_path / "output")
+    assert result["source_mode"] == "release-tag"
+    assert not (tmp_path / "output/docs/awe.md").exists()
 
 
 @pytest.mark.parametrize("tag", ["main", "v0.3.1; touch other", "v../notes", "--all"] )

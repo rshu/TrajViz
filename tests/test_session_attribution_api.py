@@ -26,10 +26,10 @@ class SessionViewTests(unittest.TestCase):
                                      "title", "branch", "directory", "platform", "version"})
 
 
-@unittest.skipUnless(_attr.DECAF_AVAILABLE, "DECAF not importable")
+@unittest.skipUnless(_attr.ATTRIBUTION_AVAILABLE, "attribution not importable")
 class AttributionApiTests(unittest.TestCase):
     def test_public_diagnose_is_the_tabs_diagnosis(self):
-        # Test-only bridge to DECAF's byte-stable archived reference. Load the
+        # Test-only bridge to attribution's byte-stable archived reference. Load the
         # equivalent native records, then attach the original source identity
         # through the normalized API; production never parses the old envelope.
         run = tv.Trajectory.from_steps(tv.load(CC_RUN).steps, format="claude_code",
@@ -44,7 +44,7 @@ class AttributionApiTests(unittest.TestCase):
         self.assertEqual(public, json.loads(json.dumps(tab)))
         self.assertTrue(public["available"], public.get("reason"))
 
-    def test_available_reports_decaf(self):
+    def test_available_reports_attribution(self):
         self.assertEqual(attribution.available(), (True, None))
 
 

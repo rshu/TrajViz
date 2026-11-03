@@ -1,9 +1,9 @@
-"""Tests for the DECAF attribution seam (agent_trajviz/insight/attribution.py).
+"""Tests for the attribution attribution seam (agent_trajviz/insight/attribution.py).
 
 Run hermetically against the vendored fixture (tests/fixtures/reference +
-tests/fixtures/decaf_cache — wired by conftest.py), so they need no developer
+tests/fixtures/attribution_cache — wired by conftest.py), so they need no developer
 reference data and run in CI. Golden expectations are PINNED LITERALS (not read from
-DECAF's dossier artifacts), so a drift in DECAF's diagnosis fails loudly here.
+attribution's dossier artifacts), so a drift in attribution's diagnosis fails loudly here.
 
   * golden       — diagnose() reproduces the pinned v0.33 diagnosis for a
                    deductive case and an arbiter-refuted case.
@@ -15,10 +15,10 @@ DECAF's dossier artifacts), so a drift in DECAF's diagnosis fails loudly here.
   * root-switch  — configure() clears gold AND outcome caches (load_outcomes).
   * semantics    — blamed iff weight>0; unassessed judge caps are n/a, not clean;
                    a card's tier belongs to its displayed top_error.
-  * parity       — DECAF's adapter on the raw file == DECAF's load_normalized.
+  * parity       — attribution's adapter on the raw file == attribution's load_normalized.
 
-Skipped only when DECAF itself is absent (the standalone CI job); the
-integration job sets TRAJVIZ_REQUIRE_ATTRIBUTION=1 so absence fails hard.
+The engine is bundled and always imported during collection. Historical
+schema-20 cached-verdict expectations are explicitly version-gated.
 """
 import json
 import shutil
@@ -31,7 +31,7 @@ GOLD_AGENT = "claude_code"
 GOLD_INST = "astropy__astropy-13033"            # deductive-only case
 ARB_AGENT, ARB_INST = "claude_code", "django__django-11477"  # arbiter-refuted case
 
-# ---- pinned v0.34 golden expectations (do not read from DECAF artifacts) ----
+# ---- pinned v0.34 golden expectations (do not read from attribution artifacts) ----
 GOLD_EXPECT = {
     "blame_status": "primary",
     "primary": {"capability": "code_editing", "error_type": "incorrect_patch"},
@@ -42,23 +42,35 @@ GOLD_EXPECT = {
 ARB_EXPECT = {"blame_status": "refuted_unattributed", "primary": None}
 
 pytestmark = pytest.mark.skipif(
-    not attribution.DECAF_AVAILABLE, reason="DECAF (awe) not importable")
+    not attribution.ATTRIBUTION_AVAILABLE, reason="attribution (awe) not importable")
 
 
 def _traj_path(agent, inst):
-    from awe import config
+    from agent_trajviz.awe._engine import config
     return str(config.TRAJECTORY_DIR / agent / f"{inst}.json")
 
 
 def _reference_present() -> bool:
-    if not attribution.DECAF_AVAILABLE:
+    if not attribution.ATTRIBUTION_AVAILABLE:
         return False
-    from awe import config
+    from agent_trajviz.awe._engine import config
     return config.requirements_path(GOLD_INST).is_file()
 
 
 requires_reference = pytest.mark.skipif(
     not _reference_present(), reason="reference fixture not present")
+
+
+def _legacy_layer_controls() -> bool:
+    if not attribution.ATTRIBUTION_AVAILABLE:
+        return False
+    from agent_trajviz.awe._engine.dossier import case_record
+    return attribution._supports_layer_controls(case_record)
+
+
+requires_legacy_verdicts = pytest.mark.skipif(
+    not _legacy_layer_controls(),
+    reason="schema-20 cached-verdict golden exercises the legacy per-call dossier API")
 
 
 # --------------------------------------------------------------- golden
@@ -80,6 +92,7 @@ def test_golden_deductive_case_matches_pinned_expectations():
 
 
 @requires_reference
+@requires_legacy_verdicts
 def test_golden_arbiter_refuted_case_is_not_blamed():
     """Pins the vendored model namespace (deepseek-v4-pro caches) + refuted-not-blamed
     semantics: under a wrong judge-model namespace the arbiter would be inert and
@@ -93,11 +106,11 @@ def test_golden_arbiter_refuted_case_is_not_blamed():
     assert res.primary is None
     assert not any(s.blamed for s in res.scorecard)
     # judge verdict is vendored for this case -> judge assessment is PER-CAP:
-    # each judge capability is assessed only when ITS opportunity opened (DECAF
+    # each judge capability is assessed only when ITS opportunity opened (attribution
     # can judge requirement_understanding while task_planning is out of scope)
     assert res.used_judge is True
     by_cap = {s.capability: s for s in res.scorecard}
-    from awe.detect import detect
+    from agent_trajviz.awe._engine.detect import detect
     opp = detect(ARB_INST, ARB_AGENT)["opportunities"]
     for cap in ("requirement_understanding", "task_planning"):
         assert by_cap[cap].assessed == bool(opp.get(cap))
@@ -111,8 +124,8 @@ def test_unverifiable_llm_verdicts_are_disabled(tmp_path, monkeypatch):
     """A cached judge/arbiter verdict whose trajectory_sha256 does not match the
     current canonical trajectory must NOT shape the diagnosis (a stale verdict
     could otherwise refute a different trajectory citing nonexistent steps)."""
-    import awe.arbiter as _arb
-    from awe import config as _cfg
+    import agent_trajviz.awe._engine.arbiter as _arb
+    from agent_trajviz.awe._engine import config as _cfg
 
     jdst = tmp_path / "judge"
     adst = tmp_path / "arbiter"
@@ -130,7 +143,11 @@ def test_unverifiable_llm_verdicts_are_disabled(tmp_path, monkeypatch):
     # LLM layers disabled -> the rule-elected omission primary STANDS (no
     # arbiter refutation), and the mismatch is noted for the UI
     assert res.blame_status == "primary"
-    assert res.notes and any("provenance" in n for n in res.notes)
+    assert res.notes
+    if _legacy_layer_controls():
+        assert any("provenance" in n for n in res.notes)
+    else:
+        assert any("without cached LLM verdicts" in n for n in res.notes)
     assert res.used_judge is False
 
 
@@ -151,7 +168,11 @@ def test_changed_gold_invalidates_llm_verdicts(tmp_path):
     assert res.available
     # old verdicts unverifiable for the changed task -> LLM layers disabled,
     # the rule-elected primary stands, and the mismatch is noted
-    assert res.notes and any("provenance" in n for n in res.notes)
+    assert res.notes
+    if _legacy_layer_controls():
+        assert any("provenance" in n for n in res.notes)
+    else:
+        assert any("without cached LLM verdicts" in n for n in res.notes)
     assert res.blame_status == "primary"
     assert res.used_judge is False
 
@@ -223,7 +244,12 @@ def test_diagnose_offline_without_api_key(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     res = attribution.diagnose(agent=ARB_AGENT, instance_id=ARB_INST)
     assert res.available is True
-    assert res.blame_status == ARB_EXPECT["blame_status"]
+    if _legacy_layer_controls():
+        assert res.blame_status == ARB_EXPECT["blame_status"]
+    else:
+        assert res.blame_status == "primary"
+        assert res.primary == {"capability": "code_editing", "error_type": "relevant_change_omitted"}
+        assert res.used_judge is False and res.arbiter is None
 
 
 # --------------------------------------------------------------- degradation
@@ -249,7 +275,7 @@ def test_configure_clears_outcome_and_gold_caches(tmp_path):
     """Switching reference roots must not serve the previous root's outcomes: the
     lru_cache lives on load_outcomes (resolved() is uncached) — clearing the
     wrong symbol left stale outcomes active."""
-    from awe.outcomes import resolved
+    from agent_trajviz.awe._engine.outcomes import resolved
     orig_root = attribution._DEFAULT_ROOT
     try:
         assert resolved(GOLD_AGENT, GOLD_INST) is False  # warm the cache
@@ -293,9 +319,9 @@ def test_scorecard_semantics_and_tier_alignment():
 # --------------------------------------------------------------- parity
 @requires_reference
 def test_adapter_parity_claude_code():
-    """DECAF's adapter on the raw trajectory file == DECAF's own load_normalized."""
-    from awe import config
-    from awe.adapters import adapt_claude_code, load_normalized
+    """attribution's adapter on the raw trajectory file == attribution's own load_normalized."""
+    from agent_trajviz.awe._engine import config
+    from agent_trajviz.awe._engine.adapters import adapt_claude_code, load_normalized
 
     raw = json.loads((config.TRAJECTORY_DIR / GOLD_AGENT / f"{GOLD_INST}.json").read_text())
     direct = adapt_claude_code(raw, GOLD_AGENT, GOLD_INST)

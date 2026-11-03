@@ -519,10 +519,8 @@ def _dsh_tree_sha256(
     single-file load — every other DSH load and every other format — on the
     plain sha256 it has always had.
 
-    If DECAF ever diagnoses DSH runs with a sibling ``subagents/`` tree, this
-    helper has to be SHARED with DECAF and applied on both sides: attribution
-    compares against ``awe.adapters.canonical_trajectory_path``, which resolves
-    exactly one file, so a composite can only ever be refused there today.
+    The bundled evaluator uses this loader for its canonical composite identity;
+    child changes invalidate both the displayed run and evaluation caches.
     """
     import hashlib
 

@@ -1,17 +1,17 @@
-"""Which DECAF verdict namespace the Attribution tab reads by default.
+"""Which attribution verdict namespace the Attribution tab reads by default.
 
-DECAF partitions its cached judge/arbiter verdicts by model slug, and stamps
+attribution partitions its cached judge/arbiter verdicts by model slug, and stamps
 every verdict with the evidence schema it was produced under. TrajViz trusts a
-cached verdict only when that stamp matches DECAF's current ``SCHEMA_VERSION``
+cached verdict only when that stamp matches attribution's current ``SCHEMA_VERSION``
 (``attribution._verdict_verifies``). So a default that names a model by hand
-goes stale the moment DECAF re-baselines on another model or bumps its schema:
+goes stale the moment attribution re-baselines on another model or bumps its schema:
 every verdict in the named namespace is refused and the tab silently runs with
 both LLM layers disabled. That is what happened when the default was pinned to
 ``z-ai/glm-5.2`` and every glm verdict carried schema 11 under schema 20.
 
 The default is therefore chosen by content: the namespace whose verdicts carry
 the current schema. These tests drive the pure selector, so they run without
-DECAF installed.
+attribution installed.
 """
 
 from __future__ import annotations

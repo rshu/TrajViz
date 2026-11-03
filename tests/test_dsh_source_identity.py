@@ -40,14 +40,14 @@ def _sha(path) -> str:
 
 
 def _reference_present() -> bool:
-    if not attribution.DECAF_AVAILABLE:
+    if not attribution.ATTRIBUTION_AVAILABLE:
         return False
-    from awe import config
+    from agent_trajviz.awe._engine import config
 
     return config.requirements_path(GOLD_INST).is_file()
 
 
-requires_decaf = unittest.skipUnless(attribution.DECAF_AVAILABLE, "DECAF (awe) not importable")
+requires_attribution = unittest.skipUnless(attribution.ATTRIBUTION_AVAILABLE, "attribution (awe) not importable")
 requires_reference = unittest.skipUnless(_reference_present(), "reference fixture not present")
 
 
@@ -199,7 +199,7 @@ class DirectorySourceIdentityTests(unittest.TestCase):
 
 
 # ---------------------------------------------------- directory attribution
-@requires_decaf
+@requires_attribution
 @requires_reference
 class DirectoryAttributionTests(unittest.TestCase):
     """A merged DSH tree driven through ``diagnose`` — the zip path had the only
@@ -211,36 +211,57 @@ class DirectoryAttributionTests(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="dsh-attr-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
-    def test_a_merged_export_is_refused_instead_of_certified(self):
-        """DECAF's canonical source for (agent, instance) is ONE file, so a
-        trajectory assembled from several cannot be certified as that run even
-        when the parent log's bytes match it exactly."""
+    def _canonical_reference(self):
         root = self.tmp / "reference"
         shutil.copytree(attribution._DEFAULT_ROOT / "data", root / "data")
-        canon = root / "data" / "trajectory" / GOLD_AGENT / f"{GOLD_INST}.json"
-        self.assertTrue(canon.is_file(), canon)
+        requirement = json.loads((root / "data/requirements" / f"{GOLD_INST}.json").read_text())
+        requirement["instance_id"] = "session"
+        (root / "data/requirements/session.json").write_text(json.dumps(requirement))
+        patch = root / "data/patch/dsh"
+        patch.mkdir(parents=True)
+        (patch / "session.diff").write_text(requirement["gold_patch"])
+        (root / "data/eval_dsh.json").write_text(json.dumps({"session": False}))
+        export = _build_tree(self.tmp, "canonical", "CHILD-ALPHA")
+        canonical = root / "data/trajectory/dsh"
+        shutil.copytree(export, canonical)
+        return root, canonical
 
-        reasons = set()
-        for name, child_text in (("alpha", "CHILD-ALPHA"), ("beta", "CHILD-BETA-DIFFERENT-TEXT")):
-            export = _build_tree(self.tmp, name, child_text)
-            # The canonical file IS the parent log: the only thing left that can
-            # tell the two trees apart is whether the merge is accounted for.
-            shutil.copyfile(export / "session.jsonl", canon)
-            raw = load_trajectory(str(export))
-            self.assertNotIn("_error", raw)
-            res = attribution.diagnose(
-                agent=GOLD_AGENT,
-                instance_id=GOLD_INST,
-                source_path=raw["_source_path"],
-                expected_sha=raw["_source_sha256"],
-                merged_sources=raw.get("_source_merged_count") or 0,
-                reference_root=root,
-            )
-            self.assertFalse(res.available, f"{name}: a merged export was certified: {res.reason}")
-            self.assertEqual(res.faults, [], f"{name}: blame was attributed to a merged export")
-            self.assertIn("merged", res.reason.lower(), res.reason)
-            reasons.add(res.reason)
-        self.assertEqual(len(reasons), 1, "both trees must be refused for the same stated reason")
+    def test_only_the_matching_complete_tree_is_certified(self):
+        """The bundled normalizer certifies every parsed child, not just its parent."""
+        root, canonical = self._canonical_reference()
+        raw = load_trajectory(str(canonical / "session.jsonl"))
+        result = attribution.diagnose(agent="dsh", instance_id="session", source_path=raw["_source_path"],
+                                      expected_sha=raw["_source_sha256"], merged_sources=raw["_source_merged_count"],
+                                      reference_root=root)
+        self.assertTrue(result.available, result.reason)
+        other = _build_tree(self.tmp, "different-child", "CHILD-BETA-DIFFERENT-TEXT")
+        other_raw = load_trajectory(str(other))
+        result = attribution.diagnose(agent="dsh", instance_id="session", source_path=other_raw["_source_path"],
+                                      expected_sha=other_raw["_source_sha256"], merged_sources=other_raw["_source_merged_count"],
+                                      reference_root=root)
+        self.assertFalse(result.available)
+        self.assertIn("does not match the canonical", result.reason)
+        self.assertEqual(result.faults, [])
+
+    def test_classic_child_mutation_during_diagnosis_is_refused(self):
+        from unittest.mock import patch
+        from agent_trajviz.awe._engine import detect
+
+        root, canonical = self._canonical_reference()
+        child = canonical / "subagents/child-1/session.jsonl"
+        raw = load_trajectory(str(canonical / "session.jsonl"))
+        original = detect.detect
+        def racing(*args, **kwargs):
+            result = original(*args, **kwargs)
+            child.write_text(child.read_text() + "\n")
+            return result
+        with patch.object(detect, "detect", racing):
+            result = attribution.diagnose(agent="dsh", instance_id="session", source_path=raw["_source_path"],
+                                          expected_sha=raw["_source_sha256"], merged_sources=raw["_source_merged_count"],
+                                          reference_root=root)
+        self.assertFalse(result.available)
+        self.assertIn("changed while the diagnosis was running", result.reason)
+        self.assertEqual(result.faults, [])
 
 
 # ------------------------------------------------------------ zip tie-break

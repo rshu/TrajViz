@@ -54,6 +54,7 @@ docs/*
 !docs/quickstart.md
 !docs/guides.md
 !docs/data-reference.md
+!docs/awe.md
 gradio_cached_examples/
 *.log
 *.db
@@ -63,8 +64,8 @@ gradio_cached_examples/
 # Trajectory data (keep small samples, ignore large dumps)
 data/
 windows_opencode_session.json
-# ...but DO track the small, hermetic DECAF-attribution test fixture, whose
-# reference data lives under the `data/` subdir DECAF's layout requires.
+# ...but DO track the small, hermetic attribution test fixture, whose
+# reference data lives under the `data/` subdir evaluation's layout requires.
 !tests/fixtures/reference/data/
 !tests/fixtures/reference/data/**
 *.trajectory.json.gz

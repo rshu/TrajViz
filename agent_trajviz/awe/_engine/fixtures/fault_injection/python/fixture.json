@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "language": "python",
+  "source": "core.py",
+  "evaluator": "evaluate.py",
+  "FAIL_TO_PASS": [
+    "lower_bound",
+    "upper_bound"
+  ],
+  "PASS_TO_PASS": [
+    "inside_interval",
+    "addition"
+  ],
+  "harmless_comment": "\n# Harmless comment control.\n",
+  "mutations": [
+    {
+      "name": "missing_upper_bound",
+      "old": "    if value > upper:\n        return upper\n",
+      "new": "",
+      "expected_shape": "partial_fix",
+      "expected_candidate_types": [
+        "partial_fix_only"
+      ]
+    },
+    {
+      "name": "regression_in_add",
+      "old": "return a + b",
+      "new": "return a - b",
+      "expected_shape": "regression_only",
+      "expected_candidate_types": [
+        "regression_introduced"
+      ]
+    },
+    {
+      "name": "wrong_file",
+      "redirect_to": "unused.py",
+      "expected_shape": "unfixed",
+      "expected_candidate_types": [],
+      "evidence_limit": "Patch-only evidence shows reference divergence; search failure is unknown without an agent trajectory."
+    }
+  ]
+}

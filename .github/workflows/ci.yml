@@ -14,11 +14,8 @@ env:
   UV_VERSION: "0.11.28"
 
 jobs:
-  # The suite on every supported Python, WITHOUT DECAF (standalone): the
-  # attribution module's tests skip here by design (module-level skipif: no
-  # `awe`). This workflow is the only one that runs on pull_request: the DECAF
-  # integration needs a credentialed checkout, which must never coexist with
-  # PR-controlled code (see integration.yml — trusted main only).
+  # Every supported Python tests native parsing and the bundled evaluator.
+  # No external source checkout or private repository credentials are needed.
   test:
     name: test (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
@@ -76,6 +73,10 @@ jobs:
         run: uv build --wheel
       - name: Public API from the installed wheel (no extras)
         run: uv run --no-project --isolated --with "$(ls dist/*.whl)" python .github/scripts/smoke_core.py
+      - name: Bundled evaluation from the installed wheel (no extras)
+        run: >-
+          uv run --no-project --isolated --with "$(ls dist/*.whl)" python -I
+          .github/scripts/check_evaluation_install.py
 
   # The declared lower bounds are real: install the oldest allowed release of
   # every direct dependency, on the oldest and newest supported Python.
@@ -197,10 +198,8 @@ jobs:
   # Coverage is reported, not assumed. Separate job so a coverage dip reads
   # differently from a test failure.
   #
-  # This measures the STANDALONE figure: the DECAF-gated attribution tests skip
-  # here, so it is a floor on the real number. `fail-under` is a collapse
-  # detector set just below the measured value (81.7% standalone at 0.1.0);
-  # raise it when the measured figure rises.
+  # Coverage includes the complete bundled evaluator. The threshold protects
+  # against losing exercised behavior as either subsystem grows.
   coverage:
     runs-on: ubuntu-latest
     steps:
@@ -216,7 +215,7 @@ jobs:
       # adding it to the dev extra, so the lock stays the single source of what
       # is installed. The settings live on the command line so the log states
       # exactly what was measured.
-      - name: Measure coverage (standalone — DECAF absent)
+      - name: Measure coverage (including bundled evaluation)
         run: >
           uv run --locked --with "coverage>=7.16" coverage run
           --branch --source=agent_trajviz -m pytest tests -q

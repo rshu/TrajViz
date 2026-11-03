@@ -593,14 +593,14 @@ class ExportIsolationTests(_SyntheticExportsMixin, unittest.TestCase):
 
 
 class AttributionRootIsolationTests(unittest.TestCase):
-    """DECAF is configured through process globals; every request must set its own."""
+    """ATTRIBUTION is configured through process globals; every request must set its own."""
 
     @classmethod
     def setUpClass(cls) -> None:
         from agent_trajviz.insight import attribution
 
-        if not attribution.DECAF_AVAILABLE:
-            raise unittest.SkipTest("DECAF (awe) is not importable in this environment")
+        if not attribution.ATTRIBUTION_AVAILABLE:
+            raise unittest.SkipTest("ATTRIBUTION (awe) is not importable in this environment")
         cls.attribution = attribution
 
     def setUp(self):
@@ -614,7 +614,7 @@ class AttributionRootIsolationTests(unittest.TestCase):
             shutil.rmtree(root, ignore_errors=True)
 
     def test_concurrent_diagnoses_each_use_their_own_reference_root(self):
-        """``diagnose`` writes DECAF's process-global root, so it must not be inherited.
+        """``diagnose`` writes ATTRIBUTION's process-global root, so it must not be inherited.
 
         Two viewers may point the Attribution tab at different reference roots. If
         one request's root leaked into another's, a verdict would be grounded in

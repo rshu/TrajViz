@@ -1,4 +1,4 @@
-"""Evidence rendering works without the optional attribution backend."""
+"""Evidence rendering works independently of model configuration."""
 
 import pytest
 

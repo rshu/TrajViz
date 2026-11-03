@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://internal/agent-workflow-eval/normalized_trajectory.schema.json",
+  "title": "Normalized Agent Trajectory (as persisted)",
+  "description": "One atomic event per step. This schema describes the ACTUAL format the adapters produce and cache (data/cache/normtraj/<agent>/<instance>.json = schema_version + NormalizedTrajectory.to_dict()); tests/test_schema_conformance.py keeps it honest \u2014 the previous revision documented an aspirational envelope (task/agent/run/gold_reference/derived_signals) that no code ever produced or consumed. Ordering contract: step_id is monotone WITHIN a thread (subagent_id); the Claude Code adapter appends sub-agent threads after the main thread, so cross-thread step_id comparisons are meaningless \u2014 ordering-derived signals must filter to one thread (see awe.trajsignals). The affordance-fairness rule (never flag an agent for not using an action its scaffold cannot perform) is carried by the canonical_action ontology + per-adapter mapping, not by a persisted affordance list.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "agent",
+    "instance_id",
+    "steps"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "description": "awe.trajectory.SCHEMA_VERSION at write time; mismatched cache entries are recomputed, never served."
+    },
+    "agent": {
+      "type": "string"
+    },
+    "instance_id": {
+      "type": "string"
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/step"
+      }
+    },
+    "source": {
+      "type": "object",
+      "description": "Original source path, byte size and SHA-256; step references point into this immutable artifact."
+    }
+  },
+  "$defs": {
+    "step": {
+      "type": "object",
+      "required": [
+        "step_id",
+        "turn_id",
+        "actor",
+        "type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "step_id": {
+          "type": "integer",
+          "description": "Monotone within a thread (see ordering contract above)."
+        },
+        "turn_id": {
+          "type": "integer",
+          "description": "Groups steps from one native log record. NOT comparable across adapters (raw line index for Codex, message index for CC/OpenCode)."
+        },
+        "actor": {
+          "enum": [
+            "agent",
+            "tool",
+            "user",
+            "system"
+          ]
+        },
+        "type": {
+          "enum": [
+            "reasoning",
+            "message",
+            "tool_call",
+            "tool_result",
+            "patch",
+            "final_answer"
+          ]
+        },
+        "canonical_action": {
+          "enum": [
+            "search",
+            "read",
+            "edit",
+            "write",
+            "run_command",
+            "run_test",
+            "delegate",
+            "plan",
+            "other",
+            "none"
+          ],
+          "description": "Cross-scaffold action ontology; native_tool keeps the original name for fairness. plan (schema 20): an explicit plan / todo-list update (TodoWrite, todowrite, update_plan) whose args.items carry [{content, status}]."
+        },
+        "native_tool": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string",
+          "description": "Message/reasoning text (empty for tool steps)."
+        },
+        "args": {
+          "type": "object",
+          "description": "Tool-call args (command/pattern/path...). On a tool_result, may carry exit_code (int) when the scaffold reports one \u2014 the ground-truth success signal that overrides text heuristics. Schema 19: adapters deliver it for OpenCode (metadata.exit), Codex ('Process exited with code N' header) and Claude Code ('Exit code N' text); a Codex write_stdin continuation result also carries continuation_of (the originating call_id)."
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Repo-relative paths touched. For run_command steps these are best-effort READ targets (redirect/heredoc write targets excluded \u2014 they feed the read-set)."
+        },
+        "test_run": {
+          "type": "boolean",
+          "description": "The command is a test invocation (runner as command head / -m target / test script / known phrase \u2014 not a substring match)."
+        },
+        "tool_error": {
+          "type": "boolean",
+          "description": "Explicit scaffold error flag on a tool_result."
+        },
+        "output_excerpt": {
+          "type": "string",
+          "description": "Complete observed tool output. Legacy field name retained; renderers apply their own display budgets."
+        },
+        "call_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Links tool_call to its tool_result. May be null for linkage-less logs; consumers fall back positionally."
+        },
+        "observability": {
+          "enum": [
+            "observed",
+            "hidden",
+            "inferred"
+          ],
+          "description": "hidden = encrypted/absent reasoning (e.g. Codex): consumers MUST NOT infer 'ignored X' from absence."
+        },
+        "subagent_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Thread id for delegated sub-agent steps; null = main thread."
+        },
+        "source_ref": {
+          "type": "object"
+        },
+        "native_input": {
+          "type": "object"
+        },
+        "status": {
+          "type": "string"
+        },
+        "timestamp": {}
+      }
+    }
+  }
+}

@@ -103,7 +103,7 @@ def test_full_public_site_build_has_all_exports_schemas_and_no_source(tmp_path):
     assert report["catalog_views"] == len(tv.VIEW_CATALOG)
     assert report["schemas"] == len(tv.view_schemas())
     assert sorted(path.relative_to(output / "api").as_posix() for path in (output / "api").rglob("*.html")) == [
-        "agent_trajviz.html", "agent_trajviz/attribution.html", "agent_trajviz/dashboard.html",
+        "agent_trajviz.html", "agent_trajviz/attribution.html", "agent_trajviz/awe.html", "agent_trajviz/dashboard.html",
         "agent_trajviz/figures.html", "agent_trajviz/llm.html", "index.html",
     ]
     parser = builder._Links()

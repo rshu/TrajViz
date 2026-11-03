@@ -27,7 +27,9 @@ _FIXTURE = (
 
 # Every tab the composer builds. A tab that stops reaching the browser takes its
 # whole feature with it and raises nothing, so the set is asserted explicitly.
-EXPECTED_TABS = {"Overview", "Patterns", "Attribution", "Comparison", "Workflow", "Raw Data"}
+EXPECTED_TABS = {"Overview", "Patterns", "Attribution", "AWE", "Comparison", "Workflow", "Raw Data",
+                 "Case evidence", "Provenance graph", "Symptoms", "Recommendations", "Reports & discovery",
+                 "Provenance", "RSI exchange"}
 
 
 def _free_port():

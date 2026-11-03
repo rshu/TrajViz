@@ -1,20 +1,18 @@
-"""attribution backend failure-attribution seam for TrajViz.
+"""evaluation engine failure-attribution seam for TrajViz.
 
-The single, one-directional bridge between TrajViz and attribution backend's ``awe`` package:
-this module imports ``awe``; ``awe`` never imports ``agent_trajviz``. Every attribution backend call
-the UI makes goes through :func:`diagnose`, which returns a plain
+The dashboard uses the bundled evaluation engine through :func:`diagnose`, which returns a plain
 :class:`AttributionResult` (no Gradio types) so it is unit-testable headless.
 
 Integrity model (hardened over three review rounds):
 
-* **Gold-grounded.** attribution backend's blame needs the run's reference patch + test
+* **Gold-grounded.** evaluation engine's blame needs the run's reference patch + test
   outcome; without them we degrade honestly (never fabricate).
-* **Canonical identity.** A displayed file must be byte-identical to the file
-  attribution backend itself parses for (agent, instance) — resolved by attribution backend's own
-  ``canonical_trajectory_path`` (codex prefers ``.jsonl``) so verification and
-  diagnosis can never read different sources.
-* **Cache provenance.** attribution backend's normtraj/trajsig caches are content-keyed
-  (v0.34). Judge/arbiter verdicts are accepted only when their stamped
+* **Canonical identity.** The displayed run must match the current canonical
+  run. Native parent/child trees use TrajViz's complete composite identity;
+  single-file archives retain byte identity. Cached normalized source stamps
+  must independently match those current inputs.
+* **Cache provenance.** Normalized and signal caches bind parent/child inputs
+  and the installed parser implementation. Judge/arbiter verdicts require stamped
   ``trajectory_sha256`` matches the canonical trajectory; unverifiable verdicts
   disable the LLM layers for that diagnosis (noted in the result) rather than
   shape it.
@@ -22,7 +20,7 @@ Integrity model (hardened over three review rounds):
   immutable import-time default unless the caller passes one) under a module
   lock, so no request inherits another session's root and concurrent callers
   cannot interleave configuration and diagnosis.
-* **Input validation.** ``agent`` must be an agent attribution backend knows and
+* **Input validation.** ``agent`` must be an agent evaluation engine knows and
   ``instance_id`` a plain filename stem — path traversal cannot reach the
   filesystem.
 """
@@ -30,14 +28,15 @@ from __future__ import annotations
 
 import json
 import inspect
+import copy
+import importlib
 import os
 import re
-import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# Causal capability order (mirrors attribution backend's UPSTREAM_ORDER).
+# Causal capability order (mirrors evaluation engine's UPSTREAM_ORDER).
 CAPABILITIES: tuple[str, ...] = (
     "requirement_understanding", "task_planning", "code_localization",
     "code_editing", "code_verification", "self_repair_loop", "tool_use",
@@ -51,72 +50,30 @@ _ALWAYS_ASSESSED = frozenset({"code_localization", "code_editing"})
 _VALID_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 # RLock: diagnose() holds it end-to-end, and the public configure() acquires the
-# SAME lock so no caller can rewrite attribution backend's process-global root/caches while a
+# SAME lock so no caller can rewrite evaluation engine's process-global root/caches while a
 # diagnosis is in flight (reentrancy lets diagnose call configure internally).
 _LOCK = threading.RLock()
 
 
-# --------------------------------------------------------------------------- #
-# attribution backend discovery + import (stdlib-only, not a pip package)
-# --------------------------------------------------------------------------- #
-def _decaf_root() -> Path | None:
-    candidates = []
-    env = os.environ.get("AWE_DECAF_PATH")
-    if env:
-        candidates.append(Path(env))
-    candidates.append(Path(__file__).resolve().parents[3] / "DECAF")
-    for c in candidates:
-        if (c / "awe" / "__init__.py").is_file():
-            return c
-    return None
-
-
-_DECAF_ROOT = _decaf_root()
-if _DECAF_ROOT is not None and str(_DECAF_ROOT) not in sys.path:
-    sys.path.insert(0, str(_DECAF_ROOT))
-
+# The evaluation engine is part of TrajViz. Reference data is input, never an
+# import path: neither environment paths nor neighbouring repositories select code.
 def _reference_root() -> Path:
-    """Where the gold reference data lives, resolved by LAYOUT, not by name.
-
-    ``TRAJVIZ_REFERENCE_ROOT`` wins. Otherwise look for a sibling
-    of this checkout that actually has the layout attribution needs —
-    ``data/requirements/`` and ``data/trajectory/`` — and take it only if exactly
-    one sibling qualifies. Discovering it by content rather than by a hard-coded
-    directory name keeps TrajViz independent of whatever the reference set is
-    called locally, and keeps an ambiguous tree from being silently picked.
-
-    With no match, the neighbouring directory is returned unchanged; attribution
-    then degrades with a message naming the root it searched rather than guessing.
-    """
-    env = os.environ.get("TRAJVIZ_REFERENCE_ROOT")
-    if env:
-        return Path(env)
-
-    neighbourhood = Path(__file__).resolve().parents[3]
-    try:
-        matches = [
-            d for d in neighbourhood.iterdir()
-            if d.is_dir()
-            and (d / "data" / "requirements").is_dir()
-            and (d / "data" / "trajectory").is_dir()
-        ]
-    except OSError:
-        return neighbourhood
-    return matches[0] if len(matches) == 1 else neighbourhood
+    configured = os.environ.get("TRAJVIZ_REFERENCE_ROOT")
+    return Path(configured).expanduser() if configured else Path.cwd()
 
 
 # Captured ONCE at import and immutable thereafter. Every diagnose() call
 # explicitly configures either this default or the caller's root — never
 # "whatever the previous caller left behind".
 _DEFAULT_ROOT = _reference_root()
-# Read before awe is imported: an explicit AWE_JUDGE_MODEL always wins.
+# Read before the bundled engine is imported: an explicit AWE_JUDGE_MODEL always wins.
 _JUDGE_MODEL_EXPLICIT = bool(os.environ.get("AWE_JUDGE_MODEL"))
 
 
 def _select_judge_model(judge_cache_dir: Path, schema: int) -> str | None:
-    """The model whose cached verdicts attribution backend's current schema can verify.
+    """The model whose cached verdicts evaluation engine's current schema can verify.
 
-    attribution backend partitions judge verdicts by model slug and stamps each with the
+    evaluation engine partitions judge verdicts by model slug and stamps each with the
     evidence schema it was produced under; :func:`_verdict_verifies` refuses any
     other schema. A model named by hand therefore goes stale on the next
     move to another model or schema bump — every verdict in its namespace is refused and
@@ -144,24 +101,23 @@ def _select_judge_model(judge_cache_dir: Path, schema: int) -> str | None:
     return min(counts, key=lambda m: (-counts[m], m))
 
 
-DECAF_AVAILABLE = False
+ATTRIBUTION_AVAILABLE = False
 _IMPORT_ERROR: str | None = None
 try:
-    if _DECAF_ROOT is None:
-        raise ImportError(
-            "Attribution backend not found — configure a compatible backend checkout")
-    from awe import config as _cfg  # noqa: E402
-    DECAF_AVAILABLE = True
+    from agent_trajviz.awe._engine import config as _cfg  # noqa: E402
+    from agent_trajviz.awe.native import install_native_adapters
+    install_native_adapters()
+    ATTRIBUTION_AVAILABLE = True
 except Exception as exc:  # pragma: no cover - environment-dependent
-    # Optional dependency import failures can include private environment values
+    # Bundled engine import failures can include private environment values
     # or paths. Keep the public reason useful without forwarding their text.
-    _IMPORT_ERROR = f"Attribution backend import failed ({type(exc).__name__})"
+    _IMPORT_ERROR = f"Bundled attribution engine import failed ({type(exc).__name__})"
 
-if DECAF_AVAILABLE and not _JUDGE_MODEL_EXPLICIT:
-    # attribution backend reads config.JUDGE_MODEL at call time (judge, arbiter and
+if ATTRIBUTION_AVAILABLE and not _JUDGE_MODEL_EXPLICIT:
+    # evaluation engine reads config.JUDGE_MODEL at call time (judge, arbiter and
     # model_slug), so setting it after import takes effect everywhere. Without a
-    # match attribution backend keeps its own default and the layers degrade with a note.
-    from awe.trajectory import SCHEMA_VERSION as _SCHEMA_VERSION  # noqa: E402
+    # match evaluation engine keeps its own default and the layers degrade with a note.
+    from agent_trajviz.awe._engine.trajectory import SCHEMA_VERSION as _SCHEMA_VERSION  # noqa: E402
 
     _detected_model = _select_judge_model(_cfg.JUDGE_CACHE_DIR, _SCHEMA_VERSION)
     if _detected_model:
@@ -169,23 +125,23 @@ if DECAF_AVAILABLE and not _JUDGE_MODEL_EXPLICIT:
 
 
 def configure(reference_root: str | os.PathLike) -> None:
-    """Point attribution backend at a reference root and clear its root-dependent memory caches.
+    """Point evaluation engine at a reference root and clear its root-dependent memory caches.
 
     Acquires the SAME module lock as diagnose(), so an external caller cannot
-    rewrite attribution backend's process-global root/caches while a diagnosis is in flight.
+    rewrite evaluation engine's process-global root/caches while a diagnosis is in flight.
     diagnose() itself re-configures per request (explicit root or the immutable
     default) — configuration is never inherited across callers.
     Older releases cache build_gold_reference/load_outcomes themselves; newer
     releases use uncached wrappers around content-keyed private readers.
     """
-    if not DECAF_AVAILABLE:
+    if not ATTRIBUTION_AVAILABLE:
         return
     with _LOCK:
         _configure_unlocked(reference_root)
 
 
 def _configure_unlocked(reference_root: str | os.PathLike) -> None:
-    # attribution backend resolves every input path from these attributes at call time, so
+    # evaluation engine resolves every input path from these attributes at call time, so
     # setting them is the whole configuration; the process environment is left
     # alone.
     root = Path(reference_root).resolve()
@@ -194,7 +150,7 @@ def _configure_unlocked(reference_root: str | os.PathLike) -> None:
     _cfg.PATCH_DIR = _cfg.DATA / "patch"
     _cfg.TRAJECTORY_DIR = _cfg.DATA / "trajectory"
     _cfg.LABELS_DIR = _cfg.DATA / "labels"
-    from awe import gold, outcomes
+    from agent_trajviz.awe._engine import gold, outcomes
     for function in (gold.build_gold_reference, outcomes.load_outcomes,
                      getattr(outcomes, "_read_json", None), getattr(outcomes, "_read_outcomes", None)):
         clear = getattr(function, "cache_clear", None)
@@ -202,17 +158,17 @@ def _configure_unlocked(reference_root: str | os.PathLike) -> None:
             clear()
 
 
-if DECAF_AVAILABLE:
-    # attribution backend's own default is its checkout; point it at the reference root from
-    # import on, so a caller that reaches attribution backend before any diagnose() reads the
+if ATTRIBUTION_AVAILABLE:
+    # evaluation engine's own default is its checkout; point it at the reference root from
+    # import on, so a caller that reaches evaluation engine before any diagnose() reads the
     # same data diagnose() will. Every diagnose() re-configures explicitly.
     try:
         _configure_unlocked(_DEFAULT_ROOT)
     except Exception as exc:
-        # Importing the public optional facade must remain safe on API drift.
+        # Importing the public attribution facade must remain safe on API drift.
         # Exception text can contain private paths or source data.
-        DECAF_AVAILABLE = False
-        _IMPORT_ERROR = f"Attribution backend configuration failed ({type(exc).__name__})"
+        ATTRIBUTION_AVAILABLE = False
+        _IMPORT_ERROR = f"Bundled attribution engine configuration failed ({type(exc).__name__})"
 
 
 # --------------------------------------------------------------------------- #
@@ -243,6 +199,7 @@ class AttributionResult:
     used_judge: bool = False      # judge verdict AVAILABLE for this case
     task: dict | None = None
     notes: list[str] = field(default_factory=list)
+    dossier: dict | None = None   # complete backend record, including additive fields
 
 
 # --------------------------------------------------------------------------- #
@@ -257,12 +214,12 @@ def _sha256(p: Path) -> str | None:
 
 
 def _canonical_trajectory_path(agent: str, instance_id: str) -> Path | None:
-    from awe import adapters
+    from agent_trajviz.awe._engine import adapters
 
     resolver = getattr(adapters, "canonical_trajectory_path", None)
     if callable(resolver):
         return resolver(agent, instance_id)
-    # Current attribution backend resolves these two sources in _parse_normalized. The
+    # Current evaluation engine resolves these two sources in _parse_normalized. The
     # normalized source stamp is checked independently before any diagnosis, so
     # an adapter that changes its resolution cannot silently certify this path.
     base = _cfg.TRAJECTORY_DIR / agent
@@ -276,19 +233,37 @@ def _supports_layer_controls(case_record) -> bool:
     return {"use_judge", "adjudicate"} <= parameters.keys()
 
 
-def _objective_record(agent: str, instance_id: str, canon: Path, canon_sha: str):
-    """Current attribution backend without per-call dossier controls: keep LLM layers off.
+def _engine_helper(module: str, name: str):
+    """Use additive dossier helpers when this engine API generation provides them.
 
-    Never monkeypatch process-global attribution backend functions or temporarily move its
-    cache directories. Such changes could affect independent attribution backend consumers.
+    Missing optional modules are different from a helper that exists but fails:
+    the latter must fail the diagnosis rather than silently drop its evidence.
+    """
+    qualified = f"agent_trajviz.awe._engine.{module}"
+    try:
+        imported = importlib.import_module(qualified)
+    except ModuleNotFoundError as exc:
+        if exc.name != qualified:
+            raise
+        return None
+    helper = getattr(imported, name, None)
+    return helper if callable(helper) else None
+
+
+def _objective_record(agent: str, instance_id: str, canon: Path, canon_sha: str):
+    """Current evaluation engine without per-call dossier controls: keep LLM layers off.
+
+    Never monkeypatch process-global evaluation engine functions or temporarily move its
+    cache directories. Such changes could affect independent evaluation engine consumers.
     Build the objective dossier from its explicit detector and blame APIs.
     """
-    from awe.adapters import load_normalized
-    from awe.detect import detect
-    from awe.dossier import file_hunks
-    from awe.evidence import build_chain, changed_lines
-    from awe.gold import build_gold_reference
-    from awe.rootcause import build_blame
+    from agent_trajviz.awe._engine.adapters import load_normalized
+    from agent_trajviz.awe._engine.detect import detect
+    from agent_trajviz.awe._engine import dossier as dossier_module
+    from agent_trajviz.awe._engine.dossier import file_hunks
+    from agent_trajviz.awe._engine.evidence import build_chain, changed_lines
+    from agent_trajviz.awe._engine.gold import build_gold_reference
+    from agent_trajviz.awe._engine.rootcause import build_blame
 
     trajectory = load_normalized(agent, instance_id)
     stamp = getattr(trajectory, "source", None)
@@ -311,6 +286,10 @@ def _objective_record(agent: str, instance_id: str, canon: Path, canon_sha: str)
     weights = {(row["capability"], row["error_type"]): row["weight"] for row in blame["blame"]}
     step_text = {step.step_id: (step.text or step.output_excerpt or "")[:200]
                  for step in trajectory.steps if step.text or step.output_excerpt}
+    load_pertest = _engine_helper("outcomes", "load_pertest")
+    pertest = load_pertest(agent, instance_id) if load_pertest else None
+    audit_fault = _engine_helper("dossier", "audit_fault")
+    select_remedies = _engine_helper("dossier", "select_remedies")
     faults = []
     for candidate in detection["candidates"]:
         capability, error = candidate["capability"], candidate["error_type"]
@@ -327,11 +306,51 @@ def _objective_record(agent: str, instance_id: str, canon: Path, canon_sha: str)
                        "detector_evidence": candidate.get("evidence", {}), "code_evidence": code,
                        "evidence_chain": build_chain(candidate, detection, gold, gold_changed, agent_changed,
                                                      weight, is_primary, step_text=step_text)})
+        labels = getattr(dossier_module, "CAP_LABEL", {})
+        if isinstance(labels, dict):
+            faults[-1]["label"] = f"{labels.get(capability, capability)} → {error}"
+        if audit_fault:
+            audit = audit_fault(
+                {"capability": capability, "error_type": error, "confidence": candidate["confidence"],
+                 "detector_evidence": candidate.get("evidence", {})},
+                agent=agent, inst=instance_id, gold_text=gold_text, agent_text=agent_text,
+                resolved=detection["resolved"], traj=trajectory,
+                test_files=getattr(gold, "test_patch_files", []),
+                problem_statement=gold.problem_statement, fail_to_pass=getattr(gold, "fail_to_pass", []),
+                pertest=pertest, profile=getattr(gold, "benchmark_profile", {}))
+            faults[-1]["audit"] = {"verdict": audit["verdict"], "mismatches": audit["mismatches"]}
+        if select_remedies:
+            faults[-1].update(select_remedies({"agent": agent, "arbiter": None}, faults[-1], weight=weight))
     faults.sort(key=lambda fault: -fault["blame_weight"])
-    return {"agent": agent, "instance_id": instance_id, "blame_status": blame["status"],
-            "faults": faults, "arbiter": None,
-            "task": {"problem_statement": gold.problem_statement, "gold_files": gold.gold_files,
-                     "multi_file": gold.is_multi_file, "cross_module": gold.is_cross_module}}, detection
+    record = {"case_id": f"{agent}__{instance_id}", "agent": agent, "instance_id": instance_id,
+              "blame_status": blame["status"], "faults": faults, "arbiter": None,
+              "task": {"problem_statement": gold.problem_statement, "gold_files": gold.gold_files,
+                       "multi_file": gold.is_multi_file, "cross_module": gold.is_cross_module},
+              "reasoning_observability": ("partly hidden (encrypted)" if any(
+                  getattr(step, "observability", None) == "hidden" for step in trajectory.steps) else "observed")}
+    if hasattr(gold, "repo"):
+        record["repo"] = gold.repo
+    if "decision_trace" in blame:
+        record["attribution_trace"] = blame["decision_trace"]
+    context = _engine_helper("dossier", "for_case")
+    if context:
+        record.update(context(agent, instance_id, getattr(gold, "benchmark_profile", {})))
+    fault_side = _engine_helper("dossier", "fault_side_assess")
+    if fault_side:
+        record["fault_side"] = fault_side(detection.get("signals"))
+    thinking_excerpt = _engine_helper("dossier", "thinking_excerpt")
+    if thinking_excerpt:
+        record["thinking_process"] = thinking_excerpt(trajectory)
+    event_ledger = _engine_helper("dossier", "event_ledger")
+    if event_ledger:
+        record["event_ledger"] = event_ledger(trajectory)
+    analyze_symptoms = _engine_helper("dossier", "analyze_symptoms")
+    compact_symptoms = _engine_helper("dossier", "compact_symptoms")
+    if analyze_symptoms and compact_symptoms:
+        symptoms = compact_symptoms(analyze_symptoms(trajectory, agent_text))
+        symptoms["patch_available"] = patch.is_file()
+        record["symptom_analysis"] = symptoms
+    return record, detection
 
 
 def _verdict_verifies(rec: dict, *, canon_sha: str, req_sha: str | None,
@@ -355,22 +374,22 @@ def _llm_layer_policy(agent: str, instance_id: str, canon_sha: str):
     a stale verdict must never judge a different trajectory OR a different task.
 
     Returns (use_judge, adjudicate, notes): use_judge False disables the judge;
-    adjudicate None disables the arbiter; _AUTO keeps attribution backend's default.
+    adjudicate None disables the arbiter; _AUTO keeps evaluation engine's default.
     """
     import hashlib
     import json as _json
-    import awe.arbiter as _arb
-    import awe.judge as _judge
-    from awe.adapters import requirements_source_sha256
-    from awe.dossier import _AUTO
-    from awe.trajectory import SCHEMA_VERSION
+    import agent_trajviz.awe._engine.arbiter as _arb
+    import agent_trajviz.awe._engine.judge as _judge
+    from agent_trajviz.awe._engine.adapters import requirements_source_sha256
+    from agent_trajviz.awe._engine.dossier import _AUTO
+    from agent_trajviz.awe._engine.trajectory import SCHEMA_VERSION
 
     notes: list[str] = []
     req_sha = requirements_source_sha256(instance_id)
     j_prompt = hashlib.sha256(_judge.SYSTEM_PROMPT.encode()).hexdigest()[:12]
     a_prompt = hashlib.sha256(_arb.SYSTEM_PROMPT.encode()).hexdigest()[:12]
 
-    use_judge: bool | None = None      # attribution backend auto
+    use_judge: bool | None = None      # evaluation engine auto
     jrec = _judge.verdict_cached(agent, instance_id)
     if jrec is not None and not _verdict_verifies(
             jrec, canon_sha=canon_sha, req_sha=req_sha,
@@ -424,15 +443,14 @@ def diagnose(*, agent: str | None, instance_id: str | None,
     load and diagnosis is refused rather than diagnosed while the UI still
     shows the old state.
 
-    ``merged_sources`` — how many ADDITIONAL files the loader merged into the
-    displayed trajectory (``_source_merged_count``; non-zero only for a DSH
-    export tree). Anything above zero is unverifiable here by construction, so
-    it is refused with that reason rather than compared.
+    ``merged_sources`` — how many additional child files were displayed. Native
+    trees are certified by their composite identity and the complete source
+    fingerprint, rather than by the parent file alone.
     """
     if fmt == "otlp":
         return AttributionResult(False, reason="failure attribution does not support saved OTLP captures; "
                                  "use the native trajectory and its verified reference data.")
-    if not DECAF_AVAILABLE:
+    if not ATTRIBUTION_AVAILABLE:
         return AttributionResult(False, reason=f"Attribution unavailable ({_IMPORT_ERROR})")
     with _LOCK:
         try:
@@ -456,20 +474,25 @@ def _diagnose_locked(*, agent, instance_id, source_path, fmt, expected_sha,
             False, mode="gold_free", agent=agent, instance_id=instance_id,
             reason="capability attribution needs (agent, instance_id); an arbitrary "
                    "trajectory upload has no reference patch to ground blame")
-    # Validate BEFORE any filesystem access: agent from attribution backend's known agents,
+    # Validate BEFORE any filesystem access: agent from evaluation engine's known agents,
     # instance_id a single safe filename stem (no traversal, no separators).
-    from awe import config
-    if agent not in config.AGENTS:
+    from agent_trajviz.awe._engine import config
+    if not isinstance(agent, str) or not _VALID_ID.fullmatch(agent) or ".." in agent:
+        return AttributionResult(False, mode="gold_free", agent=agent, instance_id=instance_id,
+                                 reason="invalid agent id (must be a plain agent name)")
+    if not _VALID_ID.fullmatch(instance_id) or ".." in instance_id:
+        return AttributionResult(False, mode="gold_free", agent=agent, instance_id=instance_id,
+                                 reason="invalid instance id (must be a plain instance name)")
+    native_agents = {"claude_code", "cursor", "opencode", "codex", "pi", "dsh", "deepseek_harness",
+                     "deepseek-harness", "codearts", "icode"}
+    declared_agent = ((config.TRAJECTORY_DIR / agent).is_dir()
+                      and (config.DATA / f"eval_{agent}.json").is_file())
+    if agent not in config.AGENTS and agent not in native_agents and not declared_agent:
         return AttributionResult(
             False, mode="reference", agent=agent, instance_id=instance_id,
             reason=f"could not determine the agent for '{instance_id}' "
                    f"(got '{agent}'). Set the agent override to one of: "
                    f"{', '.join(config.AGENTS)}")
-    if not _VALID_ID.fullmatch(instance_id) or ".." in instance_id:
-        return AttributionResult(
-            False, mode="gold_free", agent=agent, instance_id=instance_id,
-            reason="invalid instance id (must be a plain instance name)")
-
     if not config.requirements_path(instance_id).is_file():
         return AttributionResult(
             False, mode="gold_free", agent=agent, instance_id=instance_id,
@@ -477,7 +500,7 @@ def _diagnose_locked(*, agent, instance_id, source_path, fmt, expected_sha,
                    f"{config.DATA.parent} — attribution needs the reference patch + "
                    f"test outcome; showing trajectory-only signals instead")
 
-    # Canonical identity: resolve via attribution backend's OWN source resolution so we verify
+    # Canonical identity: resolve via evaluation engine's OWN source resolution so we verify
     # the very file diagnosis will parse (codex prefers .jsonl).
     canon = _canonical_trajectory_path(agent, instance_id)
     if canon is None:
@@ -486,48 +509,59 @@ def _diagnose_locked(*, agent, instance_id, source_path, fmt, expected_sha,
             reason=f"no real trajectory for {agent}/{instance_id} under "
                    f"{config.DATA.parent} — cannot verify the displayed trajectory "
                    f"belongs to this run")
-    if merged_sources:
-        # A merged export (DSH parent log + N sub-agent logs) has no single-file
-        # identity to compare: `canonical_trajectory_path` resolves exactly ONE
-        # file per (agent, instance) and the LLM-layer provenance is keyed on
-        # that file's sha, so the composite the loader stamped cannot match by
-        # construction. Say that, rather than let the sha comparison below blame
-        # a mismatch or (worse) certify a tree whose children were never hashed.
+    # The UI's immutable identity includes every merged native child. A raw
+    # parent SHA identifies only a single-file archive; obtain the independent
+    # native identity before trusting any cached normalized source stamp.
+    from agent_trajviz.awe._engine.provenance import trajectory_fingerprint
+    from agent_trajviz.awe._engine.adapters import load_normalized
+    from agent_trajviz.awe.native import _native_candidate
+
+    parent_sha = _sha256(canon)
+    source_fingerprint = trajectory_fingerprint(agent, instance_id)
+    if source_path and Path(source_path).suffix.lower() == ".zip":
         return AttributionResult(
             False, mode="gold_free", agent=agent, instance_id=instance_id,
-            reason=f"the displayed trajectory is a merged multi-file export "
-                   f"(parent log + {merged_sources} sub-agent log"
-                   f"{'s' if merged_sources != 1 else ''}), while the canonical "
-                   f"source for {agent}/{instance_id} is a single file — its "
-                   f"content cannot be certified as this run, so no "
-                   f"gold-grounded verdict is issued")
-    canon_sha = _sha256(canon)
-    # Identity is CONTENT identity, never path identity: the displayed bytes'
-    # hash (captured at load) — or, failing that, the current source file's
-    # bytes — must equal the canonical file's CURRENT bytes. A path match alone
-    # says nothing if the file changed after the UI parsed it (TOCTOU).
-    displayed_sha = expected_sha or (
-        _sha256(Path(source_path)) if source_path is not None else None)
+            reason="a ZIP archive identifies its archive bytes, while the reference identifies a native session tree; "
+                   "load the matching native session files to certify attribution.")
+    normalized = load_normalized(agent, instance_id)
+    if normalized is None or not normalized.steps:
+        return AttributionResult(
+            False, mode="reference", agent=agent, instance_id=instance_id,
+            reason="the evaluation engine could not extract workflow steps from this trajectory; "
+                   "no gold-grounded verdict is issued. Use a supported native session format.")
+    native = _native_candidate(canon)
+    canon_sha = native.sha256 if native is not None else parent_sha
+    stamp = getattr(normalized, "source", None)
+    if (canon_sha is None or not isinstance(stamp, dict) or stamp.get("sha256") != canon_sha
+            or not isinstance(stamp.get("path"), str) or Path(stamp["path"]).resolve() != canon.resolve()):
+        return AttributionResult(
+            False, mode="reference", agent=agent, instance_id=instance_id,
+            reason="the evaluation engine could not verify the canonical trajectory's content identity; "
+                   "reload the native session and retry.")
+    displayed_sha = expected_sha
+    if displayed_sha is None and source_path is not None:
+        if native is not None:
+            try:
+                from agent_trajviz import load
+                displayed_sha = load(source_path).sha256
+            except (ValueError, OSError):
+                displayed_sha = None
+        else:
+            displayed_sha = _sha256(Path(source_path))
     if source_path is not None and displayed_sha is None:
-        # A displayed source whose identity cannot be established (unreadable
-        # at load AND at diagnose time) must refuse, not silently skip the gate.
         return AttributionResult(
             False, mode="gold_free", agent=agent, instance_id=instance_id,
             reason="cannot establish the displayed trajectory's content identity "
-                   "(source unreadable) — refusing rather than diagnosing "
-                   "unverified bytes")
+                   "(source unreadable) — refusing rather than diagnosing unverified bytes")
     if displayed_sha is not None and displayed_sha != canon_sha:
         return AttributionResult(
             False, mode="gold_free", agent=agent, instance_id=instance_id,
-            reason=f"the displayed trajectory does not match the canonical "
-                   f"{agent}/{instance_id} run's current content — either it "
-                   f"belongs to a different execution, or the real export "
-                   f"changed after it was loaded (reload to re-sync). A "
-                   f"gold-grounded verdict would otherwise describe different "
-                   f"bytes than the ones shown")
+            reason=f"the displayed trajectory does not match the canonical {agent}/{instance_id} run's current content — "
+                   "either it belongs to a different execution, or the real export changed after it was loaded "
+                   "(reload to re-sync). A gold-grounded verdict would otherwise describe different bytes than the ones shown")
 
-    from awe.dossier import case_record
-    from awe.detect import detect
+    from agent_trajviz.awe._engine.dossier import case_record
+    from agent_trajviz.awe._engine.detect import detect
     requirement_sha = _sha256(config.requirements_path(instance_id))
     patch_path = config.patch_path(agent, instance_id)
     eval_resolver = getattr(config, "eval_path", None)
@@ -538,37 +572,29 @@ def _diagnose_locked(*, agent, instance_id, source_path, fmt, expected_sha,
                           Path(project_data) / "pertest" / agent / f"{instance_id}.json",
                           Path(project_data) / "pertest" / agent / f"{instance_id}.log.json"]
                          if project_data is not None else [])
+    # Full dossiers can read declared execution context. Its identity belongs to
+    # the same before/after guard as patches, per-test records and overrides.
+    context_path = os.environ.get("AWE_EXECUTION_CONTEXT")
+    if context_path:
+        optional_evidence.append(Path(context_path))
     optional_fingerprints = [_sha256(path) for path in optional_evidence]
     used_judge = False
     try:
-        # Content identity cannot establish parser support. Some backend adapters
-        # accept an unfamiliar native session as an empty trajectory; scoring it
-        # would mistake missing evidence for workflow failures. Require at least
-        # one normalized step before either dossier generation may issue blame.
-        from awe.adapters import load_normalized
-
-        normalized = load_normalized(agent, instance_id)
-        if normalized is None or not normalized.steps:
-            return AttributionResult(
-                False, mode="reference", agent=agent, instance_id=instance_id,
-                reason="the attribution backend could not extract workflow steps "
-                       "from this trajectory; no gold-grounded verdict is issued. "
-                       "Use a trajectory format supported by the backend.")
         if _supports_layer_controls(case_record):
-            # Legacy attribution backend: use its full dossier only with verified cached
+            # Legacy evaluation engine: use its full dossier only with verified cached
             # verdicts and its explicit per-call controls.
             use_judge, adjudicate, notes = _llm_layer_policy(agent, instance_id, canon_sha)
             rec = case_record(agent, instance_id, use_judge=use_judge, adjudicate=adjudicate)
             d = detect(instance_id, agent, use_judge=use_judge)
-            # None selects attribution backend's automatic cached-verdict mode. Its detector
+            # None selects evaluation engine's automatic cached-verdict mode. Its detector
             # reports whether this case actually had a usable verdict; task
             # opportunities or the policy flag alone cannot establish that.
             used_judge = (use_judge is not False
                           and (d.get("signals") or {}).get("judge_available") is True)
         else:
             rec, d = _objective_record(agent, instance_id, canon, canon_sha)
-            notes = ["attribution backend's dossier API lacks per-call judge/arbiter controls; "
-                     "using objective analysis only, without cached LLM verdicts."]
+            notes = ["Automatic attribution uses objective evidence only, without cached LLM verdicts; "
+                     "use AWE operations for verified cached judgments."]
     except Exception as exc:  # never surface a raw traceback to the UI
         return AttributionResult(
             False, mode="reference", agent=agent, instance_id=instance_id,
@@ -584,7 +610,7 @@ def _diagnose_locked(*, agent, instance_id, source_path, fmt, expected_sha,
     # result would describe bytes the gate never approved and the UI never
     # displayed. Recompute the canonical hash after ALL reads and refuse on any
     # change (the in-process lock cannot serialize other processes).
-    if _sha256(canon) != canon_sha:
+    if _sha256(canon) != parent_sha or trajectory_fingerprint(agent, instance_id) != source_fingerprint:
         return AttributionResult(
             False, mode="reference", agent=agent, instance_id=instance_id,
             reason=f"the real trajectory for {agent}/{instance_id} changed "
@@ -601,6 +627,11 @@ def _diagnose_locked(*, agent, instance_id, source_path, fmt, expected_sha,
     if [_sha256(path) for path in optional_evidence] != optional_fingerprints:
         return AttributionResult(False, mode="reference", agent=agent, instance_id=instance_id,
                                  reason="the optional evaluation evidence changed while the diagnosis was running — reload and retry")
+    rec = {**rec, "source_certification": {
+        "status": "displayed_content_verified", "trajectory_sha256": canon_sha,
+        "trajectory_fingerprint": source_fingerprint, "trajectory": copy.deepcopy(stamp),
+        "requirements_sha256": requirement_sha, "patch_sha256": patch_sha, "outcome_sha256": outcome_sha,
+    }}
     return _shape(rec, d.get("opportunities", {}), notes, used_judge=used_judge)
 
 
@@ -610,7 +641,7 @@ def _shape(rec: dict, opportunities: dict, notes: list[str], *, used_judge: bool
     Blame is NON-ZERO only (arbiter-refuted faults carry weight 0). Assessment
     is per capability: the deductive core always; every other capability —
     including EACH judge capability separately — only when its own opportunity
-    opened (attribution backend can judge requirement_understanding while task_planning is out
+    opened (evaluation engine can judge requirement_understanding while task_planning is out
     of scope for the same case)."""
     faults = rec.get("faults", [])
     primary = next(({"capability": f["capability"], "error_type": f["error_type"]}
@@ -646,5 +677,5 @@ def _shape(rec: dict, opportunities: dict, notes: list[str], *, used_judge: bool
         agent=rec.get("agent"), instance_id=rec.get("instance_id"),
         blame_status=rec.get("blame_status"), primary=primary,
         scorecard=scorecard, faults=faults, arbiter=rec.get("arbiter"),
-        used_judge=used_judge, task=rec.get("task"), notes=notes,
+        used_judge=used_judge, task=rec.get("task"), notes=notes, dossier=copy.deepcopy(rec),
     )

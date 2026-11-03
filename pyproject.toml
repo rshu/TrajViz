@@ -68,6 +68,7 @@ agent-trajviz = "agent_trajviz.insight.__main__:main"
 agent-trajviz-converge = "agent_trajviz.converge.cli:main"
 agent-trajviz-collect = "agent_trajviz.collect.__main__:main"
 agent-trajviz-label = "agent_trajviz.labeling.labeler:main"
+agent-trajviz-awe = "agent_trajviz.awe.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/rshu/TrajViz"
@@ -104,6 +105,11 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E402"]
+# The evaluator uses compact mathematical expressions and validation predicates.
+# Rule registration also uses delayed imports to avoid dependency cycles.
+# Keep these forms while retaining correctness and late-binding lint checks.
+"agent_trajviz/awe/_engine/**/*.py" = ["B007", "E741", "E731", "UP031", "SIM103", "SIM113", "E402"]
+"agent_trajviz/awe/_engine/scripts/*.py" = ["E402"]
 
 # The presence of this table is load-bearing, independent of its contents: it
 # makes THIS file pytest's inifile, which pins rootdir to this repository. A

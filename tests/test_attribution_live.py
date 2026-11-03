@@ -1,6 +1,6 @@
-"""Executed checks of the DECAF attribution seam and its content-identity gate.
+"""Executed checks of the attribution attribution seam and its content-identity gate.
 
-DECAF's immutable reference trajectories and cached verdicts predate native
+attribution's immutable reference trajectories and cached verdicts predate native
 Claude ingestion. A test-only bridge supplies normalized native records with
 the original archived source identity, without retaining a legacy production
 loader. Native file/tree/ZIP identity is exercised in test_claude_native.py;
@@ -8,7 +8,7 @@ the DSH ZIP checks below continue to exercise its production loader directly.
 
 What each group protects:
 
-* reference identity — ``_source_sha256`` identifies the exact bytes DECAF
+* reference identity — ``_source_sha256`` identifies the exact bytes attribution
   parses, so a reference file diagnoses, while a
   BOM-prefixed or one-byte-flipped copy is refused (lenient decoding must never
   leak into identity).
@@ -25,8 +25,8 @@ What each group protects:
 * the Attribution tab — its handler survived the ``ui/`` split: it derives
   (agent, instance) from a reference path and degrades without fabricating.
 
-Skipped when DECAF (``awe``) or the vendored reference fixture is absent, matching
-tests/test_attribution.py, so the standalone CI job stays green.
+The engine and reference fixture are required during collection. Only legacy
+schema-20 verdict expectations are version-gated; identity and isolation always run.
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ import unittest
 import zipfile
 from dataclasses import asdict
 from functools import wraps
+from html import escape
 from pathlib import Path
 
 from agent_trajviz.insight import attribution
@@ -58,21 +59,35 @@ PROVENANCE_FIELDS = ("trajectory_sha256", "requirements_sha256",
 
 
 def _reference_present() -> bool:
-    if not attribution.DECAF_AVAILABLE:
+    if not attribution.ATTRIBUTION_AVAILABLE:
         return False
-    from awe import config
+    from agent_trajviz.awe._engine import config
     return config.requirements_path(GOLD_INST).is_file()
 
 
-requires_decaf = unittest.skipUnless(
-    attribution.DECAF_AVAILABLE, "DECAF (awe) not importable")
+requires_backend = unittest.skipUnless(
+    attribution.ATTRIBUTION_AVAILABLE, "attribution (awe) not importable")
 requires_reference = unittest.skipUnless(
     _reference_present(), "reference fixture not present")
 
 
+def _legacy_layer_controls() -> bool:
+    if not attribution.ATTRIBUTION_AVAILABLE:
+        return False
+    from agent_trajviz.awe._engine.dossier import case_record
+    return attribution._supports_layer_controls(case_record)
+
+
+requires_legacy_verdicts = unittest.skipUnless(
+    _legacy_layer_controls(),
+    "schema-20 cached-verdict goldens exercise the legacy per-call dossier API")
+
+
 def _canonical(agent: str, inst: str) -> Path:
-    from awe.adapters import canonical_trajectory_path
-    return Path(canonical_trajectory_path(agent, inst))
+    path = attribution._canonical_trajectory_path(agent, inst)
+    if path is None:
+        raise AssertionError("Missing canonical trajectory in the reference fixture")
+    return Path(path)
 
 
 def _sha(path) -> str:
@@ -80,11 +95,11 @@ def _sha(path) -> str:
 
 
 def _archived_reference_session(path) -> LoadedSession:
-    """Test-only bridge for DECAF's byte-pinned pre-native reference evidence.
+    """Test-only bridge for attribution's byte-pinned pre-native reference evidence.
 
     Production loading deliberately rejects that retired export format. The
     seam tests supply normalized native records while preserving the original
-    source bytes/hash that the external DECAF cache is pinned to. Native file
+    source bytes/hash that the external attribution cache is pinned to. Native file
     and bundle loading/identity are exercised in test_claude_native.py.
     """
     from agent_trajviz import Trajectory
@@ -103,7 +118,7 @@ def _archived_reference_session(path) -> LoadedSession:
 
 
 class _RootRestoringTest(unittest.TestCase):
-    """Every diagnosis rewrites DECAF's process-global root; put it back."""
+    """Every diagnosis rewrites attribution's process-global root; put it back."""
 
     def setUp(self):
         # Restoring on cleanup is not enough: tests in OTHER files rebind the
@@ -121,12 +136,12 @@ class _RootRestoringTest(unittest.TestCase):
 
 
 # --------------------------------------------------------------- load identity
-@requires_decaf
+@requires_backend
 @requires_reference
 class ArchivedReferenceIdentityTests(_RootRestoringTest):
-    """The gate compares normalized archived evidence against DECAF's source."""
+    """The gate compares normalized archived evidence against attribution's source."""
 
-    def test_reference_bridge_sha_is_the_sha_of_the_bytes_decaf_parses(self):
+    def test_reference_bridge_sha_is_the_sha_of_the_bytes_attribution_parses(self):
         """``_source_sha256`` must be the raw bytes of the canonical file.
 
         The read path decodes ``utf-8-sig`` and may rewrite ``file_path`` before
@@ -205,14 +220,22 @@ class ArchivedReferenceIdentityTests(_RootRestoringTest):
 
 
 # ------------------------------------------------------- mid-diagnosis changes
-@requires_decaf
+@requires_backend
 @requires_reference
 class MidDiagnosisMutationTests(_RootRestoringTest):
     """``case_record``/``detect`` re-read the reference data AFTER the identity gate."""
 
     def _race(self, mutate):
-        import awe.dossier as dossier
-        original = dossier.case_record
+        # Hook the function this backend generation actually calls. Modern
+        # objective analysis bypasses case_record, so patching it would make a
+        # mutation test pass through without ever mutating the evidence.
+        if _legacy_layer_controls():
+            import agent_trajviz.awe._engine.dossier as module
+            name = "case_record"
+        else:
+            import agent_trajviz.awe._engine.detect as module
+            name = "detect"
+        original = getattr(module, name)
 
         @wraps(original)
         def racing(*args, **kwargs):
@@ -220,8 +243,8 @@ class MidDiagnosisMutationTests(_RootRestoringTest):
             mutate()
             return out
 
-        dossier.case_record = racing
-        self.addCleanup(setattr, dossier, "case_record", original)
+        setattr(module, name, racing)
+        self.addCleanup(setattr, module, name, original)
 
     def test_canonical_change_during_diagnosis_is_refused(self):
         """An external writer (a ``git pull`` of the reference data) swapping the file between
@@ -258,7 +281,7 @@ class MidDiagnosisMutationTests(_RootRestoringTest):
 
 
 # ------------------------------------------------------- instance-id validation
-@requires_decaf
+@requires_backend
 class InstanceIdValidationTests(_RootRestoringTest):
     """``instance_id`` must never reach path construction."""
 
@@ -297,7 +320,7 @@ class InstanceIdValidationTests(_RootRestoringTest):
 
 
 # ------------------------------------------------------------- root isolation
-@requires_decaf
+@requires_backend
 @requires_reference
 class ReferenceRootIsolationTests(_RootRestoringTest):
     """A request's reference root is explicit and never inherited."""
@@ -314,7 +337,7 @@ class ReferenceRootIsolationTests(_RootRestoringTest):
 
     def test_concurrent_diagnoses_with_different_roots_do_not_leak(self):
         """Two viewers pointed at different corpora must never be served each
-        other's gold: DECAF's root is process-global, so only holding the module
+        other's gold: attribution's root is process-global, so only holding the module
         lock across configure+diagnose keeps a request's root its own."""
         root_a = self._reference_copy("rootA")
         root_b = self._root_with_sentinel_gold()
@@ -348,7 +371,7 @@ class ReferenceRootIsolationTests(_RootRestoringTest):
     def test_root_is_not_inherited_from_a_previous_caller(self):
         """``configure()`` by an earlier caller must not decide the next
         diagnosis: a caller that passes no root gets the import-time default."""
-        from awe import config
+        from agent_trajviz.awe._engine import config
         root_b = self._root_with_sentinel_gold()
         attribution.configure(root_b)
         self.assertEqual(config.DATA, root_b.resolve() / "data")
@@ -358,21 +381,22 @@ class ReferenceRootIsolationTests(_RootRestoringTest):
         self.assertEqual(config.DATA, attribution._DEFAULT_ROOT.resolve() / "data")
         self.assertNotIn(self.SENTINEL,
                          (res.task or {}).get("problem_statement") or "")
-        # Configuration goes through DECAF's attributes; the process
+        # Configuration goes through attribution's attributes; the process
         # environment is never used as a side channel.
         self.assertEqual(dict(os.environ), env_before)
 
 
 # --------------------------------------------------------- verdict provenance
-@requires_decaf
+@requires_backend
 @requires_reference
+@requires_legacy_verdicts
 class VerdictProvenanceTests(_RootRestoringTest):
     """A cached LLM verdict shapes a diagnosis only with FULL provenance."""
 
     def setUp(self):
         super().setUp()
-        import awe.arbiter as arbiter
-        from awe import config
+        import agent_trajviz.awe._engine.arbiter as arbiter
+        from agent_trajviz.awe._engine import config
         self.arbiter_mod = arbiter
         self.config_mod = config
         self.addCleanup(setattr, config, "JUDGE_CACHE_DIR", config.JUDGE_CACHE_DIR)
@@ -461,7 +485,32 @@ class VerdictProvenanceTests(_RootRestoringTest):
         self.assertTrue(res.notes)
         html = build_attribution_html(asdict(res))
         for note in res.notes:
-            self.assertIn(note, html)
+            self.assertIn(escape(note), html)
+
+
+# ----------------------------------------------------- modern model isolation
+@requires_backend
+@requires_reference
+@unittest.skipIf(_legacy_layer_controls(), "legacy cached-verdict behavior is tested above")
+class ModernVerdictIsolationTests(_RootRestoringTest):
+    """The modern objective bridge must not consume unverifiable model caches."""
+
+    def test_objective_diagnosis_never_reads_model_verdicts(self):
+        import agent_trajviz.awe._engine.judge as judge
+        import agent_trajviz.awe._engine.arbiter as arbiter
+
+        def forbidden(*args, **kwargs):
+            self.fail("Objective analysis tried to read a cached model verdict")
+
+        for module, name in ((judge, "verdict_cached"), (arbiter, "auto_adjudicate")):
+            original = getattr(module, name)
+            setattr(module, name, forbidden)
+            self.addCleanup(setattr, module, name, original)
+        result = attribution.diagnose(agent=GOLD_AGENT, instance_id=ARB_INST)
+        self.assertTrue(result.available, result.reason)
+        self.assertFalse(result.used_judge)
+        self.assertIsNone(result.arbiter)
+        self.assertEqual(result.primary, {"capability": "code_editing", "error_type": "relevant_change_omitted"})
 
 
 # ------------------------------------------------------------- zip identity
@@ -539,7 +588,7 @@ class ZipSourceIdentityTests(unittest.TestCase):
 
 
 # ------------------------------------------------------------ Attribution tab
-@requires_decaf
+@requires_backend
 @requires_reference
 class AttributionTabTests(_RootRestoringTest):
     """The tab handler after the ui/ split, driven with a real reference path."""

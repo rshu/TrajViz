@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "adapters": {
+    "CM-EDIT-REGRESSION-1": {
+      "adapter_id": "awe.local-verification-policy.v1",
+      "implementation": {
+        "schema_version": 1,
+        "kind": "hook_policy",
+        "event": "pre_submit",
+        "operation": "request_fresh_local_verification",
+        "allowed_inputs": ["workspace_revision", "verification", "tests_available"],
+        "required_capabilities": ["hook.pre_submit", "tool.project_tests", "state.workspace_revision", "state.local_verification"],
+        "max_triggers_per_run": 2,
+        "on_unknown": "warn",
+        "on_exhaustion": "warn_and_continue"
+      }
+    }
+  }
+}

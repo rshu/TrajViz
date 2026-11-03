@@ -289,9 +289,14 @@ agent-trajviz-label trajectory.json --output labels.json
 ```
 
 Upload the label sidecar alongside its trajectory to enable phase-aware views.
-Failure attribution is optional and requires a compatible backend and canonical
-reference data; see the
+Failure attribution uses the bundled evaluation engine and canonical reference
+data; see the
 [attribution API](https://github.com/rshu/TrajViz/blob/main/agent_trajviz/attribution.py).
+
+The **AWE** tab provides built-in workflow evaluation, full evidence, provenance
+graphs, symptoms, recommendations and saved-run reports. AWE Settings configure
+explicit operations and optional model connections. See the
+[AWE guide](https://github.com/rshu/TrajViz/blob/main/docs/awe.md) for the Python API and CLI.
 
 ## Development
 

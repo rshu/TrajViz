@@ -21,9 +21,29 @@ change the public API (the names exported from `agent_trajviz`).
   SQLite consolidator exports (`info` + `parts`) are unchanged.
 - Session files saved by Windows PowerShell (`Out-File` / `Set-Content`,
   UTF-16 with a BOM) load. A `0xFF` byte that is not that BOM is still rejected.
-- Refuse failure attribution when the optional backend cannot extract workflow
+
+## [0.4.0] - 2026-11-03
+
+### Added
+
+- Bundle the self-contained workflow evaluation engine and catalog resources.
+- Import complete saved AWE runs as JSON, ZIP or directories, preserving original
+  evidence, manifests and artifact fingerprints, with JSON, ZIP and offline HTML exports.
+- Add numbered provenance graphs with source navigation, full case evidence, symptoms,
+  recommendation plans, aggregate reports, discovery results and RSI exchange views.
+- Provide AWE Settings with session-only keys and explicit isolated operations for
+  analysis, batch archives, judging, benchmark ingestion, evaluation, discovery,
+  validation, calibration, catalog inspection and experimental policy controls.
+- Add the `agent-trajviz-awe` CLI and public `agent_trajviz.awe` API.
+
+### Fixed
+
+- Refuse failure attribution when the evaluation engine cannot extract workflow
   steps from a native session, instead of treating missing parser evidence as
   workflow failures.
+- Preserve native tool results, thread identities, working directories and hidden
+  reasoning when projecting TrajViz sessions into built-in workflow evaluation.
+- Keep complete attribution dossiers and audits, with bundled engine and native-session checks.
 
 ## [0.3.2] - 2026-11-02
 
@@ -378,7 +398,8 @@ First release as the `agent-trajviz` package.
   passwords, authorization headers and generated-looking values of
   secret-named assignments become `[REDACTED]`.
 
-[Unreleased]: https://github.com/rshu/TrajViz/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/rshu/TrajViz/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/rshu/TrajViz/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/rshu/TrajViz/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/rshu/TrajViz/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/rshu/TrajViz/compare/v0.2.0...v0.3.0

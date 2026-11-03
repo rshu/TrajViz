@@ -13,12 +13,11 @@ green while quietly testing less than it appears to.
     at all; its subject stops being covered while the file still looks tested.
   * **Unconditionally disabled tests.** A bare ``@unittest.skip`` / ``skip`` /
     ``xfail`` marker turns a failing test into a green run forever. Conditional
-    skips (``skipUnless``/``skipIf``, which guard optional fixtures and the
-    DECAF integration) are legitimate and are deliberately allowed.
+    skips (``skipUnless``/``skipIf``, which guard optional fixtures and explicit
+    legacy-schema compatibility checks) are legitimate and are deliberately allowed.
 
 These are checked by parsing the test sources rather than importing them, so
-the check itself has no import side effects and no dependence on which optional
-backends are installed.
+the check itself has no import side effects or dependence on local datasets.
 """
 
 from __future__ import annotations
@@ -173,28 +172,16 @@ class SuiteInvariantTests(unittest.TestCase):
 class EnvironmentGatedCoverageTests(unittest.TestCase):
     """Guards for the two ways coverage can shrink without a failing test."""
 
-    # Test-function inventory of every module holding environment-gated tests.
-    # Those tests only run where the optional DECAF integration is importable,
-    # so whatever skips is invisible in a default run — which is exactly how a
-    # skipped block quietly becomes an empty one. Pinning the count means the
-    # modules cannot be deleted, renamed out of the convention, or un-gated
-    # without someone editing this list on purpose. Not every test counted here
-    # skips; the inventory is the guard, not the skip set.
-    #
-    # Measured by blocking the ``awe`` import and diffing the run: 37 tests go
-    # from passing to skipped — 14 in test_attribution, 20 of the 21 in
-    # test_attribution_live, 1 of the 3 in test_attribution_ui (its
-    # reference-data check goes through DECAF's config), 1 of the 8 in
-    # test_dsh_source_identity, and 1 in test_concurrency_isolation, which is
-    # not pinned here because its other tests do not depend on DECAF.
+    # Pin the attribution regression inventory. The evaluator is bundled, so
+    # these checks execute in every development and CI installation.
     _GATED_MODULES = {
         "test_attribution.py": 14,
-        "test_attribution_live.py": 21,
+        "test_attribution_live.py": 22,
         "test_attribution_ui.py": 3,
-        "test_dsh_source_identity.py": 8,
+        "test_dsh_source_identity.py": 9,
     }
 
-    def test_the_decaf_gated_test_inventory_is_the_pinned_one(self):
+    def test_the_attribution_gated_test_inventory_is_the_pinned_one(self):
         actual: dict[str, int] = {}
         for name in self._GATED_MODULES:
             path = _TESTS_DIR / name
@@ -207,9 +194,7 @@ class EnvironmentGatedCoverageTests(unittest.TestCase):
             )
         self.assertEqual(
             actual, self._GATED_MODULES,
-            "the environment-gated test inventory changed. These skip wherever the "
-            "optional integration is absent, so a loss here is invisible in a normal "
-            "run — update the pin deliberately.",
+            "The attribution regression inventory changed; update the pin deliberately.",
         )
 
     def test_no_package_directory_is_bytecode_only(self):

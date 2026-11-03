@@ -1,0 +1,391 @@
+# Workflow-capability taxonomy: all 7 capabilities.
+# Each error type records HOW it is flagged. availability:
+#   now   = computable today from gold + agent patch + outcome (agent_trajviz.awe._engine.signals)
+#   traj  = needs the trajectory adapter (read-set, test-execution, success claim)
+#   eval+ = needs per-test results (a swebench report.json harvested to
+#           data/pertest/<agent>/<instance_id>.json — LIVE since v0.39 for cases
+#           that have one; the boolean-only tier runs unchanged without it)
+#   judge = decided by the outcome-blinded LLM judge over a closed error set (agent_trajviz.awe._engine.judge)
+# needs_llm: none | explain (LLM names the dimension/why; never decides whether alone)
+#          | judge   (the LLM judge IS the decision, constrained + evidence-grounded)
+#          | adjudicate (arbiter may corroborate/refute the INTERPRETIVE capability
+#                        assignment of an objective fact; see rootcause arbiter targets)
+# The first two capabilities are judge-scored (run scripts/run_judge.py; see
+# LLM_JUDGE.md) — with ONE calibrated objective anchor since v0.26:
+# requirement_understanding/solved_unrelated_problem (zero patch∩issue identifier
+# overlap on a total miss; solved-vs-failed RR=7.95). They are the most-upstream
+# hypotheses: judge capabilities remain contributing, never primary, regardless
+# of confidence. Objective primary assignment uses normalized causal-capability
+# dominance and margin; diffuse blame remains conjunctive (agent_trajviz.awe._engine.rootcause). The objective
+# anchor is medium-confidence and never overrides a deduction.
+version: 0.2
+
+capabilities:
+
+  requirement_understanding:
+    name: Requirement Understanding
+    task_opportunity: always
+    scored_by: llm_judge          # outcome-blinded; closed error set; cites step ids
+    dimensions:
+      requirement_comprehension:
+        errors:
+          misread_requirement:
+            desc: Misunderstood what the issue is actually asking for.
+            anchor: "judge verdict (confidence >= medium, evidence cited)"
+            availability: judge
+            needs_llm: judge
+          missed_constraint:
+            desc: Overlooked an explicit constraint / edge case stated in the issue.
+            anchor: "judge verdict (confidence >= medium, evidence cited)"
+            availability: judge
+            needs_llm: judge
+          incomplete_requirement_coverage:
+            desc: Understood and addressed only part of a multi-part requirement.
+            anchor: "judge verdict (confidence >= medium, evidence cited)"
+            availability: judge
+            needs_llm: judge
+          scope_misjudged:
+            desc: Tackled a meaningfully broader or narrower problem than asked.
+            anchor: "judge verdict (confidence >= medium, evidence cited)"
+            availability: judge
+            needs_llm: judge
+          solved_unrelated_problem:
+            desc: >
+              Failed; the patch edits only non-gold files AND shares zero code
+              identifiers with the issue text — the agent plausibly solved a
+              DIFFERENT problem than the one reported. The one objective anchor
+              in this capability (calibrated: 8.32% of failed vs 1.05% of solved
+              runs, RR=7.95). Medium confidence (best-effort token extraction);
+              arbiter-eligible; emitted only when the capability is scored
+              (judge coverage), else surfaced as the solved_unrelated_candidate
+              signal on wrong_file_localization faults.
+            anchor: "loc_miss AND (patch symbols ∪ edited-file basenames) ∩ issue identifiers == ∅ (calibrated RR 7.95)"
+            availability: now (signal) / judge (fault emission is gated on judge coverage)
+            needs_llm: adjudicate
+
+  task_planning:
+    name: Task Planning
+    task_opportunity: gold.is_multi_file OR gold_patch_loc >= 30
+    scored_by: llm_judge
+    dimensions:
+      solution_planning:
+        errors:
+          no_decomposition:
+            desc: Began editing with no discernible plan on a task that needed one.
+            anchor: "judge verdict (confidence >= medium, evidence cited)"
+            availability: judge
+            needs_llm: judge
+          flawed_plan:
+            desc: Adopted an approach that cannot satisfy the stated requirement.
+            anchor: "judge verdict (confidence >= medium, evidence cited)"
+            availability: judge
+            needs_llm: judge
+          premature_implementation:
+            desc: Began editing before locating / understanding the relevant code.
+            anchor: "judge verdict (confidence >= medium, evidence cited)"
+            availability: judge
+            needs_llm: judge
+          abandoned_plan:
+            desc: Stated a reasonable plan, then diverged from it without justification.
+            anchor: "judge verdict (confidence >= medium, evidence cited)"
+            availability: judge
+            needs_llm: judge
+
+  code_localization:
+    name: Code Localization
+    task_opportunity: always
+    dimensions:
+      file_level_localization:
+        errors:
+          missed_relevant_file:
+            desc: >
+              Failed task; gold source file(s) the agent never REACHED (neither
+              read nor edited). Fires on a total miss (loc_miss) and also on a
+              partial miss (loc_partial, non-cross-module) for the unreached
+              remainder — so it can co-occur with editing faults on the files
+              the agent did reach.
+            anchor: "(flag == loc_miss OR (flag == loc_partial AND NOT cross_module)) AND missed_unreached non-empty"
+            availability: now
+            needs_llm: explain        # why was it missed: bad query? wrong scope?
+          wrong_file_localization:
+            desc: Failed; agent edited non-gold files and missed the gold ones.
+            anchor: "flag == loc_miss AND missed_unreached non-empty AND extra_files non-empty"
+            availability: now
+            needs_llm: explain
+      cross_file_cross_module_localization:
+        opportunity: gold.is_cross_module
+        errors:
+          cross_module_context_missing:
+            desc: Failed; found some gold files but missed others in a different module.
+            anchor: "flag == loc_partial AND gold.is_cross_module AND missed_unreached non-empty"
+            availability: now
+            needs_llm: explain
+      # NOTE (v0.9 prune): removed taxonomy entries the detector never emits —
+      # missed_relevant_function (caused the editing->localization inversion; dropped),
+      # poor_search_query / irrelevant_file_focus (no empirical grounding mass:
+      # 0/122 localization-primary cases edited >=3 non-gold files). Re-add only with
+      # a real anchor.
+
+  code_editing:
+    name: Code Editing
+    task_opportunity: always
+    dimensions:
+      patch_correctness:
+        errors:
+          incorrect_patch:
+            desc: >
+              Failed; edited the gold files but the change is wrong. `reproduced_fraction`
+              (deductive: the share of the reference change's lines the agent reproduced, 0..1) is
+              carried as a graded SEVERITY attribute — NOT a separate error type. The distribution
+              is a smooth decline with no natural boundary, so any categorical cut would be a
+              convention; the only principled partial/regression split needs per-test results
+              (deferred — ARGUS eval is bool-only).
+            anchor: "flag == right_place_wrong_change (confidence medium when aggregate reproduced_fraction >= 0.8 — near-gold patches are BA-HARNESS-1 suspect territory, v0.32), OR flag == loc_partial with the AGGREGATE reproduced_fraction over the edited gold files < 0.5 (severity = gold-vs-agent line overlap)"
+            availability: now
+            needs_llm: explain
+          relevant_change_omitted:
+            desc: >
+              Failed; the agent READ a gold file during the run but never edited it
+              (reached-not-edited). For THAT file localization succeeded, so the
+              omission is an editing/selection decision, not a search miss (the
+              same case may still carry localization faults on OTHER files). The deeper cause
+              (comprehension vs planning) is adjudicated by the LLM layer.
+            anchor: "agent produced a source edit (flag in {loc_miss, loc_partial}) AND missed gold file present in the trajectory read-set but absent from the edit-set"
+            availability: traj
+            needs_llm: adjudicate     # LLM refines the capability (requirement/planning/editing)
+          no_patch_produced:
+            desc: >
+              Failed with no source fix and the run DID investigate (ran a test or
+              read >=3 files) — the analysis-paralysis-shaped case. patch_state
+              (missing/empty/unparseable/test_only) says how it degenerated.
+            anchor: "flag == no_source_edit AND investigated (or no trajectory)"
+            availability: now
+            needs_llm: explain
+          gave_up_early:
+            desc: >
+              Failed with no source fix and the run NEVER investigated (no test
+              run, <3 files read): early disengagement, not a failed edit attempt.
+              The capability assignment is interpretive (comprehension/planning/
+              environment may be upstream) — associational strength,
+              arbiter-eligible.
+            anchor: "flag == no_source_edit AND NOT (ran_any_test OR files_read >= 3) AND NOT truncated_run (killed != gave up)"
+            availability: traj
+            needs_llm: adjudicate
+          partial_fix_only:
+            desc: >
+              Some FAIL_TO_PASS tests now pass but not all — the change handles
+              part of the specified behavior and misses corner cases. Deductive
+              from the official harness's per-test record (v0.39 eval+ tier);
+              severity = the pass fraction. REFINES incorrect_patch (v0.40): the
+              coarse "content diverges" deduction is replaced, not doubled;
+              when no editing-correctness fault was licensed the fraction is
+              an ATTRIBUTE of the licensed localization miss, so a per-test
+              record never adds rival editing mass and flips a settled verdict.
+              Pilot prevalence of the shape: 20/108 (18.5%) of re-evaluated
+              claude_code failures (9 refine an incorrect_patch).
+            anchor: "pertest.patch_applied AND 0 < f2p_pass_fraction < 1"
+            availability: eval+
+            needs_llm: none
+      # over_editing removed (v0.9): calibration showed edit_size_ratio does not
+      # discriminate solved vs failed; kept only as a behavioral flag in signals,
+      # never a scored error. The ROBUST form below (absolute mass, not the
+      # gold-relative ratio) passed the same gate in v0.37.
+      edit_scope:
+        errors:
+          excessive_extra_edits:
+            desc: >
+              Failed; the patch changes >= 50 LOC in SOURCE files outside the
+              gold set — editing mass sprayed off the reference path. The v0.9
+              over_editing deferral executed with the recorded robust metric:
+              ABSOLUTE extra LOC (12.4% failed vs 3.1% solved, RR 2.38, Holm
+              p=0.005, threshold-stable 50/100/200); the file-COUNT cuts stayed
+              flat, so mass discriminates, spread does not. Associational
+              (medium): large exploratory edits are sometimes legitimate.
+            anchor: "extra_src_loc >= 50 (changed LOC summed over non-gold, non-test files in the final diff)"
+            availability: now
+            needs_llm: explain
+      regression_risk_control:
+        opportunity: gold.dimension_opportunities.regression_risk
+        errors:
+          regression_introduced:
+            desc: >
+              A previously passing PASS_TO_PASS test now fails under the patch.
+              Deductive from the per-test record (v0.39 eval+ tier). Shape
+              attribute: regression_only (every gating test passes — the fix
+              worked and something else broke; incorrect_patch is SUPERSEDED,
+              one fact is never blamed twice), unfixed_regressive, or
+              partial_fix_regressive. Pilot: 24/108 (22%) broke >=1 P2P test,
+              13 (12%) failed by regression alone.
+            anchor: "pertest.patch_applied AND p2p_broken non-empty"
+            availability: eval+
+            needs_llm: none
+
+  code_verification:
+    name: Code Verification
+    task_opportunity: "fail_to_pass non-empty (always for SWE-bench)"
+    dimensions:
+      test_selection:
+        errors:
+          relevant_test_not_run:
+            desc: The FAIL_TO_PASS test file(s) were never executed in the trajectory.
+            anchor: "no run_test step touches any test_patch_file"
+            availability: traj
+            needs_llm: none
+      final_claim_consistency:
+        errors:
+          unsupported_success_claim:
+            desc: Agent asserted success without ever running the gating tests.
+            anchor: "claimed_success_final AND NOT fail_to_pass_referenced"
+            availability: traj
+            needs_llm: explain
+      authored_test_execution:
+        errors:
+          authored_test_never_run:
+            desc: >
+              The agent CREATED/EDITED a test file during the run (a repro or
+              regression test) but no test command ever references it — it built
+              the verification instrument and never used it. Gated on
+              ran_any_test (when nothing ran at all, relevant_test_not_run/high
+              owns the fact).
+            anchor: "trajectory edit-set ∩ test files non-empty AND no test command references any of them AND ran_any_test"
+            availability: traj
+            needs_llm: none
+      final_verification:
+        errors:
+          no_test_after_final_edit:
+            desc: >
+              The run DID test at some point, but no test followed the LAST source
+              edit — the submitted patch state was never verified ("verified
+              early, edited after"). Not emitted when repair_not_reverified
+              already covers the same gap (a failure event was observed) or when
+              no tests ran at all (relevant_test_not_run/high covers that).
+            anchor: "ran_any_test AND no run_test step after the last SOURCE edit (test files and .md/.rst/.txt writes do not arm it — v0.32) AND NOT repair_not_reverified AND NOT truncated cut-edge"
+            availability: traj
+            needs_llm: none
+      verification_integrity:
+        errors:
+          test_expectation_rewritten:
+            desc: >
+              Existing assertion lines in a test file were REPLACED by new
+              assertions — the agent changed what the tests expect rather than
+              the code. Replaces gating_test_modified (v0.39): merely TOUCHING a
+              gold gating test calibrated flat (40.2% of failed vs 40.0% of
+              solved runs, RR 1.01) and is now the `gold_tests_edited` SIGNAL
+              only, while rewriting assertions discriminates (any test file
+              26.5% vs 18.1%, RR 1.41, Holm p=0.013; gold gating files RR 1.30;
+              non-gating files RR 1.59 — scripts/calibrate_test_rewrite.py).
+              Two arms in one type: gold gating files (the
+              harness resets them → a local green was self-deception) and any
+              other test file (NOT reset → the rewritten expectation runs
+              modified at eval and can mask a regression — also a
+              benchmark-integrity surface). `after_observed_failure` marks a
+              rewrite that followed a failing test run. Medium, contributing:
+              legitimate expectation updates exist. The FACT needs only
+              patch+gold, but the fault is emitted with the verification
+              (trajectory) slice so its blame mass always lands in a scored
+              capability.
+            anchor: "per edited test file: >=1 removed AND >=1 added assertion line (evidence.is_assertion_line) on a failed case; arms by membership in gold.test_patch_files"
+            availability: traj
+            needs_llm: explain
+      regression_testing:
+        errors:
+          regression_test_missing:
+            desc: >
+              PASS_TO_PASS tests broke under the patch (per-test record) and the
+              run never checked the regression surface: no selector-free suite
+              run and no test command ever NAMED a broken test (pytest
+              path::fn ids AND Django "test_fn (pkg.module.Class)" ids —
+              module path, slash path, stem, app label; a docstring-form id
+              names nothing, so the question is UNKNOWN and nothing fires).
+              Also requires ran_any_test (a run that tested nothing is
+              blamed once, by relevant_test_not_run). The verification-side
+              complement of regression_introduced (editing caused it;
+              verification did not catch it) — contributing role, medium.
+              LIVE since v0.39 on the eval+ tier; gates tightened v0.40.
+            anchor: "p2p_broken non-empty AND ran_any_test AND NOT ran_suite_wide AND names_any_test(broken, test_commands) is False (trajectory.names_any_test)"
+            availability: traj + eval+
+            needs_llm: none
+      result_interpretation:
+        errors:
+          test_result_misinterpreted:
+            desc: >
+              Test output showed failure but the agent proceeded as if it passed.
+              When the last observed gating run PASSED locally and only the eval
+              failed, no fault is emitted (local-vs-eval divergence, often
+              environmental — not a misinterpretation).
+            anchor: "claimed_success_final AND fail_to_pass_referenced AND last_test_failed"
+            availability: traj
+            needs_llm: explain
+
+  self_repair_loop:
+    name: Self-Repair Loop
+    task_opportunity: "ENCOUNTERED — only when a failing test arose mid-run"
+    dimensions:
+      re_verification_after_repair:
+        errors:
+          repair_not_reverified:
+            desc: After a test failed, the agent edited code but never re-ran tests before finishing.
+            anchor: "edit step after first failure event AND no run_test after the last such edit"
+            availability: traj
+            needs_llm: none
+      avoid_repeated_ineffective_attempt:
+        errors:
+          repeated_ineffective_attempt:
+            desc: Same file re-edited >=2x after failures while the task stayed failed.
+            anchor: "same file in >=2 edit steps after the first failure event"
+            availability: traj
+            needs_llm: explain
+      # avoid_blind_retry / retry_without_change: DEMOTED v0.42 — the identical
+      # re-run after a failure calibrates PROTECTIVE (RR 0.68 before, 0.40 once
+      # exit codes reached the signals; 4 failed cases). Stays a trajsignal /
+      # cohort feature (DESIGN §0az); never re-propose on this evidence.
+      avoid_self_reversion:
+        errors:
+          reverted_own_change:
+            desc: >
+              A later edit swapped the content back to an earlier edit's original
+              on the same file — the agent undid its own change (apply-then-revert
+              thrash; neither state passed). Calibrated v0.27 at full edit-content
+              coverage: 5.5% of failed vs 2.6% of solved runs, RR 2.10. Requires
+              adapters that capture edit old/new content (all three scaffolds do
+              since v0.27). NB the converse, walking back from a near-gold edit,
+              calibrates PROTECTIVE (RR 0.39) — healthy iteration, not an error.
+            anchor: "later edit's old/new ≈ earlier edit's new/old (Jaccard >= 0.8 both ways) on the same file, AND a failure event occurred in the run (presence, not strict ordering)"
+            availability: traj
+            needs_llm: explain
+
+  tool_use:
+    name: Tool Use
+    task_opportunity: always (tools are exercised on every task)
+    dimensions:
+      tool_failure_recovery:
+        errors:
+          tool_failure_not_retried:
+            desc: >
+              A non-test tool errored and the agent proceeded with no corrective
+              tool action. Suppressed when the run was truncated at that point
+              (a dangling final tool_call) — killed is not gave-up.
+            anchor: "tool_result with tool_error (non-test) and no tool_call in the next ~5 steps (thread not truncated there)"
+            availability: traj
+            needs_llm: explain
+      edit_mechanics:
+        errors:
+          repeated_patch_apply_failure:
+            desc: >
+              Two or more edit/apply attempts failed with patch-does-not-apply
+              signatures — the agent kept re-emitting a stale diff instead of
+              re-reading the file to rebase its edit (the apply_patch loop).
+            anchor: ">=2 EDIT/WRITE tool results whose text classifies as bad_arguments"
+            availability: traj
+            needs_llm: explain
+      world_model_update:
+        errors:
+          hallucinated_path_unrecovered:
+            desc: >
+              The SAME nonexistent target path drew an invalid_target error two
+              or more times — the first "no such file" did not update the
+              agent's model of the repository. A one-off typo (recovered on the
+              next call) is not this.
+            anchor: "same path in >=2 tool calls whose results classify as invalid_target"
+            availability: traj
+            needs_llm: explain

@@ -16,8 +16,8 @@ from collections.abc import Mapping
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 PUBLIC_MODULES = ("agent_trajviz", "agent_trajviz.figures", "agent_trajviz.dashboard",
-                  "agent_trajviz.llm", "agent_trajviz.attribution")
-GUIDES = ("index", "quickstart", "guides", "data-reference")
+                  "agent_trajviz.llm", "agent_trajviz.attribution", "agent_trajviz.awe")
+GUIDES = ("index", "quickstart", "guides", "data-reference", "awe")
 TEMPLATES = Path(__file__).resolve().parents[1] / "docs"
 EXCLUDED_TERM = re.compile("de" + "caf", re.IGNORECASE)
 
@@ -176,7 +176,11 @@ def _public_docs():
     del pdoc
     render.configure(docformat="restructuredtext", include_undocumented=True, show_source=False, search=True)
     modules = {}
+    package_version = importlib.import_module("agent_trajviz").__version__
+    legacy = tuple(int(part) for part in re.match(r"(\d+)\.(\d+)", package_version).groups()) < (0, 4)
     for name in PUBLIC_MODULES:
+        if legacy and name == "agent_trajviz.awe":
+            continue
         imported = importlib.import_module(name)
         names = getattr(imported, "__all__", None)
         if not isinstance(names, (list, tuple)) or not all(isinstance(item, str) for item in names):
@@ -197,11 +201,16 @@ def _public_docs():
     # Normalize only this prose in the documentation model, never package code
     # or API identifiers. The output guard below catches all other occurrences.
     attribution = modules["agent_trajviz.attribution"]
-    attribution.docstring = ("Failure attribution through an optional reference backend. "
-                             "Without that backend or matching task reference data, diagnose returns "
-                             "an unavailable result with a reason; it never guesses.")
-    attribution.members["available"].docstring = "Return (True, None) when the optional attribution backend is importable, otherwise (False, reason)."
-    attribution.members["diagnose"].docstring = EXCLUDED_TERM.sub("the attribution backend", attribution.members["diagnose"].docstring)
+    if "agent_trajviz.awe" in modules:
+        attribution.docstring = ("Failure attribution through TrajViz's bundled evaluator. "
+                                 "Diagnosis requires matching task reference data and returns "
+                                 "an unavailable result when the evidence cannot be verified.")
+        attribution.members["available"].docstring = "Return (True, None) when the bundled evaluator is ready, otherwise (False, reason)."
+    else:
+        attribution.docstring = ("Failure attribution through an optional reference backend. "
+                                 "Without matching reference data, diagnosis returns an unavailable result.")
+        attribution.members["available"].docstring = "Return whether this package's optional attribution integration is ready."
+    attribution.members["diagnose"].docstring = EXCLUDED_TERM.sub("the attribution engine", attribution.members["diagnose"].docstring)
     catalog = modules["agent_trajviz"].members["VIEW_CATALOG"]
     if isinstance(catalog, doc.Variable):
         catalog.default_value = doc.empty
@@ -256,6 +265,9 @@ def build(output: Path, docs_root: Path, *, package_root: Path | None = None,
     for name in GUIDES:
         source = docs_root / (name + ".md")
         text = source.read_text(encoding="utf-8")
+        if name == "awe" and "agent_trajviz.awe" not in modules:
+            text = ("# Workflow evaluation\n\nSaved evaluation runs and the bundled evaluator were added in TrajViz 0.4.0. "
+                    "This documentation describes an earlier package. See the development or latest stable documentation.")
         guard_public_text(text, source.name)
         body = rewrite_markdown_links(str(markdown2.markdown(text, extras=["fenced-code-blocks", "tables", "header-ids", "code-friendly"])))
         title = next((line.lstrip("# ").strip() for line in text.splitlines() if line.startswith("# ")), name)
@@ -272,6 +284,11 @@ def build(output: Path, docs_root: Path, *, package_root: Path | None = None,
     for name, documented in modules.items():
         page = Path("api") / (name.replace(".", "/") + ".html")
         _write(output, page, _inject_api(page, render.html_module(documented, modules), version, version_label, base_url))
+    if "agent_trajviz.awe" not in modules:
+        page = Path("api/agent_trajviz/awe.html")
+        _write(output, page, page_html(page, "Workflow evaluation", "<h1>Workflow evaluation</h1>"
+               "<p>This API was added in TrajViz 0.4.0 and is unavailable in this package version.</p>",
+               version, version_label, base_url))
     api_index = render.html_index(modules)
     if api_index:
         page = Path("api/index.html")
