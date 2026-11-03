@@ -28,7 +28,6 @@ from ..presenters.issues import (
     collect_overview_issues,
     overview_issue_from_payload,
     overview_issues_payload,
-    prepare_overview_issues,
     rank_issues,
 )
 from ..presenters.overview import (

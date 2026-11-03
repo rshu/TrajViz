@@ -444,7 +444,10 @@ class ReasoningDetailContentTests(unittest.TestCase):
                            {"type": "reasoning", "text": "A recorded reasoning summary."},
                            {"type": "text", "text": "Final response."}], True)
         self.assertIn("A recorded reasoning summary.", out)
-        self.assertEqual(out.count("<div class='dp-section-title'>Reasoning</div>"), 1)
+        # Readable reasoning is collapsed into a details block (not a titled section card).
+        self.assertEqual(out.count("<details class='dp-details'>"), 1)
+        self.assertIn("<summary>Reasoning (", out)
+        self.assertNotIn("<div class='dp-section-title'>Reasoning</div>", out)
         self.assertNotIn("Reasoning text unavailable", out)
 
     def test_truly_blank_content_does_not_leave_empty_section_cards(self):

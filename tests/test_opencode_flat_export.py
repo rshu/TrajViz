@@ -18,10 +18,11 @@ from agent_trajviz.insight.parser import parse_steps
 
 
 def _write(doc: dict) -> str:
-    handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
-    with handle:
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".json", delete=False, encoding="utf-8"
+    ) as handle:
         json.dump(doc, handle)
-    return handle.name
+        return handle.name
 
 
 class FlatOpenCodeExportTests(unittest.TestCase):
