@@ -80,8 +80,8 @@ Trajectory exports and view documents have separate schema versions:
 | `Trajectory.to_dict()` / `trajectory.json` | `SCHEMA_VERSION` | Reloadable normalized trajectory |
 | `View.to_dict()` / each view JSON file | `VIEWS_SCHEMA_VERSION` | Chart/table data envelope and its schema |
 
-These are data-format versions, independent of the package version. In the
-0.3.1 release they are 1 and 2 respectively. View schema version 2 permits
+These are data-format versions, independent of the package version. They are
+currently 1 and 2 respectively. View schema version 2 permits
 unavailable measurements and verdicts where each view's schema specifies them.
 
 [`view_schema`](api/agent_trajviz.html#view_schema) returns a JSON Schema draft

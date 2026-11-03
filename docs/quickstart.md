@@ -69,7 +69,8 @@ measurement as zero.
 
 [`export_json`](api/agent_trajviz.html#export_json) writes each selected view,
 `index.json`, and a reloadable `trajectory.json`. Existing files with those
-names are replaced; unrelated files are preserved.
+names are replaced; unrelated files are preserved. Exports refuse to overwrite
+consumed source files, including child logs, even through filesystem aliases.
 
 <!-- trajviz:run -->
 ```python
