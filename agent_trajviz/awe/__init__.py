@@ -19,7 +19,10 @@ __all__ = ["EvaluationSettings", "OperationResult", "SavedRun", "available_opera
 def write_report(run: SavedRun, dest: str | Path) -> Path:
     """Write a self-contained AWE HTML report without executing imported HTML."""
     from . import render
+    from .saved import _atomic_output
 
+    run._check_integrity()
+    path = run._check_output(dest)
     sections = ["<h1>AWE run</h1>", render.provenance_html(run)]
     for index, case in enumerate(render.all_cases(run)):
         sections.append(f'<section id="case-{index}">{render.case_html(case)}</section>')
@@ -40,7 +43,6 @@ def write_report(run: SavedRun, dest: str | Path) -> Path:
                 'overflow:auto}td,th{padding:8px;border:1px solid #dce2eb}svg{max-width:100%;height:auto}'
                 'section{margin-top:32px}details{margin:10px 0}summary{cursor:pointer}'
                 '</style><body>' + "\n".join(sections) + '</body></html>')
-    path = Path(dest)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(document, encoding="utf-8")
+    with _atomic_output(path) as stream:
+        stream.write(document.encode("utf-8"))
     return path

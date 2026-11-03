@@ -1,5 +1,6 @@
 """Public saved-result CLI and offline HTML exports."""
 import json
+import pytest
 
 from agent_trajviz.awe import load_run, write_report
 from agent_trajviz.awe.__main__ import main
@@ -38,3 +39,13 @@ def test_bundled_operation_catalog_needs_no_external_checkout(capsys):
     rows = json.loads(capsys.readouterr().out)
     assert {"pipeline", "judge", "arbiter", "rsi_prepare", "preflight"} <= {row["id"] for row in rows}
     assert all(row["available"] for row in rows)
+
+
+def test_inspect_refuses_to_overwrite_original_artifact(tmp_path, capsys):
+    source = _source(tmp_path)
+    original = source.read_bytes()
+    with pytest.raises(SystemExit) as result:
+        main(["inspect", str(source), "--output", str(source)])
+    assert result.value.code == 2
+    assert "overwrite input source" in capsys.readouterr().err
+    assert source.read_bytes() == original

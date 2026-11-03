@@ -100,7 +100,8 @@ def test_observed_partial_invalid_native_ui_transition_has_no_stale_state(tmp_pa
     assert inspection["visible"] is False
     cleared = load.do_load(str(invalid))
     assert cleared["state_run"] is None and cleared["state_raw"] == {} and cleared["state_steps"] == []
-    assert cleared["main_tabs"]["visible"] is False
+    # A native error must not make the independent saved-AWE workspace disappear.
+    assert cleared["main_tabs"]["visible"] is True
     assert cleared["overview_kpi_html"]["value"] == ""
     assert cleared["overview_kpi_html"]["visible"] is False
     assert cleared["issues_html"] == ""

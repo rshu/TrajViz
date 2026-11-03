@@ -18,6 +18,7 @@ from typing import Any
 import plotly.graph_objects as go
 
 from ..errors import ReportError  # public; importable without the charts extra
+from .._fileio import ensure_output_does_not_overwrite, input_sources, write_text_atomic
 
 from .loaders import FORMAT_LABELS
 from .presenters.overview import (
@@ -202,25 +203,24 @@ def write_report_file(
 ) -> str:
     """Write the report to *dest* (file or directory) and return the path.
 
-    An explicit file *dest* is written as asked. When the name is derived (a
-    directory *dest*), another trajectory's report is never overwritten.
+    An explicit file *dest* may replace an earlier export, but cannot overwrite
+    the input trajectory. A derived name preserves another trajectory's report.
     """
     session = _as_session(source, file_path=file_path)
     name = _report_basename(session.path)
+    if dest is not None:
+        if os.path.isdir(dest):
+            dest = _free_report_path(dest, name, _source_sha(session))
+        sources = [path for path in input_sources(session.path, session.raw) if os.path.isfile(path)]
+        ensure_output_does_not_overwrite(dest, sources, exc=ReportError)
     # Rendering can fail; do not allocate an unowned scratch directory first.
     html_out = build_report_html(session, dark=dark, inline_plotly=inline_plotly)
     temporary_directory = None
     if dest is None:
         temporary_directory = tempfile.mkdtemp(prefix="trajviz-report-")
         dest = os.path.join(temporary_directory, name)
-    elif os.path.isdir(dest):
-        dest = _free_report_path(dest, name, _source_sha(session))
     try:
-        parent = os.path.dirname(os.path.abspath(dest))
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        with open(dest, "w", encoding="utf-8") as handle:
-            handle.write(html_out)
+        write_text_atomic(dest, html_out)
     except BaseException:
         if temporary_directory:
             shutil.rmtree(temporary_directory, ignore_errors=True)

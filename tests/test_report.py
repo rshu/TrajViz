@@ -1,5 +1,7 @@
 """Standalone HTML report of Overview + charts + Patterns."""
 
+from html.parser import HTMLParser
+
 import json
 import os
 import tempfile
@@ -124,7 +126,18 @@ class ReportBuildTests(unittest.TestCase):
         self.assertIn("id='summary'", doc)
         self.assertIn("id='patterns'", doc)
         self.assertIn("Recurring tool sequences", doc)
-        self.assertNotIn("wf-filter-chips", doc)
+        class ElementClasses(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.classes = set()
+
+            def handle_starttag(self, tag, attrs):
+                self.classes.update((dict(attrs).get("class") or "").split())
+
+        elements = ElementClasses()
+        elements.feed(doc)
+        self.assertNotIn("wf-filter-chips", elements.classes)
+        self.assertNotIn("wf-toolbar-row", elements.classes)
         self.assertNotIn("Load Trajectory", doc)
         self.assertIn("class='tv-theme-light'", doc)
         self.assertIn("color-scheme: light", doc)

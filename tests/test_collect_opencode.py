@@ -153,6 +153,17 @@ class OpenCodeConsolidatorTests(unittest.TestCase):
         finally:
             check.close()
 
+    def test_failed_export_replacement_preserves_existing_output_and_source(self) -> None:
+        database, _ = self._make_database()
+        database_bytes = database.read_bytes()
+        output = self.root / "trajectory.json"
+        output.write_bytes(b"previous export")
+        with patch("agent_trajviz._fileio.os.replace", side_effect=OSError("controlled export replacement failure")):
+            self.assertEqual(self._run_main(database, output), 1)
+        self.assertEqual(output.read_bytes(), b"previous export")
+        self.assertEqual(database.read_bytes(), database_bytes)
+        self.assertEqual(sorted(path.name for path in self.root.iterdir()), ["opencode.db", "trajectory.json"])
+
     def test_preserves_native_part_runtime_timing_and_fills_row_fields(self) -> None:
         database, _ = self._make_database()
         payload = {"type": "reasoning", "text": "Review the local implementation.",

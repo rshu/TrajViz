@@ -155,6 +155,52 @@ class OutputThroughputTests(unittest.TestCase):
         self.assertIn("Total processed tok/sec", performance)
         self.assertIn("Median processed tok/sec", performance)
 
+    def test_tokens_kpi_keeps_rate_and_coverage_visible_with_closed_methodology(self):
+        import copy
+        import re
+
+        from agent_trajviz.insight.presenters import build_overview_kpi_html
+
+        metrics = {
+            "tokens": {"total": 1000}, "output_tokens_per_sec": 25.0,
+            "output_throughput_timed_steps": 2, "output_throughput_total_steps": 3,
+            "output_throughput_incomplete": True, "output_throughput_tool_wait_seconds": 4.0,
+            "tool_success_rate": 90.0, "tool_call_count": 10,
+        }
+        caveat = "25 gen tok/s; only 2/3 timed <script>untrusted()</script>"
+        verdicts = [{"metric": "Throughput", "status": "warn", "detail": caveat},
+                    {"metric": "Tool Success", "status": "warn", "detail": "Existing tool verdict"}]
+        original = copy.deepcopy((metrics, verdicts))
+        output = build_overview_kpi_html(metrics, "10s", verdicts=verdicts, tokens_estimated=True)
+        visible = re.sub(r"<[^>]+>", "", re.sub(r"<details\b.*?</details>", "", output, flags=re.DOTALL))
+        self.assertIn("estimated · 25.0 gen tok/s excl. tools · 2/3 timed", visible)
+        self.assertIn("Existing tool verdict", visible)
+        self.assertNotIn("only 2/3 timed", visible)
+        self.assertIn("<details class='ov-kpi-methodology'", output)
+        self.assertNotIn(" open", re.search(r"<details[^>]*>", output).group())
+        self.assertIn("Throughput details</summary>", output)
+        self.assertIn("same timed assistant steps", output)
+        self.assertIn("waits without timing remain in the denominator", output)
+        self.assertIn("Untimed output is excluded from both tokens and time", output)
+        self.assertIn("&lt;script&gt;untrusted()&lt;/script&gt;", output)
+        self.assertNotIn("<script>untrusted()", output)
+        self.assertEqual((metrics, verdicts), original)
+
+    def test_tokens_kpi_reports_full_coverage_and_unavailable_rate_honestly(self):
+        from agent_trajviz.insight.presenters import build_overview_kpi_html
+
+        full = build_overview_kpi_html({"output_tokens_per_sec": 20.0,
+                                       "output_throughput_timed_steps": 2,
+                                       "output_throughput_total_steps": 2}, "10s")
+        self.assertIn("20.0 gen tok/s · 2/2 timed", full)
+        unavailable = build_overview_kpi_html({"tokens": {"total": None},
+                                              "output_tokens_per_sec": None,
+                                              "output_throughput_timed_steps": 0,
+                                              "output_throughput_total_steps": 2}, "N/A")
+        self.assertIn("Generation throughput: N/A · 0/2 timed", unavailable)
+        self.assertIn("Throughput details</summary>", unavailable)
+        self.assertNotIn("0.0 gen tok/s", unavailable)
+
     def test_issues_kpi_card_after_tokens(self):
         from agent_trajviz.insight.presenters import build_overview_kpi_html
         from agent_trajviz.insight.presenters.issues import OverviewIssue

@@ -156,7 +156,18 @@ class LoadTests(unittest.TestCase):
             with self.assertRaises(tv.LoadError) as caught:
                 tv.load(path)
             self.assertEqual(caught.exception.code, "unknown_format")
-            self.assertEqual(len(tv.load(path, format="opencode").steps), 2)
+            run = tv.load(path, format="opencode")
+            self.assertEqual(len(run.steps), 2)
+            self.assertEqual((run.format, run.format_label), ("opencode", "OpenCode"))
+            self.assertEqual(run.view("summary").data["format"], "opencode")
+            from agent_trajviz.insight.loaders import detect_format
+            self.assertEqual(detect_format(run.raw), "opencode")
+            exported = Path(tmp) / "exported"
+            tv.export_json(run, exported)
+            restored = tv.load(exported / "trajectory.json")
+            self.assertEqual(restored.format, "opencode")
+            self.assertEqual({key: view.to_json() for key, view in restored.views().items()},
+                             {key: view.to_json() for key, view in run.views().items()})
 
 
 class CompareAndReportTests(unittest.TestCase):

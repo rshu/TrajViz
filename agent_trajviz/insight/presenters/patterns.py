@@ -34,13 +34,13 @@ def render_tool_sequences_html(sequences: list[dict]) -> str:
     rows = []
     for s in sequences[:20]:
         seq_str = " → ".join(html.escape(t) for t in s["sequence"])
-        indices = ", ".join(str(i) for i in s["step_indices"][:10])
+        indices = "".join(_step_link_chip(i) for i in s["step_indices"][:10])
         if len(s["step_indices"]) > 10:
             indices += f" … (+{len(s['step_indices']) - 10} more)"
         rows.append(
             f"<tr style='border-bottom:1px solid var(--ov-border);'>"
             f"<td style='padding:6px 10px;font-family:monospace;font-size:12px;'>{seq_str}</td>"
-            f"<td style='padding:6px 10px;text-align:center;font-weight:700;'>{s['frequency']}</td>"
+            f"<td style='padding:6px 10px;text-align:center;font-weight:700;'>{html.escape(str(s['frequency']))}</td>"
             f"<td style='padding:6px 10px;font-size:11px;color:var(--ov-muted);'>{indices}</td>"
             f"</tr>"
         )

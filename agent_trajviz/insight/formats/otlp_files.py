@@ -196,7 +196,9 @@ def _directory_capture(manifest_path: Path, initial: bytes | None = None) -> Otl
         if path == manifest_path:
             raise _error("An OTLP manifest cannot list itself as telemetry", str(manifest_path))
         files.append((name, str(path), _read_local_member(manifest_path.parent, relative, budget, str(manifest_path))))
-    return _bundle_capture(manifest, data, files)
+    capture = _bundle_capture(manifest, data, files)
+    capture.raw["_input_files"] = [str(manifest_path.resolve()), *(str(Path(label).resolve()) for _, label, _ in files)]
+    return capture
 
 
 def _zip_capture(path: Path) -> OtlpCapture:
@@ -278,7 +280,9 @@ def read_otlp_capture(path: str | Path) -> OtlpCapture:
             raise _error("OTLP directory requires exactly one manifest.json or otlp-manifest.json", str(source))
         return _directory_capture(candidates[0])
     if source.suffix.lower() == ".zip":
-        return _zip_capture(source)
+        capture = _zip_capture(source)
+        capture.raw["_input_files"] = [str(source.resolve())]
+        return capture
     data = _read_file(source, [0])
     try:
         payload = json.loads(data.decode("utf-8-sig"))
@@ -286,7 +290,9 @@ def read_otlp_capture(path: str | Path) -> OtlpCapture:
         payload = None
     if isinstance(payload, dict) and payload.get("type") == _BUNDLE_TYPE:
         return _directory_capture(source, data)
-    return decode_otlp_bytes(data, str(source))
+    capture = decode_otlp_bytes(data, str(source))
+    capture.raw["_input_files"] = [str(source.resolve())]
+    return capture
 
 
 def _prefix_has_otlp_key(text: str) -> bool:

@@ -46,6 +46,9 @@ run.export("original-awe-artifacts.zip")
 awe.write_report(run, "awe-report.html")
 ```
 
+Use separate destinations for exported files. Exports protect imported sources
+and artifacts, and preserve previous output if writing fails.
+
 `SavedRun.artifacts` holds JSON objects or UTF-8 text keyed by original relative
 path. Opaque attachments have a descriptor and preserved bytes in
 `raw_artifacts`. `fingerprints` records each artifact's SHA-256 and byte length.

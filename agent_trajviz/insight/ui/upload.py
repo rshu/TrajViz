@@ -62,11 +62,10 @@ def layout() -> UploadRefs:
             file_upload = gr.File(
                 label="Trajectory (.json / .jsonl / .zstd / .zip)",
                 file_types=[".json", ".jsonl", ".zstd", ".zip"],
-                height=110,
+                height=96,
             )
             gr.Markdown(
-                "Subagents: upload a Claude Code ZIP or a consolidated session export. "
-                "OTLP captures: upload traces or a manifest bundle with companion logs.",
+                "For subagents, include the session and its logs in one ZIP.",
             )
             session_selector = gr.Dropdown(label="Captured session", choices=[], value=None,
                                            visible=False, interactive=True)
@@ -89,13 +88,13 @@ def layout() -> UploadRefs:
             label_file_upload = gr.File(
                 label="Labels (optional)",
                 file_types=[".json"],
-                height=110,
+                height=96,
             )
             label_load_btn = gr.Button("Load Labels", variant="secondary", size="sm", min_width=120, scale=0)
 
     with gr.Column(visible=False) as summary_area:
         summary_banner = gr.HTML("", container=False, padding=False)
-        label_badge_html = gr.HTML("")
+        label_badge_html = gr.HTML("", elem_classes=["label-status-badge"])
 
     return UploadRefs(
         upload_accordion=upload_accordion,

@@ -43,6 +43,20 @@ CONVERGE_CSS = """
     }
 }
 
+/* Shared control rhythm with the trajectory dashboard. */
+.gradio-container {
+    --button-primary-background-fill: #1d4ed8;
+    --button-primary-background-fill-hover: #1e40af;
+    --button-primary-border-color: #1d4ed8;
+    --button-primary-text-color: #ffffff;
+    --button-small-radius: 8px;
+    --button-large-radius: 8px;
+    --block-radius: 12px;
+    --input-radius: 8px;
+}
+.cvg-report table th { white-space: nowrap; word-break: normal; overflow-wrap: normal; }
+.cvg-report table td { word-break: normal; overflow-wrap: normal; }
+
 /* ── Report panel ───────────────────────────────────────────── */
 .cvg-report {
     min-width: 0;
@@ -52,7 +66,7 @@ CONVERGE_CSS = """
         'Noto Sans SC', 'Noto Sans CJK SC', sans-serif;
     background: var(--cvg-card);
     border: 1px solid var(--cvg-border);
-    border-radius: 8px;
+    border-radius: 12px;
     padding: 1.5rem;
     color: var(--cvg-text);
     line-height: 1.6;

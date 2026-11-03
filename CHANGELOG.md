@@ -7,6 +7,21 @@ change the public API (the names exported from `agent_trajviz`).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-03
+
+### Fixed
+
+- Protect imported source and taxonomy files during exports and labeling, and
+  keep previous exports intact when a write fails.
+- Preserve explicitly selected trajectory formats through loading and exports.
+- Export unbounded cohort risk ratios as valid JSON with a clear interpretation.
+- Preserve computed scorecards in saved runs and distinguish historical catalog
+  notes from evidence collected for the current run.
+- Improve dashboard layouts, chart legends, wide tables, pattern navigation and
+  label provenance, including Converge milestone and waterfall labels.
+- Keep missing success, context and timing measurements unavailable.
+- Keep the independent AWE workspace accessible after a native import error.
+
 ## [0.4.0] - 2026-11-03
 
 ### Added
@@ -372,7 +387,8 @@ First release as the `agent-trajviz` package.
   passwords, authorization headers and generated-looking values of
   secret-named assignments become `[REDACTED]`.
 
-[Unreleased]: https://github.com/rshu/TrajViz/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/rshu/TrajViz/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/rshu/TrajViz/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/rshu/TrajViz/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/rshu/TrajViz/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/rshu/TrajViz/compare/v0.3.0...v0.3.1

@@ -240,8 +240,8 @@ def layout(overview_kpi_html: gr.HTML) -> OverviewRefs:
                 with gr.Column(visible=False) as deep_dive_section:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_deep_dive'])}</div>")
                     metrics_md = gr.Markdown("")
-                    hotspots_md = gr.Markdown("")
-                    per_message_md = gr.Markdown("")
+                    hotspots_md = gr.Markdown("", elem_classes=["diagnostics-data-table"])
+                    per_message_md = gr.Markdown("", elem_classes=["diagnostics-data-table"])
 
                 with gr.Column(visible=False) as labels_section:
                     gr.HTML("<div class='section-subtitle'>Phase and action classification from labeled JSON</div>")

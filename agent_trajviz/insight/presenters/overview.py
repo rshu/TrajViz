@@ -273,8 +273,7 @@ def build_overview_kpi_html(
     timed_steps = metrics.get("output_throughput_timed_steps")
     throughput_steps = metrics.get("output_throughput_total_steps")
     if (
-        metrics.get("output_throughput_incomplete")
-        and isinstance(timed_steps, int)
+        isinstance(timed_steps, int)
         and isinstance(throughput_steps, int)
         and throughput_steps > 0
     ):
@@ -339,6 +338,22 @@ def build_overview_kpi_html(
             extra_line = agent_breakdown
         elif label == "Issues" and issue_breakdown:
             extra_line = issue_breakdown
+        elif label == "Tokens":
+            # The rate and timing coverage stay visible. Keep the denominator
+            # caveats accessible without making every KPI as tall as this one.
+            detail = verdict_info[1] if verdict_info else ""
+            methodology = (
+                "Output tokens and generation time come from the same timed assistant steps. "
+                "Timed tool and subagent waits are excluded from generation time; waits without "
+                "timing remain in the denominator. Untimed output is excluded from both tokens "
+                "and time, so missing timing cannot inflate the reported rate."
+            )
+            detail_block = f"<p>{html.escape(detail)}</p>" if detail else ""
+            extra_line = (
+                "<details class='ov-kpi-methodology' style='font-size:11px;margin-top:4px;'>"
+                "<summary style='cursor:pointer;color:var(--ov-muted);'>Throughput details</summary>"
+                f"{detail_block}<p>{html.escape(methodology)}</p></details>"
+            )
         elif verdict_info and label != "Issues":
             status, detail = verdict_info
             vcolor = _status_colors.get(status, "#6b7280")

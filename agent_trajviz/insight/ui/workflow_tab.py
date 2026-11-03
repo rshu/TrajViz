@@ -355,7 +355,7 @@ class WorkflowRefs:
 
 def layout() -> WorkflowRefs:
     with gr.TabItem("Workflow"):
-        with gr.Row(equal_height=True):
+        with gr.Row(equal_height=True, elem_classes=["wf-toolbar"]):
             wf_toc_toggle = gr.Button("TOC", variant="secondary", scale=0, min_width=50)
             wf_filter_chips_html = gr.HTML(
                 render_filter_chips(),
@@ -364,7 +364,7 @@ def layout() -> WorkflowRefs:
             wf_search = gr.Textbox(
                 label="Search",
                 placeholder="Filter by keyword...",
-                scale=1,
+                scale=1, min_width=0, elem_classes=["wf-toolbar-search"],
             )
         # Hidden textbox that JS writes active filters into (comma-separated)
         wf_filter_hidden = gr.Textbox(

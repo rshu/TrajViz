@@ -1,6 +1,8 @@
 """Shared Plotly chrome for insight charts."""
 
 from collections import Counter
+import html
+import textwrap
 from collections.abc import Sequence
 
 # Pre-import pandas before plotly to avoid circular import error
@@ -28,8 +30,11 @@ def _empty_figure(height: int = 380, message: str | None = None) -> go.Figure:
     """Return a blank Plotly figure, optionally with a centered message."""
     fig = go.Figure()
     if message:
-        fig.add_annotation(text=message, xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font_size=16)
-    fig.update_layout(template=_TPL, height=height)
+        lines = "<br>".join(html.escape(line) for line in textwrap.wrap(message, width=32))
+        fig.add_annotation(text=lines, xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False,
+                           font=dict(size=13, color="#64748b"), align="center")
+    fig.update_layout(template=_TPL, height=height, margin=dict(l=24, r=24, t=24, b=24),
+                      xaxis=dict(visible=False), yaxis=dict(visible=False), hovermode=False, dragmode=False)
     return fig
 
 
@@ -64,15 +69,18 @@ def _apply_chart_layout(
 
 
 def _add_legend_hint(fig: go.Figure) -> None:
-    """Add a subtle 'click legend to toggle' hint at the bottom-right."""
+    """Place the legend hint in its own row below the x-axis title."""
+    fig.update_layout(margin=dict(b=max(fig.layout.margin.b or 0, 84)))
     fig.add_annotation(
         text="Click legend items to show/hide series",
         xref="paper",
         yref="paper",
         x=1.0,
-        y=-0.12,
+        y=0,
+        yshift=-56,
+        yanchor="top",
         showarrow=False,
-        font=dict(size=9, color="#9ca3af"),
+        font=dict(size=9, color="#64748b"),
         xanchor="right",
     )
 

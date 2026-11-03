@@ -39,6 +39,26 @@ def validate_labels_for_run(data: dict, run) -> None:
             raise ValueError("Labels belong to a different captured session.")
 
 
+def _label_provenance_html(data: dict) -> str:
+    """Show recorded label origin without inferring how labels were produced."""
+    metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+    rows = [("Model", data.get("model")), ("Taxonomy", data.get("taxonomy_version")),
+            ("Source note", data.get("source_note") or metadata.get("source_note"))]
+    entries = "".join(
+        f"<dt style='font-weight:600;'>{label}</dt>"
+        f"<dd style='margin:0;overflow-wrap:anywhere;'>{html.escape(str(value))}</dd>"
+        for label, value in rows if value is not None and str(value).strip()
+    )
+    if not entries:
+        return ""
+    return (
+        "<details class='label-provenance' open style='font-size:12px;margin:6px 0;color:var(--ov-muted);'>"
+        "<summary style='cursor:pointer;'>Label provenance</summary>"
+        "<dl style='display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;margin:6px 0;'>"
+        f"{entries}</dl></details>"
+    )
+
+
 def build_label_ui_payload(file_path: str, dark: bool = False, *, run=None) -> dict:
     """Build UI-facing label payload for a *_labeled.json label file."""
     data = load_labeled_json(file_path)
@@ -96,7 +116,7 @@ def build_label_ui_payload(file_path: str, dark: bool = False, *, run=None) -> d
     )
     return {
         "badge_html": badge,
-        "status_html": "",
+        "status_html": _label_provenance_html(data),
         "phase_count_fig": pc_fig,
         "action_count_fig": ac_fig,
         "phase_duration_fig": pd_fig,

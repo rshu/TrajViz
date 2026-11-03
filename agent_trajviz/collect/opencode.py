@@ -526,7 +526,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(output)
         else:
             output_path = Path(output_file).expanduser()
-            output_path.write_text(output, encoding="utf-8")
+            _common.write_json_atomic(output_path, result)
             print(f"Exported to {output_path}", file=sys.stderr)
 
     except sqlite3.Error as e:

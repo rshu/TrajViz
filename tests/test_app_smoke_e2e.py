@@ -109,15 +109,14 @@ class ServedDashboardTests(unittest.TestCase):
         self.assertEqual(served, built)
 
     def test_cross_tab_jumps_use_the_gradio_6_tab_selector(self):
-        """``.tab-nav`` does not exist in Gradio 6: it would be a silent no-op.
-
-        Every chart click and diagnostics chip reaches the Workflow tab through
-        a label lookup over ``button[role=tab]``. If a ``.tab-nav`` selector ever
-        comes back, the jumps stop working with no error anywhere.
-        """
+        """Served jumps target real main tabs and mobile overflow buttons."""
         _status, body = _get(self.base + "/config")
-        self.assertIn("button[role=tab]", body)
-        self.assertNotIn("tab-nav", body)
+        config = json.loads(body)
+        scripts = "\n".join(dependency.get("js") or "" for dependency in config["dependencies"])
+        self.assertIn("getElementById('main-tabs')", scripts)
+        self.assertIn('.tab-container[role="tablist"] button[role="tab"]', scripts)
+        self.assertIn(".overflow-dropdown button", scripts)
+        self.assertNotIn("tab-nav", scripts)
 
     def test_the_workflow_jump_has_exactly_one_emitter(self):
         """Two divergent definitions of the jump would fight over the same name."""

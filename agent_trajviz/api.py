@@ -202,7 +202,7 @@ class Trajectory:
             "steps": self.steps,
         }
         if include_raw:
-            data["raw"] = self.raw
+            data["raw"] = {key: value for key, value in self.raw.items() if key != "_input_files"}
         if isinstance(self.raw.get("_otel"), dict):
             # Retain evidence and selection metadata even in lightweight
             # exports, without copying raw span/log bodies or other sessions.
@@ -479,7 +479,9 @@ def _load_registered(fmt: Format, path: str, payload: Any = None, sha256: str | 
     if not steps:
         raise LoadError(f"no trajectory steps found (format: {fmt.key})", code="no_steps", path=path)
     try:
-        return Trajectory.from_steps(steps, format=fmt.key, source=path, sha256=sha256)
+        run = Trajectory.from_steps(steps, format=fmt.key, source=path, sha256=sha256)
+        run.raw["_input_files"] = [str(Path(path).resolve())]
+        return run
     except TypeError as exc:
         raise LoadError(f"the {fmt.label} parser returned {exc}", code="parse_failed", path=path) from exc
 
@@ -518,6 +520,7 @@ def _load_exported(data: Mapping[str, Any], path: str, format: str | None) -> Tr
         raise LoadError(f"the file is {run.format}, not {format}", code="mismatch", path=path, detected=run.format)
     if not run.steps:
         raise LoadError("no trajectory steps found in the exported trajectory", code="no_steps", path=path)
+    run.raw["_input_files"] = [str(Path(path).resolve())]
     return run
 
 

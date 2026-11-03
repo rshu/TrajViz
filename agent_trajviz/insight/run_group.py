@@ -402,11 +402,17 @@ def _run_class(index: int) -> str:
     return f"rg-run-{int(index) % _RUN_PALETTE}"
 
 
-def _run_swatch_html(index: int, label: str, extra_class: str = "rg-legend-run") -> str:
+def _run_swatch_html(index: int, label: str, extra_class: str = "rg-legend-run", *, compact: bool = False) -> str:
+    escaped = html.escape(str(label), quote=True)
+    title = f" title='{escaped}' aria-label='{escaped}'"
+    style = " style='min-width:0;max-width:100%;overflow:hidden;'" if compact else ""
+    text = ("<span style='min-width:0;max-width:100%;white-space:normal;word-break:break-word;"
+            "display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.25;'>"
+            + escaped + "</span>") if compact else escaped
     return (
-        f"<span class='{extra_class} {_run_class(index)}'>"
+        f"<span class='{extra_class} {_run_class(index)}'{title}{style}>"
         f"<span class='rg-run-swatch' aria-hidden='true'></span>"
-        f"{html.escape(str(label))}</span>"
+        f"{text}</span>"
     )
 
 
@@ -443,6 +449,11 @@ def _build_count_matrix(
     return rows, len(rows)
 
 
+def _finite_number(value: Any) -> bool:
+    return ((isinstance(value, int) and not isinstance(value, bool))
+            or (isinstance(value, float) and math.isfinite(value)))
+
+
 def build_run_scorecard_row(
     raw: dict,
     *,
@@ -477,9 +488,11 @@ def build_run_scorecard_row(
     message_rows = build_message_metrics(steps)
     metrics = compute_metrics(steps, raw, message_rows=message_rows)
     wall_s, wall_fmt = wall_clock_fmt(metrics)
-    pressure = context_pressure_stats(
-        context_pressure_series(steps, raw=raw),
-    )
+    pressure_series = context_pressure_series(steps, raw=raw)
+    pressure = context_pressure_stats(pressure_series)
+    has_context = any(agent.get("points") for agent in pressure_series.get("agents", []))
+    has_wall_time = any(_finite_number(metrics.get(key)) for key in ("wall_clock", "total_duration"))
+    success_rate = metrics.get("tool_success_rate")
     fmt = fmt or detect_format(raw)
     rid = run_id or default_run_label(path) or "run"
     return {
@@ -489,20 +502,17 @@ def build_run_scorecard_row(
         "error": None,
         "finished": bool(_detect_success(steps)),
         "steps": int(metrics.get("total_steps") or 0),
-        "wall_clock_s": float(wall_s) if isinstance(wall_s, (int, float)) else None,
+        "wall_clock_s": float(wall_s) if has_wall_time and _finite_number(wall_s) else None,
         "wall_clock_fmt": wall_fmt,
         "tokens": int((metrics.get("tokens") or {}).get("total") or 0),
         "tool_calls": int(metrics.get("tool_call_count") or 0),
-        # No tool calls means no rate. compute_metrics reports 0 in that case,
-        # and a 0% success used to flag the run "worst" for a number it never had.
-        "tool_success_pct": (
-            float(metrics.get("tool_success_rate") or 0)
-            if int(metrics.get("tool_call_count") or 0) > 0
-            else None
-        ),
-        "peak_occupancy": int(pressure.get("peak_occupancy") or 0),
-        "peak_pct": pressure.get("peak_pct"),
-        "compactions": int(pressure.get("compaction_count") or 0),
+        # Calls can be recorded while their outcomes are unavailable. Preserve
+        # the metrics layer's abstention rather than inventing a 0% rate.
+        "tool_success_pct": float(success_rate) if _finite_number(success_rate)
+                            and int(metrics.get("tool_call_count") or 0) > 0 else None,
+        "peak_occupancy": int(pressure["peak_occupancy"]) if has_context else None,
+        "peak_pct": pressure.get("peak_pct") if has_context else None,
+        "compactions": int(pressure["compaction_count"]) if has_context else None,
         "format": fmt if fmt != "unknown" else None,
     }
 
@@ -908,7 +918,7 @@ def _best_worst_flags(rows: list[dict]) -> dict[str, dict[str, set[str]]]:
     higher_better = ("tool_success_pct",)
 
     def _collect(key: str, prefer_low: bool) -> None:
-        vals = [(r["run_id"], r[key]) for r in usable if isinstance(r.get(key), (int, float))]
+        vals = [(r["run_id"], r[key]) for r in usable if _finite_number(r.get(key))]
         if len(vals) < 2:
             return
         numbers = [v for _, v in vals]
@@ -1393,7 +1403,7 @@ def _render_file_matrix_html(behavior: dict) -> str:
             _run_swatch_html(
                 index,
                 labels.get(rid, rid),
-                extra_class="rg-tree-cell rg-tree-runhead",
+                extra_class="rg-tree-cell rg-tree-runhead", compact=True,
             )
         )
     parts.append("<span>Mix</span></div>")
@@ -1556,6 +1566,7 @@ def build_run_group_scorecard_html(
         f"{n_ok} of {len(rows)} run(s) loaded"
         f" &middot; green = best, amber = worst among loaded runs"
         f" &middot; Finished means normal stop, not task correctness"
+        f" &middot; N/A metrics lack evidence and are excluded from ranking"
         f"</div>"
     )
     parts.append('<table class="cvg-outcome-table"><thead><tr>')
@@ -1593,13 +1604,17 @@ def build_run_group_scorecard_html(
         )
         peak = row.get("peak_occupancy")
         peak_pct = row.get("peak_pct")
-        if not isinstance(peak, (int, float)):
-            peak_txt = "—"
-        elif isinstance(peak_pct, (int, float)):
+        if not _finite_number(peak):
+            peak_txt = "N/A"
+        elif _finite_number(peak_pct):
             peak_txt = f"{peak:,} ({peak_pct:g}%)"
         else:
             peak_txt = f"{peak:,}"
 
+        success = row.get("tool_success_pct")
+        success_txt = f"{success:g}%" if _finite_number(success) else "N/A"
+        compactions = row.get("compactions")
+        compactions_txt = f"{compactions:g}" if _finite_number(compactions) else "N/A"
         cells = [
             (html.escape(str(row.get("label") or rid)), ""),
             (html.escape(str(row.get("format") or "—")), ""),
@@ -1608,9 +1623,9 @@ def build_run_group_scorecard_html(
             (html.escape(str(row.get("wall_clock_fmt") or "—")), _cell_class(rid, "wall_clock_s", flags)),
             (f"{row.get('tokens') or 0:,}", _cell_class(rid, "tokens", flags)),
             (f"{row.get('tool_calls') or 0}", ""),
-            (f"{row.get('tool_success_pct') or 0:g}%", _cell_class(rid, "tool_success_pct", flags)),
+            (success_txt, _cell_class(rid, "tool_success_pct", flags)),
             (html.escape(peak_txt), _cell_class(rid, "peak_occupancy", flags)),
-            (f"{row.get('compactions') or 0}", _cell_class(rid, "compactions", flags)),
+            (compactions_txt, _cell_class(rid, "compactions", flags)),
         ]
         parts.append("<tr>")
         for text, style in cells:

@@ -766,7 +766,7 @@ def convert_otlp_claude(capture: OtlpCapture, session_id: str | None = None) -> 
                            "parent_session_id": session_id, "session_depth": depth(agent),
                            "turns": len(own), "tool_calls": sum(s["tool_call_count"] for s in own),
                            "source": "otlp"})
-    source_info = {key: value for key, value in capture.raw.items() if key != "requests"}
+    source_info = {key: value for key, value in capture.raw.items() if key not in {"requests", "_input_files"}}
     return {
         "metadata": {"session_id": session_id, "agent": "claude-code", "model": model,
                      "directory": "", "directory_name": "", "timestamp_utc": _iso(min(starts)) if starts else "",
@@ -786,6 +786,7 @@ def convert_otlp_claude(capture: OtlpCapture, session_id: str | None = None) -> 
         "trajectory": [], "_source_format": "otlp", "_otlp_format": True,
         "_otlp_parsed_steps": steps, "_otlp_sub_agents": sub_agents,
         "_source_sha256": capture.sha256, "_load_warnings": list(dict.fromkeys(warnings)),
+        "_input_files": list(capture.raw.get("_input_files", [])),
         "_otel": {"profile": "claude_code", "profile_version": PROFILE_VERSION,
                   "session_id": session_id, "trace_ids": selected["trace_ids"],
                   "mapping": "operation", "coverage": "captured_operations",

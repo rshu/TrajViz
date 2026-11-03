@@ -5,11 +5,92 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import stat
 import zipfile
 import pytest
+from unittest.mock import patch
 
 from agent_trajviz.awe import saved
+from agent_trajviz.awe import write_report
+
+
+@pytest.mark.parametrize("kind", ["json", "zip", "html"])
+@pytest.mark.parametrize("selected", ["source", "symbolic", "hard"])
+def test_exports_never_replace_original_selected_source_or_its_alias(tmp_path, kind, selected):
+    source = tmp_path / "faults.json"
+    source.write_text('[{"case_id":"original","faults":[]}]', encoding="utf-8")
+    original = source.read_bytes()
+    run = saved.load_run(source)
+    dest = source if selected == "source" else tmp_path / ("alias." + kind)
+    if selected != "source":
+        try:
+            dest.symlink_to(source) if selected == "symbolic" else os.link(source, dest)
+        except OSError as exc:
+            pytest.skip(f"File links unavailable: {exc}")
+    with pytest.raises(ValueError, match="overwrite input source"):
+        if kind == "json":
+            run.write(dest)
+        elif kind == "zip":
+            run.export(dest)
+        else:
+            write_report(run, dest)
+    assert source.read_bytes() == original
+    assert not list(tmp_path.glob(".trajviz-awe-*"))
+
+
+@pytest.mark.parametrize("kind", ["json", "zip", "html"])
+@pytest.mark.parametrize("selection", ["directory", "faults"])
+def test_exports_protect_imported_sibling_artifacts(tmp_path, kind, selection):
+    directory = tmp_path / "run"
+    directory.mkdir()
+    source = directory / "faults.json"
+    source.write_text('[{"case_id":"original","faults":[]}]', encoding="utf-8")
+    sibling = directory / "INSIGHTS.md"
+    sibling.write_text("# Recorded evidence", encoding="utf-8")
+    run = saved.load_run(directory if selection == "directory" else source)
+    with pytest.raises(ValueError, match="overwrite input source"):
+        if kind == "json":
+            run.write(sibling)
+        elif kind == "zip":
+            run.export(sibling)
+        else:
+            write_report(run, sibling)
+    assert sibling.read_text(encoding="utf-8") == "# Recorded evidence"
+
+
+@pytest.mark.parametrize("kind", ["json", "zip", "html"])
+def test_failed_atomic_exports_keep_previous_destination_and_remove_owned_scratch(tmp_path, kind):
+    run = saved.load_run([{"case_id": "original", "faults": []}])
+    destination = tmp_path / ("export." + kind)
+    destination.write_bytes(b"previous export")
+    with patch.object(saved.os, "replace", side_effect=OSError("controlled replacement failure")), \
+            pytest.raises(OSError, match="controlled replacement failure"):
+        if kind == "json":
+            run.write(destination)
+        elif kind == "zip":
+            run.export(destination)
+        else:
+            write_report(run, destination)
+    assert destination.read_bytes() == b"previous export"
+    assert list(tmp_path.iterdir()) == [destination]
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_html_report_refuses_modified_evidence_before_creating_output(tmp_path, existing):
+    run = saved.load_run([{"case_id": "original", "faults": []}])
+    run.cases[0]["case_id"] = "edited evidence"
+    destination = tmp_path / "new-output" / "report.html"
+    if existing:
+        destination.parent.mkdir()
+        destination.write_bytes(b"previous report")
+    with pytest.raises(ValueError, match="changed"):
+        write_report(run, destination)
+    if existing:
+        assert destination.read_bytes() == b"previous report"
+        assert list(destination.parent.iterdir()) == [destination]
+    else:
+        assert not destination.parent.exists()
 
 
 def _bytes(value):

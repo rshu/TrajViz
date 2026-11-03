@@ -15,6 +15,7 @@ from pathlib import Path
 from . import config
 from .countermeasures import CATALOG_PATH, bundles
 from .remedies import select_remedies
+from .catalog_notes import EVALUATION_GUIDE, historical_calibration_text
 
 POLICY = (
     "Core diagnostic candidates first; then unique primary matching cases, "
@@ -46,7 +47,7 @@ MEASUREMENT = {
         "blocking/escape frequency on solved and benign controls",
     ],
     "evidence": "Preserve protocol, artifact, analyzer revision, provider/model, paired run IDs and hashed logs; report unsuccessful trials too.",
-    "promotion": "Use docs/REMEDY_VERIFICATION.md for scoped evidence checks; no status is upgraded by generating this plan.",
+    "promotion": f"Use the TrajViz evaluation guide ({EVALUATION_GUIDE}) for scoped evidence checks; no status is upgraded by generating this plan.",
 }
 
 
@@ -210,7 +211,7 @@ def insights_section(plan, include_link=True):
     for rid in plan["shortlist"]["overall"]:
         calibration = by_id[rid]["recipe"].get("calibration") or {}
         if calibration.get("adjacent_negative"):
-            lines += [f"**Calibration caution — `{rid}`:** {_text(calibration['adjacent_negative'])}", ""]
+            lines += [f"**Historical calibration caution — `{rid}`:** {_text(historical_calibration_text(calibration['adjacent_negative']))}", ""]
     return lines
 
 
@@ -284,7 +285,7 @@ def to_markdown(plan):
         if r.get("runtime_contract"):
             lines += ["Bounded runtime policy: `" + _text(json.dumps(r["runtime_contract"], sort_keys=True)) + "`.", ""]
         if r.get("calibration"):
-            lines += ["Calibration and caveats: `" + _text(json.dumps(r["calibration"], sort_keys=True)) + "`.", ""]
+            lines += ["Historical calibration and caveats: " + _text(historical_calibration_text(r["calibration"])) + ".", ""]
         if c["benchmark_suspect_case_ids"]:
             lines += [
                 f"Includes {len(c['benchmark_suspect_case_ids'])} benchmark suspects; audit their harness evidence before treating them as intervention targets.",
@@ -326,7 +327,10 @@ def showcase_summary(plan):
         "catalog_sha256": plan["catalog_sha256"],
         "policy": plan["prioritization_policy"],
         "cautions": [
-            {"id": rid, "text": by_id[rid]["recipe"]["calibration"]["adjacent_negative"]}
+            {"id": rid,
+             "text": historical_calibration_text(by_id[rid]["recipe"]["calibration"]["adjacent_negative"]),
+             "raw_catalog_metadata": {"calibration": by_id[rid]["recipe"]["calibration"]},
+             "computed_for_current_run": False}
             for rid in plan["shortlist"]["overall"]
             if (by_id[rid]["recipe"].get("calibration") or {}).get("adjacent_negative")
         ],

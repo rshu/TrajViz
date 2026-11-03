@@ -76,7 +76,7 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
             visible=False,
             elem_classes=["overview-kpi-strip"],
         )
-        with gr.Tabs(visible=True) as main_tabs:
+        with gr.Tabs(visible=True, elem_id="main-tabs") as main_tabs:
             overview = overview_tab.layout(overview_kpi_html)
             patterns = patterns_tab.layout()
             attribution = attribution_tab.layout(allow_server_paths=allow_server_paths)
@@ -181,19 +181,34 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                             }
                         });
                     };
+                    window.tvMainTabButtons = function () {
+                        const root = document.getElementById('main-tabs');
+                        const wrapper = root && root.querySelector(':scope > .tab-wrapper');
+                        if (!wrapper) return [];
+                        /* Gradio moves narrow-screen tabs into real dropdown
+                           buttons. Measurement clones and nested tab groups
+                           must never receive navigation or history clicks. */
+                        return Array.from(wrapper.querySelectorAll(
+                            '.tab-container[role="tablist"] button[role="tab"], '
+                                + '.overflow-dropdown button'
+                        )).filter((tab) => tab.closest('.tab-wrapper') === wrapper
+                            && !tab.closest('[aria-hidden="true"]'));
+                    };
                     window.tvClickMainTab = function (label) {
-                        const tabs = document.querySelectorAll('button[role=tab]');
+                        const tabs = window.tvMainTabButtons();
                         for (let ti = 0; ti < tabs.length; ti++) {
                             if (tabs[ti].textContent.trim() === label) {
                                 tabs[ti].click();
-                                return;
+                                return true;
                             }
                         }
+                        return false;
                     };
                     window.tvActiveMainTab = function () {
-                        const tabs = document.querySelectorAll('button[role=tab]');
+                        const tabs = window.tvMainTabButtons();
                         for (let ti = 0; ti < tabs.length; ti++) {
-                            if (tabs[ti].getAttribute('aria-selected') === 'true') {
+                            if (tabs[ti].getAttribute('aria-selected') === 'true'
+                                    || tabs[ti].classList.contains('selected')) {
                                 return tabs[ti].textContent.trim();
                             }
                         }
@@ -213,7 +228,8 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                         history.pushState(
                             { tvTab: tabLabel },
                             '',
-                            window.location.pathname + window.location.search + window.location.hash
+                            window.location.pathname + window.location.search
+                                + (window.location.hash.startsWith('#step-') ? '' : window.location.hash)
                         );
                     };
                     window.tvFocusWorkflowCard = function (card, opts) {
@@ -242,6 +258,10 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                     window.tvGotoWorkflowStep = function (idx, opts) {
                         opts = opts || {};
                         const restore = !!opts.restore;
+                        const priorTab = window.tvActiveMainTab();
+                        if (!restore && priorTab !== 'Workflow') {
+                            window.tvPushTabReturnPoint(priorTab);
+                        }
                         const targetHash = '#step-' + idx;
                         /* Set the hash first so Workflow js_on_load auto-select
                            does not steal the target, and so a late card mount
@@ -256,10 +276,17 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                                 history.replaceState(histState, '', url);
                             }
                         }
-                        /* Tab return points come from the capture-phase Workflow
-                           tab listener (including programmatic clicks). */
-                        if (window.tvActiveMainTab() !== 'Workflow') {
-                            window.tvClickMainTab('Workflow');
+                        /* The prior tab precedes the step entry. Suppress the
+                           manual-click capture hook during this synchronous tab
+                           switch, including Back/Forward restoration. */
+                        if (priorTab !== 'Workflow') {
+                            const previous = window.__tvProgrammaticWorkflowTab;
+                            window.__tvProgrammaticWorkflowTab = true;
+                            try {
+                                window.tvClickMainTab('Workflow');
+                            } finally {
+                                window.__tvProgrammaticWorkflowTab = previous;
+                            }
                         }
                         window.__tvGotoGen = (window.__tvGotoGen || 0) + 1;
                         const gen = window.__tvGotoGen;
@@ -318,8 +345,10 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                         });
                         /* Capture phase: read the prior tab before Gradio switches. */
                         document.addEventListener('click', function (e) {
-                            const tab = e.target && e.target.closest && e.target.closest('button[role=tab]');
-                            if (!tab || tab.textContent.trim() !== 'Workflow') return;
+                            const tab = e.target && e.target.closest && e.target.closest('button');
+                            if (!tab || tab.textContent.trim() !== 'Workflow'
+                                    || !window.tvMainTabButtons().includes(tab)
+                                    || window.__tvProgrammaticWorkflowTab) return;
                             window.tvPushTabReturnPoint(window.tvActiveMainTab());
                         }, true);
                     };

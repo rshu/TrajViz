@@ -1533,7 +1533,7 @@ html.tv-theme-dark {
 .rg-tree-summary,
 .rg-tree-file {
     display: grid;
-    grid-template-columns: minmax(12em, 1fr) repeat(var(--rg-run-cols, 2), 5.6em) minmax(7em, auto);
+    grid-template-columns: minmax(12rem, 1fr) repeat(var(--rg-run-cols, 2), 5.6rem) 14rem;
     gap: 6px 8px;
     align-items: center;
 }
@@ -1567,7 +1567,9 @@ html.tv-theme-dark {
 .rg-tree-mix {
     font-size: 12px;
     color: var(--ov-muted);
-    white-space: nowrap;
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 .rg-tree-dir {
     margin: 2px 0 2px 0.15em;
@@ -1775,6 +1777,89 @@ html.tv-theme-dark {
     #analysis-sidebar.right:not(.open) .toggle-button::after {
         content: "AI analysis";
     }
+}
+/* Consistent control surfaces and compact dashboard rhythm. */
+.gradio-container {
+    --color-accent: #1d4ed8;
+    --color-accent-soft: #eef2ff;
+    --button-primary-background-fill: #1d4ed8;
+    --button-primary-background-fill-hover: #1e40af;
+    --button-primary-border-color: #1d4ed8;
+    --button-primary-text-color: #ffffff;
+    --button-secondary-background-fill: #ffffff;
+    --button-secondary-background-fill-hover: #f1f5f9;
+    --button-secondary-border-color: #dce3ef;
+    --button-secondary-text-color: #334155;
+    --block-radius: 12px;
+    --input-radius: 8px;
+    --button-small-radius: 8px;
+    --button-large-radius: 8px;
+}
+.gradio-container button.primary,
+.gradio-container button.secondary { min-height: 34px; }
+.gradio-container button.secondary { border: 1px solid var(--ov-border); }
+.label-status-badge:has(.prose:empty) { display: none; }
+.gradio-container button[role="tab"][aria-selected="true"] {
+    color: var(--ov-accent);
+    border-bottom-color: var(--ov-accent);
+    font-weight: 650;
+}
+.gradio-container button:focus-visible,
+.gradio-container summary:focus-visible {
+    outline: 2px solid var(--ov-accent);
+    outline-offset: 3px;
+}
+.upload-row { margin-bottom: 2px !important; }
+.upload-row .prose p { font-size: 12px; line-height: 1.45; color: var(--ov-muted); }
+.overview-kpi-strip { margin-bottom: 14px; }
+.ov-kpi-grid { gap: 12px; }
+.ov-kpi-card { min-width: 0; }
+.ov-kpi-value { font-variant-numeric: tabular-nums; letter-spacing: -0.035em; }
+.ov-kpi-methodology { margin-top: 6px; font-size: 11px; line-height: 1.45; }
+.ov-kpi-methodology summary { color: var(--ov-accent); cursor: pointer; font-weight: 600; }
+.ov-kpi-methodology[open] { padding-top: 5px; border-top: 1px solid var(--ov-border); }
+.overview-issues-panel { border-radius: 10px; }
+.overview-issues-body { max-height: 28rem; overflow-y: auto; scrollbar-gutter: stable; }
+.overview-issue-head { min-width: 0; gap: 3px; }
+.overview-issue-title { flex-basis: 100%; overflow-wrap: anywhere; }
+.overview-issue-detail { flex-basis: 100%; overflow-wrap: anywhere; line-height: 1.5; }
+.overview-section-nav { border-radius: 12px; }
+.gradio-container table { font-variant-numeric: tabular-nums; }
+.gradio-container table:not(.file-preview) { border: 0; table-layout: auto; }
+.gradio-container table:not(.file-preview) th,
+.gradio-container table:not(.file-preview) td { border: 0; border-bottom: 1px solid var(--ov-border); }
+.gradio-container table:not(.file-preview) th {
+    line-height: 1.4; white-space: nowrap; word-break: normal; overflow-wrap: normal;
+    background: var(--ov-table-header-bg);
+}
+.gradio-container table:not(.file-preview) tbody tr:nth-child(even) { background: var(--ov-nav-bg); }
+.diagnostics-data-table .prose { overflow-x: auto; max-width: 100%; }
+.diagnostics-data-table table { min-width: 100%; }
+.diagnostics-data-table table th,
+.diagnostics-data-table table td { white-space: nowrap; word-break: normal; overflow-wrap: normal; }
+@media (max-width: 1100px) and (min-width: 769px) {
+    .ov-kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+    .ov-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+    .ov-kpi-card:last-child:nth-child(odd) { grid-column: 1 / -1; }
+    .ov-kpi-value { overflow-wrap: anywhere; }
+    .overview-issues-body { max-height: 24rem; }
+    .gradio-container button[role="tab"] { min-height: 40px; }
+}
+
+/* Keep Workflow chips usable when the desktop toolbar no longer fits. */
+@media (max-width: 768px) {
+    .wf-toolbar { flex-direction: column !important; align-items: stretch !important; }
+    .wf-toolbar #wf-filter-chips,
+    .wf-toolbar .wf-toolbar-search {
+        width: 100% !important; min-width: 0 !important; max-width: 100% !important;
+        flex: 0 0 auto !important;
+    }
+    .wf-toolbar #wf-filter-bar {
+        width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box;
+    }
+    .wf-toolbar > button { align-self: flex-start; }
 }
 """
 

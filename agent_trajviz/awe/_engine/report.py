@@ -15,6 +15,7 @@ from .remedies import select_remedies
 from .rootcause import build_blame
 from .arbiter import auto_adjudicate
 from .trajsignals import tool_behavior
+from .catalog_notes import historical_calibration_text
 
 CAP_LABEL = {
     "requirement_understanding": "Requirement Understanding",
@@ -54,7 +55,7 @@ def remedy_lines(cmeasure, match_count):
         )
     L.append(f"  - _why:_ {cmeasure.mechanism}  ·  _status:_ {cmeasure.status}")
     if cmeasure.calibration:
-        L.append("  - _calibration limitations:_ " + str(cmeasure.calibration))
+        L.append("  - _historical catalog calibration:_ " + historical_calibration_text(cmeasure.calibration))
     if cmeasure.contract:
         L.append("  - _gate limits and escape path:_ " + str(cmeasure.contract))
     L.append(
@@ -108,9 +109,20 @@ def _examples(agent, instances, wanted_errors, per=2):
     return found, selected_counts
 
 
-def agent_report_md(agent: str, instances=None) -> str:
+def agent_report_outputs(agent: str, instances=None) -> tuple[str, dict]:
+    """Render Markdown and return the same computed scorecard for JSON export."""
     instances = config.require_instances(instances if instances is not None else config.list_instances())
-    sc = agent_capability_scores(agent, instances, use_trajectory=True)
+    scorecard = agent_capability_scores(agent, instances, use_trajectory=True)
+    # Add scope metadata without changing any scores, intervals or coverage.
+    scorecard = {**scorecard, "schema_version": 1, "benchmark": config.BENCHMARK_NAME,
+                 "instance_ids": list(instances),
+                 "measurement_scope": "Computed diagnostic scores and sampling intervals; not intervention effects."}
+    return agent_report_md(agent, instances, scorecard=scorecard), scorecard
+
+
+def agent_report_md(agent: str, instances=None, *, scorecard: dict | None = None) -> str:
+    instances = config.require_instances(instances if instances is not None else config.list_instances())
+    sc = scorecard if scorecard is not None else agent_capability_scores(agent, instances, use_trajectory=True)
     caps = list(sc["capabilities"])
 
     wanted = {et for c in caps for et, _ in sc["capabilities"][c]["top_errors"]}

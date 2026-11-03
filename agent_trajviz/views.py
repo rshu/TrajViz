@@ -618,10 +618,12 @@ def export_json(
     raw export, so the directory reloads with :func:`load`. The
     directory is created if needed; existing files of the same names are
     replaced atomically per file. View ids must be valid export filenames and
-    cannot collide with ``index`` or ``trajectory``.
+    cannot collide with ``index`` or ``trajectory``. Output cannot replace
+    the loaded trajectory's source file.
     """
     from . import __version__
     from .api import Trajectory
+    from ._fileio import ensure_output_does_not_overwrite, input_sources
 
     views = _source_views(source, only)
     seen: set[str] = set()
@@ -634,6 +636,10 @@ def export_json(
             raise ValueError(f"duplicate view id {view.id!r} (case-insensitive filename)")
         seen.add(filename_key)
     out_dir = Path(directory)
+    if isinstance(source, Trajectory):
+        planned = [*(view.id + ".json" for view in views.values()), "trajectory.json", "index.json"]
+        for name in planned:
+            ensure_output_does_not_overwrite(out_dir / name, input_sources(source.source, source.raw))
     out_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
 

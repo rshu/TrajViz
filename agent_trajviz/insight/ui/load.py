@@ -45,7 +45,8 @@ def pack_shell(session: LoadedSession | None = None, *, dark: bool = False, bann
     del dark, banner
     if session is None:
         return {
-            "main_tabs": gr.update(visible=False),
+            # Saved AWE runs are independent of native loading, including errors.
+            "main_tabs": gr.update(visible=True),
             "state_steps": [],
             "state_raw": {},
             "state_analysis_brief": "",

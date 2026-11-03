@@ -25,7 +25,14 @@ _STYLE = """<style>
 .awe-view summary{cursor:pointer;font-weight:600;overflow-wrap:anywhere}
 .awe-view pre{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;max-height:550px;overflow:auto;padding:10px;background:var(--background-fill-secondary,#f4f7fb);border-radius:6px;font:12px/1.55 ui-monospace,monospace}
 .awe-view table{border-collapse:collapse;width:100%;font-size:12px;table-layout:fixed}
+.awe-view table.awe-score-matrix{min-width:760px}
 .awe-view td,.awe-view th{text-align:left;vertical-align:top;padding:8px;border-bottom:1px solid var(--border-color-primary,#e1e7ef);overflow-wrap:anywhere}
+.awe-view .awe-report-scroll{width:100%;max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}
+.awe-view .awe-report-scroll table{width:max-content;min-width:100%;table-layout:auto}
+.awe-view .awe-report-scroll th,.awe-view .awe-report-scroll td{white-space:nowrap;overflow-wrap:normal;word-break:normal}
+.awe-view .awe-report-cell-details{width:clamp(220px,28vw,380px);white-space:normal}
+.awe-view .awe-report-cell-details summary{white-space:normal;overflow-wrap:anywhere;font-weight:400}
+.awe-view .awe-report-cell-details pre{max-height:260px;margin:6px 0;white-space:pre-wrap;overflow-wrap:anywhere}
 .awe-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:10px}
 .awe-node{display:block;text-decoration:none!important;color:inherit!important;border:1px solid #bfccdc;border-left:4px solid #7c66e8;border-radius:8px;padding:10px;margin:6px 0;overflow-wrap:anywhere}
 .awe-node.awe-selected{background:var(--background-fill-secondary,#f3f0ff);border-color:#7956d9}
@@ -125,6 +132,45 @@ def selected_case(run: Any, key: str | None) -> dict[str, Any] | None:
     return next((case for i, case in enumerate(all_cases(run)) if identity(case, i) == key), None)
 
 
+def _task_context_html(task: Mapping[str, Any]) -> str:
+    body = "<details class='awe-panel' open><summary>Task and reference context</summary>"
+    problem = task.get("problem_statement")
+    if isinstance(problem, str):
+        body += "<div class='awe-task-text'>" + _markdown_report(problem) + "</div>"
+        remaining = {key: value for key, value in task.items() if key != "problem_statement"}
+    else:
+        remaining = dict(task)
+    if remaining:
+        body += "<h4>Reference context and additional task fields</h4>" + _pre(remaining)
+    body += _details("Raw task artifact", dict(task))
+    return body + "</details>"
+
+
+def _code_evidence_value(value: Any, depth: int = 0) -> str:
+    """Render recorded strings as source text, retaining unknown JSON shapes."""
+    if isinstance(value, str):
+        return _pre(value)
+    if isinstance(value, list) and value and all(isinstance(item, str) for item in value):
+        return "".join(_pre(item) for item in value)
+    if isinstance(value, Mapping) and value and depth < 3:
+        parts = []
+        for name, item in value.items():
+            # First-level group names are labels; deeper names may be literal
+            # file paths and must retain their recorded spelling.
+            label = str(name).replace("_", " ") if depth == 0 else str(name)
+            parts.append("<div class='awe-code-field'><h4>" + _escape(label) + "</h4>"
+                         + _code_evidence_value(item, depth + 1) + "</div>")
+        return "".join(parts)
+    return _pre(value)
+
+
+def _code_evidence_html(value: Any) -> str:
+    if value is None:
+        return ""
+    return ("<details class='awe-panel'><summary>Agent and reference code</summary>"
+            + _code_evidence_value(value) + _details("Raw code evidence artifact", value) + "</details>")
+
+
 def case_html(case: Mapping[str, Any] | None) -> str:
     if case is None:
         return notice("Choose a case to inspect its recorded evidence.")
@@ -135,7 +181,7 @@ def case_html(case: Mapping[str, Any] | None) -> str:
     body += "</p><p class='awe-muted'>Recorded diagnostic attribution; causal effects remain untested unless explicitly documented.</p>"
     task = case.get("task")
     if isinstance(task, dict):
-        body += _details("Task and reference context", task, opened=True)
+        body += _task_context_html(task)
     faults = case.get("faults")
     if isinstance(faults, list):
         if not faults:
@@ -153,7 +199,8 @@ def case_html(case: Mapping[str, Any] | None) -> str:
                                ("countermeasures", "Matched remedy specifications"), ("countermeasure_decisions", "Remedy selection decisions"),
                                ("recommendation", "Recommendation"), ("recommendation_support", "Recommendation support")):
                 if key in fault:
-                    body += _details(label, fault[key], opened=key == "detector_evidence")
+                    body += (_code_evidence_html(fault[key]) if key == "code_evidence"
+                             else _details(label, fault[key], opened=key == "detector_evidence"))
             body += _details("Complete fault record", fault) + "</details>"
     elif "analysis" in case:
         body += "<p>Symptom observation only; this record does not assign fault blame.</p>"
@@ -410,15 +457,27 @@ def _measurement(value: Any) -> str:
     return _text(value)
 
 
+def _report_cell(value: Any) -> str:
+    text = _measurement(value)
+    if len(text) <= 120 and "\n" not in text and "\r" not in text:
+        return "<td>" + _escape(text) + "</td>"
+    preview = " ".join(text[:80].split())
+    if len(text) > 80:
+        preview += "…"
+    return ("<td><details class='awe-report-cell-details'><summary>"
+            + _escape(f"Preview ({len(text):,} characters): {preview}")
+            + "</summary>" + _pre(text) + "</details></td>")
+
+
 def _report_table(headers: list[str], rows: list[list[Any]]) -> str:
     width = max(len(headers), max((len(row) for row in rows), default=0))
     headers = [*headers, *(f"Additional column {index + 1}" for index in range(width - len(headers)))]
-    body = "<div style='overflow-x:auto'><table><thead><tr>"
+    body = "<div class='awe-report-scroll' role='region' aria-label='Scrollable report table' tabindex='0'><table><thead><tr>"
     body += "".join("<th scope='col'>" + _escape(header) + "</th>" for header in headers)
     body += "</tr></thead><tbody>"
     for row in rows[:2000]:
         values = [*row, *([None] * (width - len(row)))]
-        body += "<tr>" + "".join("<td>" + _escape(_measurement(value)) + "</td>" for value in values) + "</tr>"
+        body += "<tr>" + "".join(_report_cell(value) for value in values) + "</tr>"
     body += "</tbody></table></div>"
     if len(rows) > 2000:
         body += "<p class='awe-muted'>Showing the first 2,000 rows. The complete original artifact remains available below and in downloads.</p>"
