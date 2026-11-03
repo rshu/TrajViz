@@ -1,0 +1,259 @@
+{
+  "exported_at": "2026-01-01T00:00:00.000000",
+  "source_db": "codeagent.db",
+  "export_note": "Minimal CodeAgent session export fixture",
+  "session": {
+    "id": "ses_root",
+    "parent_id": null,
+    "slug": "root-slug",
+    "directory": "/anonymized/workdir",
+    "title": "CodeAgent fixture",
+    "version": "1.0-test",
+    "share_url": null,
+    "time_created": 1000,
+    "time_updated": 5000,
+    "time_compacting": null,
+    "time_archived": null,
+    "extra_info": "",
+    "time_created_iso": "2026-01-01T00:00:01.000000",
+    "time_updated_iso": "2026-01-01T00:00:05.000000",
+    "messages": [
+      {
+        "id": "msg_user",
+        "time_created": 1000,
+        "time_created_iso": "2026-01-01T00:00:01.000000",
+        "data": {
+          "role": "user",
+          "time": {"created": 1000},
+          "agent": "build",
+          "model": {"providerID": "local", "modelID": "vibe-coding"}
+        },
+        "parts": [
+          {
+            "id": "prt_user",
+            "time_created": 1001,
+            "data": {"type": "text", "text": "Add crosstalk protection"}
+          }
+        ]
+      },
+      {
+        "id": "msg_assistant",
+        "time_created": 1500,
+        "time_created_iso": "2026-01-01T00:00:01.500000",
+        "data": {
+          "role": "assistant",
+          "time": {"created": 1500, "completed": 3000},
+          "parentID": "msg_user",
+          "modelID": "vibe-coding",
+          "providerID": "local",
+          "mode": "build",
+          "agent": "build",
+          "path": {"cwd": "/anonymized/workdir", "root": "/anonymized/workdir"},
+          "cost": 0,
+          "tokens": {
+            "total": 100,
+            "input": 40,
+            "output": 20,
+            "reasoning": 10,
+            "cache": {"read": 30, "write": 0}
+          },
+          "finish": "tool-calls"
+        },
+        "parts": [
+          {
+            "id": "prt_start",
+            "time_created": 1500,
+            "data": {"type": "step-start", "snapshot": "0"}
+          },
+          {
+            "id": "prt_reason",
+            "time_created": 1600,
+            "data": {
+              "type": "reasoning",
+              "text": "Delegate explore",
+              "time": {"start": 1600, "end": 1700}
+            }
+          },
+          {
+            "id": "prt_task",
+            "time_created": 1800,
+            "data": {
+              "type": "tool",
+              "callID": "call_task",
+              "tool": "task",
+              "state": {
+                "status": "completed",
+                "input": {"prompt": "Inspect crosstalk"},
+                "output": "task_id: ses_child",
+                "title": "Explore",
+                "metadata": {"sessionId": "ses_child", "exit": 0},
+                "time": {"start": 1800, "end": 2500}
+              }
+            }
+          },
+          {
+            "id": "prt_skill_fail",
+            "time_created": 2600,
+            "data": {
+              "type": "tool",
+              "callID": "call_skill_fail",
+              "tool": "skill",
+              "state": {
+                "status": "error",
+                "input": {"name": "missing-skill"},
+                "error": "Skill not found",
+                "time": {"start": 2600, "end": 2650}
+              }
+            }
+          },
+          {
+            "id": "prt_finish",
+            "time_created": 3000,
+            "data": {
+              "type": "step-finish",
+              "reason": "tool-calls",
+              "cost": 0,
+              "tokens": {
+                "total": 100,
+                "input": 40,
+                "output": 20,
+                "reasoning": 10,
+                "cache": {"read": 30, "write": 0}
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "msg_compact",
+        "time_created": 3100,
+        "time_created_iso": "2026-01-01T00:00:03.100000",
+        "data": {
+          "role": "user",
+          "time": {"created": 3100},
+          "agent": "build",
+          "summary": {"diffs": []}
+        },
+        "parts": [
+          {
+            "id": "prt_compaction",
+            "time_created": 3101,
+            "data": {"type": "compaction", "auto": true, "overflow": false}
+          },
+          {
+            "id": "prt_patch",
+            "time_created": 3102,
+            "data": {
+              "type": "patch",
+              "hash": "abc123",
+              "files": ["/anonymized/workdir/file.ts"]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "child_sessions": [
+    {
+      "id": "ses_child",
+      "parent_id": "ses_root",
+      "slug": "child-slug",
+      "directory": "/anonymized/workdir",
+      "title": "Explorer",
+      "version": "1.0-test",
+      "share_url": null,
+      "time_created": 2000,
+      "time_updated": 4000,
+      "time_compacting": null,
+      "time_archived": null,
+      "extra_info": "",
+      "time_created_iso": "2026-01-01T00:00:02.000000",
+      "time_updated_iso": "2026-01-01T00:00:04.000000",
+      "messages": [
+        {
+          "id": "msg_child_user",
+          "time_created": 2000,
+          "time_created_iso": "2026-01-01T00:00:02.000000",
+          "data": {
+            "role": "user",
+            "time": {"created": 2000},
+            "agent": "general"
+          },
+          "parts": [
+            {
+              "id": "prt_child_user",
+              "time_created": 2001,
+              "data": {"type": "text", "text": "Inspect crosstalk"}
+            }
+          ]
+        },
+        {
+          "id": "msg_child_assistant",
+          "time_created": 2200,
+          "time_created_iso": "2026-01-01T00:00:02.200000",
+          "data": {
+            "role": "assistant",
+            "time": {"created": 2200, "completed": 3900},
+            "parentID": "msg_child_user",
+            "modelID": "vibe-coding",
+            "providerID": "local",
+            "mode": "general",
+            "agent": "general",
+            "tokens": {
+              "total": 50,
+              "input": 20,
+              "output": 10,
+              "reasoning": 5,
+              "cache": {"read": 15, "write": 0}
+            },
+            "finish": "stop"
+          },
+          "parts": [
+            {
+              "id": "prt_child_start",
+              "time_created": 2200,
+              "data": {"type": "step-start", "snapshot": "0"}
+            },
+            {
+              "id": "prt_child_read",
+              "time_created": 2300,
+              "data": {
+                "type": "tool",
+                "callID": "call_read",
+                "tool": "read",
+                "state": {
+                  "status": "completed",
+                  "input": {"filePath": "/anonymized/workdir/file.ts"},
+                  "output": "export const guard = true",
+                  "title": "file.ts",
+                  "metadata": {"exit": 0},
+                  "time": {"start": 2300, "end": 2400}
+                }
+              }
+            },
+            {
+              "id": "prt_child_text",
+              "time_created": 2500,
+              "data": {"type": "text", "text": "Inspection complete"}
+            },
+            {
+              "id": "prt_child_finish",
+              "time_created": 3900,
+              "data": {
+                "type": "step-finish",
+                "reason": "stop",
+                "tokens": {
+                  "total": 50,
+                  "input": 20,
+                  "output": 10,
+                  "reasoning": 5,
+                  "cache": {"read": 15, "write": 0}
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

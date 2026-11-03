@@ -314,6 +314,7 @@ class FormatLabelsTests(unittest.TestCase):
                 "otlp": "OpenTelemetry",
                 "claude_code": "Claude Code",
                 "cursor": "Cursor",
+                "codeagent": "CodeAgent",
                 "codearts": "CodeArts",
                 "icode": "ICode",
                 "opencode": "OpenCode",

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-_OBJECT_FORMATS = frozenset({"codearts", "cursor", "icode", "opencode", "otlp"})
+_OBJECT_FORMATS = frozenset({"codeagent", "codearts", "cursor", "icode", "opencode", "otlp"})
 _EVENT_FORMATS = frozenset({"claude_code", "cursor", "codex", "pi", "dsh"})
 _FORMAT_STAMPS = {
     "otlp": "_otlp_format",
     "claude_code": "_claude_code_format",
+    "codeagent": "_codeagent_format",
     "codearts": "_codearts_format",
     "cursor": "_cursor_format",
     "icode": "_icode_format",
@@ -168,8 +169,17 @@ def _detect_object_format(raw: dict) -> str:
         return "dsh"
     if raw.get("_icode_format") is True:
         return "icode"
+    if raw.get("_codeagent_format") is True:
+        return "codeagent"
     if raw.get("_cursor_format") is True:
         return "cursor"
+    # CodeAgent session exports keep parent/child under ``session`` /
+    # ``child_sessions`` with ``data``-wrapped messages.  Detect before the
+    # OpenCode ``info + messages`` shape so the UI keeps the product label.
+    from .codeagent import looks_like_codeagent
+
+    if looks_like_codeagent(raw):
+        return "codeagent"
     # CodeArts exports use an OpenCode-compatible ``info + messages``
     # envelope.  Check their explicit export marker before the generic
     # OpenCode shape so the UI does not mislabel the originating product.

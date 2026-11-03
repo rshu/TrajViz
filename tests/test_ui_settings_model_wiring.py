@@ -14,7 +14,7 @@ from agent_trajviz.insight import assistant, issue_judge
 from agent_trajviz.insight.insight import build_ui
 from agent_trajviz.insight.llm_config import AnalysisLLMConfig, AnalysisSettings
 from agent_trajviz.insight.presenters.issues import OverviewIssue
-from agent_trajviz.insight.ui import overview_tab, sidebar
+from agent_trajviz.insight.ui import overview_tab, shared, sidebar
 
 
 def _settings(*, model="session-model", language="French", api_key="private-session-key"):
@@ -26,6 +26,21 @@ def _settings(*, model="session-model", language="French", api_key="private-sess
         ),
         language=language,
     )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_latest_run_registry():
+    """Keep suggest-fixes streams from being treated as superseded by other tests.
+
+    ``record_latest_run(None, …)`` is process-global. A prior dashboard/load
+    test that recorded under ``session_hash=None`` makes ``on_suggest_fixes``
+    exit before yielding when this module later calls it without a Request.
+    """
+    with shared._latest_run_lock:
+        shared._latest_run_by_session.clear()
+    yield
+    with shared._latest_run_lock:
+        shared._latest_run_by_session.clear()
 
 
 @pytest.fixture(scope="module")

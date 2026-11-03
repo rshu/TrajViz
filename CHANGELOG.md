@@ -7,6 +7,12 @@ change the public API (the names exported from `agent_trajviz`).
 
 ## [Unreleased]
 
+### Added
+
+- Load CodeAgent session exports (`session` + `child_sessions` with
+  data-wrapped messages and parts), including parent/child hierarchy, tools,
+  reasoning, tokens and timing.
+
 ### Fixed
 
 - OpenCode desktop and Windows session exports (flat `type` / `text` / `content`

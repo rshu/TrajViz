@@ -327,7 +327,7 @@ def draw_token_usage(data: dict, dark: bool = False) -> go.Figure:
     agents, groups = _group_rows_by_agent(data)
     fmt = data.get("format")
     has_breakdown = data["has_breakdown"]
-    opencode_schema = fmt in ("opencode", "codearts")
+    opencode_schema = fmt in ("opencode", "codearts", "codeagent")
     legend = dict(orientation="h", yanchor="bottom", y=1.06, xanchor="center", x=0.5)
     x_range = _workflow_x_range(rows)
     legend_shown: dict[str, bool] = {}

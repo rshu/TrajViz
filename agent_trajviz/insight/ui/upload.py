@@ -94,7 +94,7 @@ def layout() -> UploadRefs:
             label_load_btn = gr.Button("Load Labels", variant="secondary", size="sm", min_width=120, scale=0)
 
     with gr.Column(visible=False) as summary_area:
-        summary_banner = gr.HTML("", container=False, padding=False, elem_classes=["summary-banner"])
+        summary_banner = gr.HTML("", container=False, padding=False)
         # Hidden until Load Labels fills it — an empty gr.HTML still paints a
         # padded block (~20px) between the upload row and the KPI strip.
         label_badge_html = gr.HTML("", visible=False)

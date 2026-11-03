@@ -18,6 +18,7 @@ from .formats.claude_files import (
     parse_claude_zip,
     resolve_session_path,
 )
+from .formats.codeagent import _convert_codeagent_to_internal
 from .formats.codearts import _convert_codearts_metadata
 from .formats.codex import _convert_codex_to_internal
 from .formats.cursor import _convert_cursor_to_internal
@@ -55,6 +56,7 @@ FORMAT_LABELS = {
     "otlp": "OpenTelemetry",
     "claude_code": "Claude Code",
     "cursor": "Cursor",
+    "codeagent": "CodeAgent",
     "codearts": "CodeArts",
     "icode": "ICode",
     "opencode": "OpenCode",
@@ -129,8 +131,8 @@ def detect_format(raw: Any) -> str:
     """Detect trajectory format from parsed content.
 
     Accepts a JSON object or an event array. Returns ``claude_code``,
-    ``opencode``, ``codearts``, ``cursor``, ``icode``, ``codex``, ``pi``, ``dsh``,
-    or ``unknown``.
+    ``opencode``, ``codeagent``, ``codearts``, ``cursor``, ``icode``, ``codex``,
+    ``pi``, ``dsh``, or ``unknown``.
     """
     if isinstance(raw, list):
         return _detect_event_stream_format(raw)
@@ -239,6 +241,8 @@ def _apply_format(payload: Any, fmt: str, *, source_path: str | None = None) -> 
 
     if not isinstance(payload, dict):
         return _kind_mismatch_error(fmt)
+    if fmt == "codeagent":
+        return _convert_codeagent_to_internal(payload)
     if fmt == "codearts":
         # Legacy-JSON exports are detected as CodeArts (so the UI labels them
         # correctly) but have no parser yet: their 'sender'/'content' messages
