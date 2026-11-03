@@ -21,6 +21,7 @@ from .styles import WORKFLOW_CSS
 from .telemetry_quality import field_observed
 from .tool_output import tool_output_text
 from .workflow_role import workflow_role
+from ..awe.summary import attribution_summary_html, primary_fault
 
 
 _ROLE_COLORS = {
@@ -1140,11 +1141,11 @@ def _attr_scorecard_html(scorecard: list[dict], primary: dict | None) -> str:
             score = f"{s.get('weight', 0.0):.2f}"
             metric = (s.get("top_error") or "").replace("_", " ") or "blamed"
         elif s.get("assessed"):
-            color, badge, score, metric = "#059669", "clean", "—", "no blame"
+            color, badge, score, metric = "#059669", "assessed", "—", "no fault found"
         else:
             # NOT assessed (e.g. judge capabilities with no cached verdict) — this
             # is NOT the same as "clean"; do not imply the capability was checked.
-            color, badge, score, metric = "#9ca3af", "n/a", "—", "not assessed"
+            color, badge, score, metric = "#9ca3af", "not assessed", "—", "insufficient evidence or no opportunity"
         star = " ★" if cap == prim_cap else ""
         cards.append(
             f"<div class='score-dim-card'>"
@@ -1201,7 +1202,7 @@ def _attr_record_details(title: str, value, *, opened: bool = False) -> str:
 
 def _attr_case_context_html(data: dict) -> str:
     record = data.get("dossier") if isinstance(data.get("dossier"), dict) else data
-    return "".join(_attr_record_details(title, record.get(key), opened=key == "task")
+    return "".join(_attr_record_details(title, record.get(key))
                    for key, title in (("task", "Task and reference context"),
                                       ("attribution_trace", "Exact attribution policy trace"),
                                       ("fault_side", "Model, scaffold and grader context"),
@@ -1223,7 +1224,7 @@ def _attr_fault_html(fault: dict, *, refuted: bool = False) -> str:
         color, tier_label = "#9ca3af", "refuted" if refuted else "zero blame"
     else:
         color, tier_label = _STRENGTH_STYLE.get(strength, ("#6b7280", strength or "—"))
-    primary_tag = " ★ primary" if fault.get("is_primary") else ""
+    primary_tag = " ★ primary" if fault.get("is_primary") and weight > 0 else ""
     label = f"{_ATTR_CAP_LABEL.get(cap, cap)} → {et}"
 
     links_html = []
@@ -1253,7 +1254,7 @@ def _attr_fault_html(fault: dict, *, refuted: bool = False) -> str:
         if key in fault:
             extra_html += _attr_record_details(title, fault[key])
     return (
-        f"<details class='judge-panel'{' open' if fault.get('is_primary') else ''}>"
+        f"<details class='judge-panel'{' open' if fault.get('is_primary') and weight > 0 else ''}>"
         f"<summary>"
         f"<span class='judge-badge' style='background:{color};'>{html.escape(tier_label)}</span>"
         f" {html.escape(label)} "
@@ -1298,10 +1299,14 @@ def build_attribution_html(data: dict) -> str:
     candidates separated). ``data`` is a plain dict (an AttributionResult
     serialized) so rendering stays decoupled from ``awe``."""
     if not data.get("available"):
-        return _attr_notice(data.get("reason") or "Attribution unavailable.")
+        return ("<section class='attr-banner' role='status'>"
+                "<div class='attr-banner-head'>Diagnosis unavailable</div>"
+                f"<p>{html.escape(data.get('reason') or 'Attribution unavailable.')}</p>"
+                "<div class='attr-banner-sub'>Check Task and reference data above, then choose "
+                "<b>Diagnose failure</b>. Trajectory-only diagnostics remain available in Overview.</div></section>")
 
     status = data.get("blame_status") or "?"
-    primary = data.get("primary")
+    primary = data.get("primary") if primary_fault(data) else None
     if primary:
         head = (f"Primary cause: <b>{html.escape(_ATTR_CAP_LABEL.get(primary['capability'], primary['capability']))}</b> "
                 f"→ <code>{html.escape(primary['error_type'])}</code>")
@@ -1325,7 +1330,8 @@ def build_attribution_html(data: dict) -> str:
     faults = data.get("faults", [])
     attributed = [f for f in faults if float(f.get("blame_weight") or 0) > 0]
     zero_blame = [f for f in faults if float(f.get("blame_weight") or 0) == 0]
-    out = (banner + notes_html
+    out = (attribution_summary_html(data)
+           + banner + notes_html
            + _attr_arbiter_html(data.get("arbiter"))
            + _attr_scorecard_html(data.get("scorecard", []), primary)
            + _attr_case_context_html(data))

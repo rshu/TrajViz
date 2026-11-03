@@ -263,8 +263,10 @@ usage analyses.
 
 ## Optional LLM features
 
-Open **Settings** in the dashboard to configure the provider, API key, base URL,
-model and request options. Connection details can be remembered in this browser;
+Open **AI Trajectory Analysis → Settings** to configure the provider, API key,
+base URL, model and request options. Use **Analyze trajectory** on the Analysis
+tab to start analysis. **Test API key** checks the entered connection with a small
+model request before you apply settings. Connection details can be remembered in this browser;
 API keys stay in the current session. You can also set `ANALYZE_BASE_URL`,
 `ANALYZE_API_KEY` and `ANALYZE_MODEL` in `.env`. See
 [.env.example](https://github.com/rshu/TrajViz/blob/main/.env.example) for provider,
@@ -284,9 +286,9 @@ Failure attribution uses the bundled evaluation engine and canonical reference
 data; see the
 [attribution API](https://github.com/rshu/TrajViz/blob/main/agent_trajviz/attribution.py).
 
-The **AWE** tab provides built-in workflow evaluation, full evidence, provenance
-graphs, symptoms, recommendations and saved-run reports. AWE Settings configure
-explicit operations and optional model connections. See the
+The **AWE** tab combines **Attribution** and **Saved runs & evaluation**,
+with evidence, provenance graphs, symptoms, recommendations and reports.
+Evaluation settings configure explicit operations and optional model connections. See the
 [AWE guide](https://github.com/rshu/TrajViz/blob/main/docs/awe.md) for the Python API and CLI.
 
 ## Development

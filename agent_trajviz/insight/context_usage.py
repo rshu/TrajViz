@@ -77,6 +77,12 @@ _MODEL_CONTEXT_LIMITS: tuple[tuple[str, int], ...] = (
     ("claude", 200_000),
     ("gpt-4o", 128_000),
 )
+# Exact API aliases; do not assign this capacity to other DeepSeek models.
+# https://api-docs.deepseek.com/quick_start/pricing/ (2026-11-03);
+# the public /models response reports context_window=1_048_576.
+_MODEL_CONTEXT_EXACT_LIMITS: dict[str, int] = dict.fromkeys((
+    "deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp",
+), 1_048_576)
 DEFAULT_CONTEXT_WINDOW_LIMIT = 128_000
 
 
@@ -289,11 +295,14 @@ def _declared_window_limit(raw: dict | None) -> int | None:
 
 
 def _model_window_limit(steps: list[dict]) -> int | None:
-    """The model-id prefix table's window for the first step that names a model."""
+    """The model catalog's window for the first recognized model id."""
     for step in steps:
-        model_id = (step.get("model_id") or "").lower()
+        model_id = (step.get("model_id") or "").lower().strip()
         if not model_id:
             continue
+        exact = _MODEL_CONTEXT_EXACT_LIMITS.get(model_id.rsplit("/", 1)[-1])
+        if exact:
+            return exact
         for prefix, limit in _MODEL_CONTEXT_LIMITS:
             if model_id.startswith(prefix):
                 return limit
@@ -362,7 +371,12 @@ def resolve_context_window(
             f"percentage is shown. Enter the model's window to compute one."
         )
         return None, "unknown", note
-    return limit, source, ""
+    note = (
+        f"Capacity estimated from the model name ({limit:,} tokens); "
+        "the export does not report a context capacity."
+        if source == "model" else ""
+    )
+    return limit, source, note
 
 
 def resolve_context_window_limit(

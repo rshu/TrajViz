@@ -200,11 +200,108 @@ APP_CSS = """
     background: transparent;
     box-shadow: none;
 }
-/* Settings actions stay compact beside the analysis sidebar. */
+/* Settings uses the sidebar's width, independently of the page viewport. */
+#app-settings {
+    gap: 16px;
+    min-width: 0;
+}
+#app-settings .settings-intro,
+#app-settings .settings-status,
+#app-settings .settings-check {
+    padding: 0 !important;
+}
+#app-settings .settings-intro p,
+#app-settings .settings-status p { margin: 0; line-height: 1.5; }
+#app-settings .settings-intro,
+#app-settings .settings-status { color: var(--body-text-color, #334155); opacity: 0.75; }
+#app-settings .settings-field-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+    align-items: start;
+    gap: 16px;
+}
+#app-settings .settings-field-row > .column { min-width: 0 !important; }
+#app-settings .form {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    min-width: 0 !important;
+    overflow: visible !important;
+}
+#app-settings .settings-check { background: transparent; border: 0; box-shadow: none; }
+#app-settings .settings-field {
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+}
+#app-settings .settings-field > .container {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+#app-settings .settings-field [data-testid="block-info"] {
+    order: 0;
+    min-height: 20px;
+    line-height: 20px;
+    margin: 0;
+    font-weight: 550;
+}
+#app-settings .settings-field .input-container,
+#app-settings .settings-field input[type="number"],
+#app-settings .settings-field > .container > .wrap { order: 1; }
+#app-settings .settings-field .info-text,
+#app-settings .settings-check .info-text {
+    order: 2;
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--body-text-color, #334155);
+    opacity: 0.75;
+}
+#app-settings .settings-field textarea,
+#app-settings .settings-field input[type="password"],
+#app-settings .settings-field input[type="number"] {
+    box-sizing: border-box;
+    height: 42px !important;
+    min-height: 42px !important;
+    padding: 10px 12px !important;
+}
+#app-settings .settings-field > .container > .wrap {
+    box-sizing: border-box;
+    min-height: 42px;
+    display: flex;
+    align-items: center;
+}
+#app-settings .settings-field .wrap-inner { width: 100%; }
+#app-settings .settings-options { padding: 12px !important; }
+#app-settings .settings-options > [data-testid="accordion-content"] > .column { gap: 16px; }
+#app-settings .settings-actions { gap: 16px; flex-wrap: wrap; }
+#app-settings .settings-test-row { align-items: center; }
+#app-settings button.settings-test-action { min-height: 42px; border-radius: 8px; width: 100%; }
+#app-settings .settings-test-status,
+#app-settings .settings-test-status > .html-container { padding: 0 !important; }
+.settings-connection-result {
+    padding: 10px 12px;
+    border: 1px solid var(--border-color-primary, #dce3ef);
+    border-radius: 8px;
+    color: var(--body-text-color, #334155);
+    font-size: 12px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+.settings-connection-result.is-success { color: #166534; background: #f0fdf4; border-color: #bbf7d0; }
+.settings-connection-result.is-error { color: #991b1b; background: #fef2f2; border-color: #fecaca; }
+.settings-connection-result.is-testing { color: #1e40af; background: #eff6ff; border-color: #bfdbfe; }
 #app-settings button.settings-action {
     font-size: 13px !important;
-    padding: 8px 14px !important;
-    min-height: 36px;
+    padding: 10px 14px !important;
+    min-height: 42px;
+    border-radius: 8px;
+    flex: 1 1 180px !important;
+    min-width: 0 !important;
 }
 /* Type scale */
 h2, .section-header { font-size: 18px; font-weight: 700; }
@@ -1713,6 +1810,11 @@ html.tv-theme-dark {
 """ + _CONVERGE_CSS + """
 
 /* AI Trajectory Analysis sidebar */
+#analysis-sidebar {
+    --analysis-panel-width: min(560px, calc(100vw - 40px));
+    width: var(--analysis-panel-width) !important;
+    right: calc(-1 * var(--analysis-panel-width)) !important;
+}
 #analysis-sidebar .analysis-panel-title {
     font-size: 15px;
     font-weight: 700;

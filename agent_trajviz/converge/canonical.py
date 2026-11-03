@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from agent_trajviz.tool_vocab import BASH_TOOL_NAMES as _BASH_TOOLS, WRITE_TOOL_NAMES as _WRITE_TOOLS
 # Shared single-source helpers: validation-command detection lives in
 # insight/patterns.py and bash path extraction in insight/diagnostics.py (the
@@ -11,6 +11,9 @@ from agent_trajviz.tool_vocab import BASH_TOOL_NAMES as _BASH_TOOLS, WRITE_TOOL_
 # stdlib/tool_vocab at module level, so there is no import cycle.
 from agent_trajviz.insight.diagnostics import _extract_bash_paths
 from agent_trajviz.insight.patterns import _is_validation_command
+from agent_trajviz.insight.shell_cmd import (
+    _is_shell_assignment, _shell_segments, _skip_wrapper_options, primary_shell_command,
+)
 from agent_trajviz.insight.tool_failure import status_failed, tool_call_failed
 from agent_trajviz.insight.telemetry_quality import tool_field_observed
 
@@ -54,6 +57,12 @@ class CanonicalAction:
     effect_detail: dict = field(default_factory=dict)
     phase_label: str | None = None   # LLM-derived: understand | plan | implement | debug | validate | report
     action_label: str | None = None  # LLM-derived fine-grained action (e.g., code_reading, implement_runtime_logic)
+
+
+class _ComparisonAction(CanonicalAction):
+    """Resolved workspace identity; private provenance adds no serialized fields."""
+
+    __slots__ = ("_working_directory",)
 
 
 # ---------------------------------------------------------------------------
@@ -119,14 +128,79 @@ def _normalize_target(path: str) -> str:
 
 
 def _extract_base_command(command: str) -> str:
-    """Extract the base command (first non-assignment token) from a shell command."""
-    tokens = command.strip().split()
-    for tok in tokens:
-        # Skip any number of leading VAR=value environment assignments.
-        if "=" in tok and not tok.startswith("="):
+    """Resolve real work after directory changes, assignments and wrappers."""
+    return primary_shell_command(command) or ""
+
+
+def _comparison_actions(actions: list[CanonicalAction], raw: dict) -> list[CanonicalAction]:
+    """Compare file identity relative to an explicitly recorded working directory.
+
+    This directory is the session's workspace, not an inferred Git root.
+    Source steps, arguments, outside-workspace targets and effect evidence stay
+    intact. Call after effect labeling, which uses the source's absolute paths.
+    """
+    import posixpath
+
+    metadata = raw.get("metadata")
+    directory = metadata.get("directory") if isinstance(metadata, dict) else None
+    if not isinstance(directory, str) or not directory.strip():
+        return actions
+
+    def absolute(path: str) -> str:
+        value = posixpath.normpath(path.strip().replace("\\", "/"))
+        if re.match(r"^[A-Za-z]:/", value):
+            return value[0].lower() + value[1:]
+        return value if value.startswith("/") else ""
+
+    root = absolute(directory)
+    if not root:
+        return actions
+    prefix = root if root.endswith("/") else root + "/"
+    compared = []
+    for action in actions:
+        values = {item.name: getattr(action, item.name) for item in fields(CanonicalAction)}
+        resolved = _ComparisonAction(**values)
+        resolved._working_directory = directory
+        if action.action_type not in {"FILE_READ", "FILE_WRITE"}:
+            compared.append(resolved)
             continue
-        return tok
-    return tokens[0] if tokens else command.strip()
+        # Canonical normalization omits Windows drive letters. Consult the
+        # unchanged arguments so C:/workspace never captures D:/workspace.
+        candidates = [action.args.get(key) for key in ("file_path", "filePath", "notebook_path", "notebookPath", "path")]
+        if action.tool in _BASH_TOOLS:
+            candidates.extend(_extract_bash_paths(action.args.get("command", "")))
+        source = next((path for path in candidates
+                       if isinstance(path, str) and _normalize_target(path) == action.target), action.target)
+        path = absolute(source)
+        target = "." if path == root else path[len(prefix):] if path.startswith(prefix) else action.target
+        resolved.target = target
+        compared.append(resolved)
+    return compared
+
+
+def _fuzzy_command_parts(command: str, base_cmd: str) -> list[str]:
+    """Find the selected read/search command's arguments without navigation.
+
+    Keep nested scripts we cannot unambiguously peel as COMMAND actions rather
+    than using a wrapper or working directory as a search pattern.
+    """
+    for parts in _shell_segments(command):
+        index = 0
+        for _ in range(12):
+            while index < len(parts) and _is_shell_assignment(parts[index]):
+                index += 1
+            if index >= len(parts):
+                break
+            name = parts[index].replace("\\", "/").rsplit("/", 1)[-1].lower()
+            if name in {"env", "sudo", "command", "time", "nice", "nohup", "timeout"}:
+                index = _skip_wrapper_options(parts, index + 1, name)
+                if name == "timeout":
+                    index += 1
+                continue
+            if name == base_cmd:
+                return parts[index:]
+            break
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +286,8 @@ def canonicalize_steps(
                 if base_cmd in _NAVIGATION_COMMANDS:
                     action_type = "REASON"
                     target = ""
-                elif "|" not in command and base_cmd in _FUZZY_KEYWORDS:
+                elif ("|" not in command and base_cmd in _FUZZY_KEYWORDS
+                      and (parts := _fuzzy_command_parts(command, base_cmd))):
                     action_type = _FUZZY_KEYWORDS[base_cmd]
                     if action_type == "FILE_READ" and _is_in_place_edit(base_cmd, command):
                         action_type = "FILE_WRITE"  # sed -i / gawk -i inplace
@@ -220,12 +295,14 @@ def canonicalize_steps(
                     if action_type in ("FILE_READ", "FILE_WRITE") and paths:
                         target = _normalize_target(paths[0])
                     elif action_type == "SEARCH":
-                        parts = command.split()
                         non_flag_args = [p for p in parts[1:] if not p.startswith("-")]
                         pattern = non_flag_args[0] if non_flag_args else ""
                         scope = _normalize_target(paths[0]) if paths else ""
                         target = f"{pattern}@{scope}" if scope else pattern
                     else:
+                        # A read-like executable is not a file path. Keep
+                        # unqualified/ambiguous arguments out of file coverage.
+                        action_type = "COMMAND"
                         target = base_cmd
                 else:
                     action_type = "COMMAND"
@@ -580,6 +657,8 @@ def semantic_equivalent(
         if a.action_type == "SEARCH":
             return _search_targets_match(a.target, b.target)
         if a.action_type in ("FILE_READ", "FILE_WRITE"):
+            if isinstance(a, _ComparisonAction) or isinstance(b, _ComparisonAction):
+                return _normalize_target(a.target) == _normalize_target(b.target)
             return _targets_match(a.target, b.target)
         if a.action_type == "AGENT_SPAWN":
             return True  # any spawn matches any spawn
@@ -592,8 +671,12 @@ def semantic_equivalent(
         cmd_action = a if a.action_type == "COMMAND" else b
         other = b if a.action_type == "COMMAND" else a
         reduced = reduce_composite_command(cmd_action)
+        if reduced and isinstance(cmd_action, _ComparisonAction):
+            reduced = _comparison_actions([reduced], {"metadata": {"directory": cmd_action._working_directory}})[0]
         if reduced and reduced.action_type == other.action_type:
             if other.action_type in ("FILE_READ", "FILE_WRITE"):
+                if isinstance(reduced, _ComparisonAction) or isinstance(other, _ComparisonAction):
+                    return _normalize_target(reduced.target) == _normalize_target(other.target)
                 return _targets_match(reduced.target, other.target)
             if other.action_type == "SEARCH":
                 return _search_targets_match(reduced.target, other.target)

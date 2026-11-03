@@ -53,6 +53,12 @@ def _content(part: dict, message_id: str, position: int) -> dict:
     if not isinstance(metadata, dict):
         metadata = {}
         state["metadata"] = metadata
+    # A native tool invocation can complete while its result reports failure.
+    # Only literal booleans carry this meaning; preserve the original evidence.
+    if metadata.get("error") is True or metadata.get("timeout") is True:
+        state["status"] = "error"
+        if not state.get("error"):
+            state["error"] = "Tool timed out" if metadata.get("timeout") is True else "Tool reported an error"
     if state.get("status") in {"streaming", "running"}:
         metadata["_outcome_observed"] = False
     metadata["opencode_v2_tool"] = deepcopy(part)

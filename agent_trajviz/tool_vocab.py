@@ -87,7 +87,7 @@ SPAWN_TOOL_NAMES: frozenset[str] = frozenset({
 # Shell tool spellings across Claude Code, Cursor, OpenCode/Pi/DSH, and adapters.
 BASH_TOOL_NAMES: frozenset[str] = frozenset({
     "Bash", "bash", "BashCommand",
-    "Shell",
+    "Shell", "shell",
 })
 
 # Scaffold/harness primitives (search, file I/O). Failures of these are

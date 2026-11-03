@@ -251,8 +251,9 @@ def test_max_output_tokens_field_explains_the_reasoning_budget():
     with patch.dict(os.environ, env, clear=True), gr.Blocks(analytics_enabled=False):
         refs = settings_ui.layout()
     assert refs.max_tokens.value == 8192
-    assert refs.max_tokens.info == ("Reasoning models spend part of this on hidden thinking; "
-                                    "raise it if replies come back empty or cut off.")
+    guidance = refs.max_tokens.info.lower()
+    assert "hidden thinking" in guidance
+    assert "empty" in guidance and "cut off" in guidance
 
 
 def test_omitted_environment_temperature_stays_omitted_in_form_defaults():

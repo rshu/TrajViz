@@ -17,6 +17,8 @@ from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
+from .summary import attribution_summary_html
+
 _STYLE = """<style>
 .awe-view{font-size:14px;line-height:1.55;color:var(--body-text-color,#192331);min-width:0}
 .awe-view *{box-sizing:border-box}.awe-view h3{font-size:17px;margin:14px 0 8px}
@@ -133,7 +135,7 @@ def selected_case(run: Any, key: str | None) -> dict[str, Any] | None:
 
 
 def _task_context_html(task: Mapping[str, Any]) -> str:
-    body = "<details class='awe-panel' open><summary>Task and reference context</summary>"
+    body = "<details class='awe-panel'><summary>Task and reference context</summary>"
     problem = task.get("problem_statement")
     if isinstance(problem, str):
         body += "<div class='awe-task-text'>" + _markdown_report(problem) + "</div>"
@@ -179,6 +181,7 @@ def case_html(case: Mapping[str, Any] | None) -> str:
     if case.get("blame_status"):
         body += "<span class='awe-tag'>" + _escape(case["blame_status"]) + "</span>"
     body += "</p><p class='awe-muted'>Recorded diagnostic attribution; causal effects remain untested unless explicitly documented.</p>"
+    body += attribution_summary_html(dict(case))
     task = case.get("task")
     if isinstance(task, dict):
         body += _task_context_html(task)

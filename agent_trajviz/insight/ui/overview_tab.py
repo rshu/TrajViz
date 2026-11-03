@@ -178,7 +178,7 @@ def layout(overview_kpi_html: gr.HTML) -> OverviewRefs:
                         )
                         diag_window_limit = gr.Number(
                             label="Window limit (tokens)",
-                            info=f"Empty = detected, else an assumed {DEFAULT_CONTEXT_WINDOW_LIMIT:,}",
+                            info=f"Optional override. Empty uses detected capacity or a disclosed {DEFAULT_CONTEXT_WINDOW_LIMIT:,}-token assumption.",
                             value=None,
                             precision=0,
                             minimum=1,
@@ -402,15 +402,10 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
             value=dg["diag_pressure_dropdown"]["value"],
             visible=dg["diag_pressure_dropdown"]["visible"],
         ),
-        # Pre-fill only a window that was detected. Programmatic updates fire
-        # `.change`, which re-applies the field as a USER override — so a
-        # pre-filled 128k fallback would silently become "user-set", lose its
-        # "assumed" label, and bring back a percentage the export disproves.
-        "diag_window_limit": (
-            session.pressure_series.get("window_limit")
-            if session.pressure_series.get("window_source") in ("declared", "model")
-            else None
-        ),
+        # A detected value belongs in the context readout, not the override
+        # input: Gradio's programmatic .change would turn it into a user value
+        # and erase its reported/model-inferred basis on the next redraw.
+        "diag_window_limit": None,
         "diag_usage_snapshot": _snapshot_dropdown_update(session.steps),
         "diag_pressure_chart": dg["diag_pressure_chart"],
         "diag_file_chart": dg["diag_file_chart"],

@@ -43,7 +43,7 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
     """Build the full Gradio Blocks UI.
 
     ``allow_server_paths=False`` removes every input that names a path on the
-    serving machine (the Attribution tab's reference-data root), and the
+    serving machine (the AWE attribution view's reference-data root), and the
     callbacks ignore such a value even if a client sends one. Launch with it
     whenever the app is reachable from other machines.
     """
@@ -67,10 +67,10 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
         )
 
         sidebar_refs = sidebar.layout()
+        settings_refs = sidebar_refs.settings
         upload_refs = upload.layout()
-        with gr.Group() as native_settings:
-            settings_refs = settings.layout()
-        # Global health strip — above Overview/Patterns/… so it stays visible on every tab.
+        state_awe_mode = gr.State("attribution")
+        # Global health strip stays above the main navigation.
         overview_kpi_html = gr.HTML(
             "",
             visible=False,
@@ -79,29 +79,50 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
         with gr.Tabs(visible=True, elem_id="main-tabs") as main_tabs:
             overview = overview_tab.layout(overview_kpi_html)
             patterns = patterns_tab.layout()
-            attribution = attribution_tab.layout(allow_server_paths=allow_server_paths)
-            awe = awe_tab.layout(allow_server_paths=allow_server_paths)
+            with gr.Tab("AWE", elem_id="awe-workspace"):
+                gr.Markdown("Attribute a loaded trajectory or inspect saved evaluation results.")
+                with gr.Tabs(selected="attribution", elem_id="awe-workspace-tabs") as awe_source_tabs:
+                    with gr.Tab("Attribution", id="attribution",
+                                elem_id="awe-attribution-workspace") as attribution_workspace:
+                        attribution = attribution_tab.layout(allow_server_paths=allow_server_paths, embedded=True)
+                    with gr.Tab("Saved runs & evaluation", id="saved",
+                                elem_id="awe-saved-workspace") as saved_workspace:
+                        awe = awe_tab.layout(allow_server_paths=allow_server_paths, embedded=True)
             comparison = comparison_tab.layout()
             workflow = workflow_tab.layout()
             raw = raw_tab.layout()
             # Only when views were registered (by the application or a plugin).
             views = views_tab.layout()
 
-        def _workspace_visibility(run, is_awe=False):
-            native = not is_awe
+        def _workspace_visibility(run, mode="attribution", is_awe=False):
+            native = not (is_awe and mode == "saved")
             loaded = bool(run is not None and run.steps)
-            return (gr.update(visible=native), gr.update(visible=native), gr.update(visible=native),
+            return (gr.update(visible=native), gr.update(visible=native),
                     gr.update(visible=native and loaded), gr.update(visible=native and loaded))
 
-        # Saved AWE imports have their own controls and state. Keep the native
-        # upload/settings panels out of that workspace while retaining the brand.
+        def on_main_tab_select(run, awe_mode, *, tab_label):
+            mode = "saved" if awe_mode == "saved" else "attribution"
+            visibility = _workspace_visibility(run, mode, is_awe=tab_label == "AWE")
+            selection = gr.update(selected=mode) if tab_label == "AWE" else gr.skip()
+            return (*visibility, selection)
+
+        def on_awe_workspace_select(run, *, mode):
+            return (mode, *_workspace_visibility(run, mode, is_awe=True))
+
+        # The two AWE views retain their own data. Only the saved-run view hides
+        # native-session controls; returning to AWE restores the selected view.
         from functools import partial
+        workspace_outputs = [upload_refs.upload_accordion, sidebar_refs.analysis_sidebar,
+                             overview_kpi_html, upload_refs.summary_area]
         for tab in main_tabs.children:
             if isinstance(tab, gr.Tab):
-                tab.select(fn=partial(_workspace_visibility, is_awe=tab.label == "AWE"),
-                           inputs=shared.state_run,
-                           outputs=[upload_refs.upload_accordion, native_settings, sidebar_refs.analysis_sidebar,
-                                    overview_kpi_html, upload_refs.summary_area], api_name=False)
+                tab.select(fn=partial(on_main_tab_select, tab_label=tab.label),
+                           inputs=[shared.state_run, state_awe_mode],
+                           outputs=[*workspace_outputs, awe_source_tabs], api_name=False)
+        for workspace, mode in ((attribution_workspace, "attribution"), (saved_workspace, "saved")):
+            workspace.select(fn=partial(on_awe_workspace_select, mode=mode),
+                             inputs=shared.state_run,
+                             outputs=[state_awe_mode, *workspace_outputs], api_name=False)
 
         slots = merge_load_slots(
             main_tabs=main_tabs,

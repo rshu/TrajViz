@@ -59,6 +59,42 @@ def _label_provenance_html(data: dict) -> str:
     )
 
 
+def _label_coverage(data: dict, agg: dict, run=None) -> tuple[str, str]:
+    """Separate sidecar coverage, assistant classification and timeline rows."""
+    records = data.get("steps", [])
+
+    def classified(record):
+        return isinstance(record, dict) and all(
+            isinstance(record.get(key), str) and record[key] and record[key] != "unknown" for key in ("phase", "action")
+        )
+
+    labeled = sum(classified(record) for record in records)
+    unknown = len(records) - labeled
+    total = len(run.steps) if run is not None else len(records)
+    missing = total - len(records)
+    summary = f"{labeled}/{total} steps labeled; {unknown} unknown"
+    if missing > 0:
+        summary += f"; {missing} without label records"
+    assistants = [
+        record for record in records if isinstance(record, dict) and record.get("role", "assistant") == "assistant"
+    ]
+    users = [record for record in records if isinstance(record, dict) and record.get("role") == "user"]
+    defaults = sum(record.get("label_source") == "default" for record in users)
+    default_note = f" ({defaults} default labels)" if defaults else ""
+    other = len(records) - len(assistants) - len(users)
+    charted = sum(agg.get("phase_counts", {}).values())
+    timeline = agg.get("steps", [])
+    timeline_users = sum(record.get("role") == "user" for record in timeline)
+    details = (
+        f"Sidecar — assistant: {sum(classified(record) for record in assistants)}/{len(assistants)} classified; "
+        f"user records: {len(users)}{default_note}; other roles: {other}. "
+        f"Phase/action charts: {charted} classified assistant steps across {len(agg.get('phase_counts', {}))} phases. "
+        f"Timeline: {len(timeline)} steps, including {timeline_users} user prompts. "
+        "Unknown assistant labels remain in the sidecar and are excluded from these charts."
+    )
+    return summary, details
+
+
 def build_label_ui_payload(file_path: str, dark: bool = False, *, run=None) -> dict:
     """Build UI-facing label payload for a *_labeled.json label file."""
     data = load_labeled_json(file_path)
@@ -70,9 +106,8 @@ def build_label_ui_payload(file_path: str, dark: bool = False, *, run=None) -> d
     ad_fig = build_label_action_duration_chart(agg["action_durations"], agg["action_to_phase"], dark=dark)
     tl_fig = build_label_timeline_chart(agg["steps"], dark=dark)
 
-    n_steps = len(agg.get("steps", []))
+    coverage, coverage_details = _label_coverage(data, agg, run)
     phase_counts = agg.get("phase_counts", {})
-    n_phases = len(phase_counts)
 
     bar_segments = "".join(
         f"<span style='flex:{count};background:{LABEL_PHASE_COLORS.get(phase, '#6b7280')};height:8px;'"
@@ -102,7 +137,7 @@ def build_label_ui_payload(file_path: str, dark: bool = False, *, run=None) -> d
         "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;'>"
         "<span style='background:#059669;color:white;"
         "padding:4px 12px;border-radius:12px;font-size:13px;'>"
-        f"Labels loaded — {n_steps} steps, {n_phases} phases</span>"
+        f"Labels loaded — {coverage}</span>"
         "<a href='#' onclick=\"var t=document.querySelectorAll('button[role=tab]');"
         "for(var i=0;i<t.length;i++){if(t[i].textContent.trim()==='Overview'){t[i].click();break;}}"
         "var r=document.querySelector(&quot;.overview-section-radio input[value='Labels']&quot;);"
@@ -110,6 +145,8 @@ def build_label_ui_payload(file_path: str, dark: bool = False, *, run=None) -> d
         "return false;\" style='font-size:12px;color:#059669;text-decoration:underline;cursor:pointer;'>"
         "Jump to Labels</a>"
         "</div>"
+        "<div class='label-coverage' style='font-size:11px;line-height:1.45;color:var(--ov-muted);max-width:64rem;'>"
+        f"{html.escape(coverage_details)}</div>"
         f"<div style='display:flex;gap:4px;flex-wrap:wrap;'>{phase_chips}</div>"
         f"{phase_bar}"
         "</div>"

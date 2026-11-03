@@ -7,9 +7,19 @@ dashboard requires the `app` extra. Model judging is optional and uses your
 explicitly configured connection. Use versioned documentation that matches your
 installed package.
 
+The **AWE** tab includes **Attribution** for the session loaded in
+Overview, and **Saved runs & evaluation** for complete saved analyses and operations.
+
+For a loaded trajectory, open **Attribution → Task and reference data**, confirm
+its agent, task ID and matching reference folder, then choose **Diagnose failure**.
+The result starts with the finding, recorded evidence, a next check when supplied,
+and assessment limits. Attribution weights are not probabilities; unassessed
+capabilities have not passed a check. A trajectory alone cannot establish whether
+the solution is correct without matching reference and test evidence.
+
 ## Inspect a saved analysis
 
-In the dashboard's **AWE** tab, upload a run ZIP or JSON artifact, or select a
+In **AWE → Saved runs & evaluation**, upload a run ZIP or JSON artifact, or select a
 local run folder. AWE's immutable `data/runs/<run-id>/` directory is the best
 source for a complete analysis. Current `data/dossier/` outputs and their
 sibling reports also work. A local `faults.json` or `manifest.json` selects its
@@ -102,7 +112,7 @@ without configuring a model or external code location:
 agent-trajviz-awe operations
 ```
 
-Use the dashboard's **AWE Settings and operations** section for the reference
+Use the dashboard's **Evaluation settings and operations** section for the reference
 root, optional working data/cache root, output folder, agents, benchmark profile,
 execution context, judge model, base URL and request parameters. These controls
 are separate from the sidebar AI analysis settings. Server-path controls are

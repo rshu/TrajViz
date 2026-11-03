@@ -484,8 +484,19 @@ def format_context_pressure_html(
             )
         )
     note = stats.get("window_note") or ""
+    limit = stats.get("window_limit")
+    if not note and isinstance(limit, (int, float)) and limit > 0:
+        basis = {
+            "override": f"Capacity manually overridden to {limit:,.0f} tokens (user supplied).",
+            "declared": f"Capacity reported by the trajectory: {limit:,.0f} tokens.",
+            "model": (f"Capacity estimated from the model name ({limit:,.0f} tokens); "
+                      "the export does not report a context capacity."),
+            "default": (f"Capacity assumed: {limit:,.0f} tokens; "
+                        "the export does not report a capacity and its model has no catalog entry."),
+        }
+        note = basis.get(window_source, "")
     note_html = (
-        f"<div style='font-size:12px;color:var(--ov-muted);margin:-2px 0 8px;'>{html.escape(note)}</div>"
+        f"<div class='context-window-basis' style='font-size:12px;color:var(--ov-muted);margin:-2px 0 8px;'>{html.escape(note)}</div>"
         if note else ""
     )
     return (

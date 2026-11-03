@@ -56,6 +56,18 @@ CONVERGE_CSS = """
 }
 .cvg-report table th { white-space: nowrap; word-break: normal; overflow-wrap: normal; }
 .cvg-report table td { word-break: normal; overflow-wrap: normal; }
+/* Embedded reports follow the host theme; standalone reports retain the
+   Converge light/dark palette. Explicit cells override Gradio typography. */
+.cvg-report table th,
+.cvg-report table td,
+.gradio-container .cvg-report table th,
+.gradio-container .cvg-report table td {
+    color: var(--body-text-color, var(--cvg-text));
+}
+.cvg-report table th,
+.gradio-container .cvg-report table th {
+    background: var(--background-fill-secondary, var(--cvg-table-header-bg));
+}
 
 /* ── Report panel ───────────────────────────────────────────── */
 .cvg-report {
@@ -64,11 +76,11 @@ CONVERGE_CSS = """
     overflow-x: auto;
     font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
         'Noto Sans SC', 'Noto Sans CJK SC', sans-serif;
-    background: var(--cvg-card);
-    border: 1px solid var(--cvg-border);
+    background: var(--block-background-fill, var(--cvg-card));
+    border: 1px solid var(--block-border-color, var(--cvg-border));
     border-radius: 12px;
     padding: 1.5rem;
-    color: var(--cvg-text);
+    color: var(--body-text-color, var(--cvg-text));
     line-height: 1.6;
 }
 
@@ -76,7 +88,7 @@ CONVERGE_CSS = """
     font-size: 1.25rem;
     font-weight: 600;
     margin: 1.25rem 0 0.75rem;
-    color: var(--cvg-text);
+    color: var(--body-text-color, var(--cvg-text));
     border-bottom: 1px solid var(--cvg-border);
     padding-bottom: 0.4rem;
 }
@@ -85,7 +97,7 @@ CONVERGE_CSS = """
     font-size: 1rem;
     font-weight: 600;
     margin: 1rem 0 0.5rem;
-    color: var(--cvg-text);
+    color: var(--body-text-color, var(--cvg-text));
 }
 
 /* ── Outcome table ──────────────────────────────────────────── */
@@ -110,7 +122,7 @@ CONVERGE_CSS = """
 }
 
 .cvg-outcome-table tr:nth-child(even) td {
-    background: var(--cvg-table-alt-bg);
+    background: var(--background-fill-secondary, var(--cvg-table-alt-bg));
 }
 
 /* ── Milestone table ────────────────────────────────────────── */
@@ -135,7 +147,7 @@ CONVERGE_CSS = """
 }
 
 .cvg-milestone-table tr:nth-child(even) td {
-    background: var(--cvg-table-alt-bg);
+    background: var(--background-fill-secondary, var(--cvg-table-alt-bg));
 }
 
 /* ── Warning callout ────────────────────────────────────────── */
@@ -190,7 +202,7 @@ CONVERGE_CSS = """
 }
 
 .cvg-anchor-table tr:nth-child(even) td {
-    background: var(--cvg-table-alt-bg);
+    background: var(--background-fill-secondary, var(--cvg-table-alt-bg));
 }
 
 .cvg-anchor-metric {

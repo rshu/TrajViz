@@ -159,6 +159,8 @@ def infer_non_cache_input(
 
 def _parse_parts(parts_raw: list) -> tuple[list, list, int, bool, str]:
     """Parse raw parts into structured parts, tool calls, error count, reasoning flag, and preview."""
+    from .tool_failure import tool_call_failed
+
     parts = []
     tool_calls = []
     errors = 0
@@ -227,7 +229,7 @@ def _parse_parts(parts_raw: list) -> tuple[list, list, int, bool, str]:
             }
             parts.append(tc)
             tool_calls.append(tc)
-            if status == "error":
+            if tool_call_failed(tc):
                 errors += 1
             if not text_preview:
                 text_preview = f"[Tool: {tool_name}] {tc['title']}"

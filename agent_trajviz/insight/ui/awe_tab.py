@@ -58,10 +58,12 @@ def _operation_choices() -> list[tuple[str, str]]:
     return [(f"{row.get('group', 'AWE')} · {row['label']}", row["id"]) for row in available_operations()]
 
 
-def layout(*, allow_server_paths: bool = True) -> AWERefs:
-    with gr.Tab("AWE"):
-        gr.Markdown("Import a saved AWE run to inspect diagnoses, provenance graphs, symptoms and experimental recommendations. "
-                    "Viewing a saved run sends no model requests.")
+def layout(*, allow_server_paths: bool = True, embedded: bool = False) -> AWERefs:
+    """Build the saved-run viewer and operations, optionally in an existing workspace."""
+    with (gr.Column(min_width=0) if embedded else gr.Tab("AWE")):
+        gr.Markdown("**Inspect an existing evaluation:** import a saved AWE run, choose a case, "
+                    "then read its finding and evidence. To diagnose the current native session, "
+                    "use **Attribution**. Viewing a saved run sends no model requests.")
         run, settings, export_state = gr.State(None), gr.State(None), gr.State(None)
         with gr.Row():
             file = gr.File(label="Saved AWE run (.zip / .json)", file_types=[".zip", ".json"], type="filepath", scale=3, height=110)

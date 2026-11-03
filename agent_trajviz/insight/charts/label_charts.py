@@ -443,7 +443,11 @@ def build_label_timeline_chart(steps: list[dict], dark: bool = False) -> go.Figu
     fig.update_yaxes(
         tickvals=y_pos,
         ticktext=step_labels,
-        autorange="reversed",
+        # Keep half a row at each edge instead of allowing numeric-axis
+        # autorange padding to grow with long sessions. Recorded step indices
+        # are labels; they must not introduce gaps between displayed rows.
+        range=[len(steps) - 0.5, -0.5],
+        autorange=False,
     )
     _apply_dark(fig, dark)
     return fig

@@ -21,7 +21,7 @@ def load_labeled_json(path: str) -> dict:
     return data
 
 
-def aggregate_labels(data: dict) -> dict:
+def aggregate_labels(data: dict, *, _input_files: list[str] | None = None) -> dict:
     """Compute label aggregation statistics from labeled JSON data.
 
     Returns a dict with keys:
@@ -47,11 +47,14 @@ def aggregate_labels(data: dict) -> dict:
         s for s in all_steps
         if isinstance(s, dict) and s.get("role", "assistant") == "assistant"
     ]
+    def has_classification(step):
+        # Use the distribution/timeline predicate for summary counts too:
+        # an absent field already means unknown in those views.
+        return (step.get("phase", "unknown") != "unknown"
+                and step.get("action", "unknown") != "unknown")
+
     total = len(steps)
-    unknown = sum(
-        1 for s in steps
-        if s.get("phase") == "unknown" or s.get("action") == "unknown"
-    )
+    unknown = sum(not has_classification(step) for step in steps)
     classified = total - unknown
 
     # Phase (level 1) counts and durations
@@ -69,7 +72,7 @@ def aggregate_labels(data: dict) -> dict:
 
         # Skip "unknown" labels — they are counted in the KPI strip
         # but excluded from distribution charts and timeline
-        if phase == "unknown" or action == "unknown":
+        if not has_classification(s):
             continue
 
         phase_counts[phase] = phase_counts.get(phase, 0) + 1
@@ -81,11 +84,7 @@ def aggregate_labels(data: dict) -> dict:
             action_to_phase[action] = phase
 
     # Filter timeline steps to exclude unknown labels
-    classified_steps = [
-        s for s in steps
-        if s.get("phase", "unknown") != "unknown"
-        and s.get("action", "unknown") != "unknown"
-    ]
+    classified_steps = [s for s in steps if has_classification(s)]
 
     # Load user steps from the original trajectory for the timeline
     timeline_steps = list(classified_steps)
@@ -110,6 +109,9 @@ def aggregate_labels(data: dict) -> dict:
             from .parser import parse_steps
 
             raw = load_trajectory(traj_path)
+            if _input_files is not None:
+                from .._fileio import input_sources
+                _input_files.extend(input_sources(traj_path, raw))
             if "_error" not in raw:
                 traj_steps = parse_steps(raw)
                 embedded_user_indices = {

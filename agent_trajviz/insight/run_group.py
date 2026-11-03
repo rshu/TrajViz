@@ -25,6 +25,8 @@ from agent_trajviz.converge.alignment import (
 from agent_trajviz.converge.canonical import (
     CanonicalAction,
     _normalize_target,
+    _comparison_actions,
+    _ComparisonAction,
     assign_effect_labels,
     canonicalize_steps,
 )
@@ -195,7 +197,7 @@ def _file_touch_map(actions: list[CanonicalAction]) -> dict[str, dict[str, int]]
     return touches
 
 
-def _unify_path_keys(paths: Sequence[str]) -> dict[str, str]:
+def _unify_path_keys(paths: Sequence[str], *, exact_paths: set[str] | None = None) -> dict[str, str]:
     """Collapse relative vs absolute aliases onto the longer absolute path."""
     ordered = sorted(
         paths,
@@ -203,9 +205,11 @@ def _unify_path_keys(paths: Sequence[str]) -> dict[str, str]:
     )
     reps: list[str] = []
     mapping: dict[str, str] = {}
+    exact = exact_paths or set()
     for path in ordered:
         matches = [rep for rep in reps
-                   if path == rep or rep.endswith("/" + path) or path.endswith("/" + rep)]
+                   if path == rep or (path not in exact and rep not in exact
+                                      and (rep.endswith("/" + path) or path.endswith("/" + rep)))]
         # Merge only an unambiguous alias. A relative path matching several
         # absolute ones (every package has an `__init__.py`) used to be merged
         # into whichever came first, attributing one file's touches to another.
@@ -220,11 +224,13 @@ def _unify_path_keys(paths: Sequence[str]) -> dict[str, str]:
 def _merge_touch_aliases(
     touch_by_run: dict[str, dict[str, dict[str, int]]],
     run_ids: Sequence[str],
+    *,
+    exact_paths: set[str] | None = None,
 ) -> dict[str, dict[str, dict[str, int]]]:
     all_paths: set[str] = set()
     for touches in touch_by_run.values():
         all_paths.update(touches)
-    alias = _unify_path_keys(all_paths)
+    alias = _unify_path_keys(all_paths, exact_paths=exact_paths)
     merged: dict[str, dict[str, dict[str, int]]] = {rid: {} for rid in run_ids}
     for rid in run_ids:
         for path, cell in (touch_by_run.get(rid) or {}).items():
@@ -578,6 +584,8 @@ def build_behavioral_comparison(
     touch_by_run = _merge_touch_aliases(
         {rid: _file_touch_map(actions_by_id[rid]) for rid in ids},
         ids,
+        exact_paths={_normalize_target(action.target) for actions in actions_by_id.values() for action in actions
+                     if isinstance(action, _ComparisonAction) and action.action_type in {"FILE_READ", "FILE_WRITE"}},
     )
     sig_counts: Counter[tuple[str, str]] = Counter()
     for rid in ids:
@@ -819,6 +827,7 @@ def build_run_group_scorecard(
             )
             actions = canonicalize_steps(steps)
             assign_effect_labels(actions, steps, None)
+            actions = _comparison_actions(actions, raw)
         except Exception as exc:  # noqa: BLE001 — one run must not sink the scorecard
             logger.exception("could not analyse run %s", run_id)
             _error_row(f"could not be analysed ({type(exc).__name__})")
@@ -1331,6 +1340,9 @@ def _render_file_matrix_html(behavior: dict) -> str:
         "Unique reads are tinted by trajectory; mutual reads stay green. "
         + " · ".join(legend)
         + "</div>",
+        "<div style='font-size:12px;color:var(--ov-muted);margin-bottom:6px;'>"
+        "Paths inside each recorded session working directory are compared relative to it; other paths keep their existing identity."
+        "</div>",
     ]
     if not rows:
         parts.append("<div style='font-size:12px;color:var(--ov-muted);'>No file reads/writes across these runs.</div>")
@@ -1569,6 +1581,9 @@ def build_run_group_scorecard_html(
         f" &middot; N/A metrics lack evidence and are excluded from ranking"
         f"</div>"
     )
+    context_note = ("Context percentages may use capacity inferred from the model name or an assumed default "
+                    "when the session does not report it; these percentages are estimates.")
+    parts.append(f"<div style='font-size:12px;color:var(--ov-muted);margin-bottom:6px;'>{context_note}</div>")
     parts.append('<table class="cvg-outcome-table"><thead><tr>')
     headers = [
         "Condition",
@@ -1583,7 +1598,8 @@ def build_run_group_scorecard_html(
         "Compacts",
     ]
     for h in headers:
-        parts.append(f"<th>{html.escape(h)}</th>")
+        title = f" title='{html.escape(context_note, quote=True)}'" if h == "Peak ctx" else ""
+        parts.append(f"<th{title}>{html.escape(h)}</th>")
     parts.append("</tr></thead><tbody>")
 
     for row in rows:
