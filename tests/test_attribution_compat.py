@@ -8,6 +8,7 @@ isolated cache configuration installed by conftest.py.
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -48,9 +49,10 @@ def decaf(tmp_path, monkeypatch):
     config.requirements_path("case-1").write_text(json.dumps({"gold_patch": "synthetic diff"}))
     path = config.TRAJECTORY_DIR / "claude_code" / "case-1.json"
     path.parent.mkdir()
-    path.write_text('{"trajectory": []}')
+    path.write_text('{"trajectory": [{"role": "assistant", "content": "Synthetic workflow step"}]}')
     stamp = {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
-    modules["adapters"].load_normalized = lambda agent, name: SimpleNamespace(source=stamp, steps=[])
+    step = SimpleNamespace(step_id=0, text="Synthetic workflow step", output_excerpt=None)
+    modules["adapters"].load_normalized = lambda agent, name: SimpleNamespace(source=stamp, steps=[step])
     calls = []
     def detect(name, agent, *, use_judge=None):
         calls.append(("detect", use_judge))
@@ -87,6 +89,21 @@ def test_modern_api_returns_real_objective_blame_without_model_cache_reads(decaf
     assert result.scorecard[3].blamed
     assert decaf.calls == [("detect", False), ("blame", None)]
     assert result.notes and "without cached LLM verdicts" in result.notes[0]
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("normalized", [None, SimpleNamespace(steps=[])])
+def test_unrecognized_or_empty_normalization_never_issues_blame(decaf, normalized, legacy):
+    decaf.modules["adapters"].load_normalized = lambda agent, name: normalized
+    if legacy:
+        def legacy_record(agent, name, *, use_judge=None, adjudicate=None):
+            pytest.fail("an unsupported trajectory must not reach the legacy dossier")
+        decaf.modules["dossier"].case_record = legacy_record
+    result = seam.diagnose(agent="claude_code", instance_id="case-1", source_path=decaf.path)
+    assert result.available is False
+    assert result.mode == "reference" and result.primary is None and result.faults == []
+    assert "could not extract workflow steps" in result.reason
+    assert decaf.calls == []
 
 
 def test_legacy_api_keeps_per_call_provenance_controls(decaf, monkeypatch):
@@ -263,3 +280,34 @@ def test_real_modern_dependency_uses_only_objective_evidence(instance_id, monkey
     assert result.used_judge is False and result.arbiter is None
     assert result.primary is not None and result.faults
     assert any("without cached LLM verdicts" in note for note in result.notes)
+
+
+def test_native_claude_session_with_no_backend_steps_has_no_public_verdict(tmp_path):
+    if not seam.DECAF_AVAILABLE:
+        pytest.skip("optional attribution dependency unavailable")
+    import agent_trajviz as tv
+    from agent_trajviz import attribution as public_attribution
+    from awe.adapters import load_normalized
+
+    fixtures = Path(__file__).resolve().parent / "fixtures"
+    root = tmp_path / "reference"
+    shutil.copytree(fixtures / "reference", root)
+    instance_id = "django__django-11477"
+    canonical = root / "data" / "trajectory" / "claude_code"
+    (canonical / (instance_id + ".json")).unlink()
+    native = canonical / (instance_id + ".jsonl")
+    shutil.copyfile(fixtures / "native_claude_code" / (instance_id + ".jsonl"), native)
+    run = tv.load(native)
+    assert len(run.steps) > 0
+    try:
+        seam.configure(root)
+        normalized = load_normalized("claude_code", instance_id)
+        if normalized is not None and normalized.steps:
+            pytest.skip("optional backend already supports native Claude sessions")
+        result = public_attribution.diagnose(run, agent="claude_code", instance_id=instance_id,
+                                            reference_root=root)
+    finally:
+        seam.configure(seam._DEFAULT_ROOT)
+    assert result["available"] is False
+    assert result["primary"] is None and result["faults"] == []
+    assert "could not extract workflow steps" in result["reason"]

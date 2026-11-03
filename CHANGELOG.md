@@ -7,6 +7,12 @@ change the public API (the names exported from `agent_trajviz`).
 
 ## [Unreleased]
 
+### Fixed
+
+- Refuse failure attribution when the optional backend cannot extract workflow
+  steps from a native session, instead of treating missing parser evidence as
+  workflow failures.
+
 ## [0.3.2] - 2026-11-02
 
 ### Fixed
