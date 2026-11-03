@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import shutil
@@ -10,6 +11,7 @@ import subprocess
 from pathlib import Path, PurePosixPath
 
 PAGES = ("docs/index.md", "docs/quickstart.md", "docs/guides.md", "docs/data-reference.md")
+OPTIONAL_PAGES = ("docs/awe.md",)
 SCRIPTS = (".github/scripts/build_docs.py", ".github/scripts/check_docs_examples.py")
 
 
@@ -20,7 +22,22 @@ def _git(root: Path, *args: str) -> bytes:
 def _allowed(name: str) -> bool:
     path = PurePosixPath(name)
     return (not path.is_absolute() and ".." not in path.parts and "\\" not in name
-            and (name in PAGES or name in SCRIPTS or name.startswith(".github/docs/")))
+            and (name in (*PAGES, *OPTIONAL_PAGES) or name in SCRIPTS or name.startswith(".github/docs/")))
+
+
+def _required_pages(builder: bytes) -> tuple[str, ...]:
+    """Read the selected builder's declared guides without executing source code."""
+    for node in ast.parse(builder).body:
+        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "GUIDES"
+                                               for target in node.targets):
+            guides = ast.literal_eval(node.value)
+            if not isinstance(guides, (tuple, list)) or any(not isinstance(name, str) for name in guides):
+                raise ValueError("Documentation builder must declare literal guide names")
+            names = tuple(f"docs/{name}.md" for name in guides)
+            if any(name not in (*PAGES, *OPTIONAL_PAGES) for name in names):
+                raise ValueError("Documentation builder requires a guide outside the maintained allowlist")
+            return tuple(dict.fromkeys((*PAGES, *names)))
+    return PAGES
 
 
 def prepare(root: Path, tag: str, output: Path, bootstrap_version: str = "0.3.1", *, current_guides: bool = False) -> dict:
@@ -33,6 +50,9 @@ def prepare(root: Path, tag: str, output: Path, bootstrap_version: str = "0.3.1"
     complete = all(name in release_files for name in (*PAGES, *SCRIPTS))
     output.mkdir(parents=True, exist_ok=True)
     if complete and not current_guides:
+        required = _required_pages(_git(root, "show", f"{tag}:{SCRIPTS[0]}"))
+        if any(name not in release_files for name in required):
+            raise ValueError("The published tag is missing a guide required by its documentation builder")
         for name in release_files:
             target = output / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -42,7 +62,9 @@ def prepare(root: Path, tag: str, output: Path, bootstrap_version: str = "0.3.1"
     elif current_guides or tag == f"v{bootstrap_version}":
         # This existing release predates the docs site. Its initial guides are
         # validated against the published package before they are archived.
-        files = [root / name for name in (*PAGES, *SCRIPTS)]
+        required = _required_pages((root / SCRIPTS[0]).read_bytes())
+        files = [root / name for name in (*required, *SCRIPTS)]
+        files.extend(root / name for name in OPTIONAL_PAGES if name not in required and (root / name).exists())
         templates = root / ".github/docs"
         if templates.is_dir():
             files.extend(path for path in templates.rglob("*") if path.is_file())

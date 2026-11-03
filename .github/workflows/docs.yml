@@ -93,8 +93,19 @@ jobs:
             uv run --locked python .github/scripts/release_docs_source.py \
               --tag "v$release_version" --output "$source_dir" "${source_args[@]}"
             uv venv --python 3.13 "$release_env"
-            uv pip install --python "$release_env/bin/python" \
-              --index-url https://pypi.org/simple "agent-trajviz[app]==$release_version" pdoc==16.0.0
+            for install_attempt in 1 2 3 4 5 6; do
+              if uv pip install --python "$release_env/bin/python" \
+                --index-url https://pypi.org/simple --refresh-package agent-trajviz \
+                "agent-trajviz[app]==$release_version" pdoc==16.0.0; then
+                break
+              fi
+              if [ "$install_attempt" -eq 6 ]; then
+                echo "::error::Could not install published agent-trajviz==$release_version after 6 attempts."
+                exit 1
+              fi
+              echo "Published-package install attempt $install_attempt failed; retrying in 10 seconds."
+              sleep 10
+            done
             package_root=$("$release_env/bin/python" -I -c 'import sysconfig; print(sysconfig.get_path("purelib"))')
             "$release_env/bin/python" -I "$source_dir/.github/scripts/build_docs.py" \
               --docs-root "$source_dir/docs" --package-root "$package_root" \
