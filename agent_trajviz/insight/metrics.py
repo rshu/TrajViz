@@ -700,16 +700,26 @@ def _compute_timing_metrics(steps: list[dict]) -> dict:
     ``time_to_first_token`` / ``time_to_last_token`` are **response latencies**,
     not token-level measurements despite their names: each is the first user
     message's creation stamp to the first (resp. last) assistant message's
-    *completion* stamp, so the whole turn is inside the figure. No supported
-    export records streaming or first-delta timing — the step model carries
-    only ``time_created_ms``/``time_completed_ms`` — so a true time-to-first-token
-    is not computable here. The names are kept because callers already read them.
+    *completion* stamp, so the whole turn is inside the figure. The first
+    response is the first assistant message that began and completed at or
+    after that user message. One that began earlier answered something else,
+    and counting it gave a negative or a zero latency: a Codex sub-agent's
+    first task arrives as a non-user message, and a turn cut off before
+    ``task_complete`` is taken to end where the next message begins, which
+    can be that user message. "At" keeps a reply that whole-second stamps put
+    in its question's second. A message without a creation stamp is judged by
+    its completion alone, since nothing shows it began earlier. With no such
+    message ``time_to_first_token`` is ``None``; it is never negative.
+    No supported export records streaming or first-delta timing — the step
+    model carries only ``time_created_ms``/``time_completed_ms`` — so a true
+    time-to-first-token is not computable here. The names are kept because
+    callers already read them.
 
     Output throughput is :func:`output_throughput` over every assistant step.
     """
     first_user_created = None
-    first_asst_completed = None
-    last_asst_completed = None
+    # (created or None, completed) of each assistant step with a completion, in step order.
+    asst_spans: list[tuple[int | float | None, int | float]] = []
 
     for s in steps:
         role = s.get("role", "")
@@ -718,9 +728,16 @@ def _compute_timing_metrics(steps: list[dict]) -> dict:
         if role == "user" and first_user_created is None and isinstance(t_created, (int, float)):
             first_user_created = t_created
         if role == "assistant" and isinstance(t_completed, (int, float)):
-            if first_asst_completed is None:
-                first_asst_completed = t_completed
-            last_asst_completed = t_completed
+            began = t_created if isinstance(t_created, (int, float)) else None
+            asst_spans.append((began, t_completed))
+
+    first_asst_completed = None
+    if first_user_created is not None:
+        first_asst_completed = next((
+            ended for began, ended in asst_spans
+            if ended >= first_user_created and (began is None or began >= first_user_created)
+        ), None)
+    last_asst_completed = asst_spans[-1][1] if asst_spans else None
 
     result: dict = {}
     if first_user_created is not None and first_asst_completed is not None:
@@ -1360,11 +1377,22 @@ def compute_health_verdict(metrics: dict, step_analytics: list[dict]) -> list[di
     # Failed tool calls — tool_fail counts failing tool CALLS (already reflected
     # in Tool Success); label accordingly rather than as "error steps".
     failed_calls = metrics.get("tool_fail", 0)
+    # A failed model request fails no tool call. Loaders record it as a step
+    # with finish "error" (a system error to step_errors); without counting it
+    # here, a run whose only request failed rated "good".
+    finishes = metrics.get("finish_breakdown")
+    failed_requests = finishes.get("error", 0) if isinstance(finishes, dict) else 0
+    error_count = failed_calls + failed_requests
     if metrics.get("tool_unknown_outcomes", 0):
         status, detail = "unavailable", (
             f"{failed_calls} observed failed call(s); "
             f"{metrics['tool_unknown_outcomes']} tool outcomes were not recorded"
         )
+    elif failed_requests:
+        status = "warn" if error_count <= 2 else "bad"
+        detail = f"{failed_requests} failed model request(s)"
+        if failed_calls:
+            detail = f"{failed_calls} failed tool call(s), {detail}"
     elif failed_calls == 0:
         status, detail = "good", "No failed tool calls"
     elif failed_calls <= 2:
@@ -1372,7 +1400,8 @@ def compute_health_verdict(metrics: dict, step_analytics: list[dict]) -> list[di
     else:
         status, detail = "bad", f"{failed_calls} failed tool calls — agent may be struggling"
     verdicts.append({"metric": "Errors", "status": status,
-                     "label": "N/A" if status == "unavailable" else str(failed_calls), "detail": detail})
+                     "label": "N/A" if status == "unavailable" else str(error_count),
+                     "detail": detail})
 
     return verdicts
 

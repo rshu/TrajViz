@@ -358,7 +358,7 @@ def _judge_language(language: str | None = None) -> str:
     return "Simplified Chinese (Mandarin)" if is_chinese(lang) else lang
 
 
-def _judge_error_text(exc: BaseException) -> str:
+def _judge_error_text(exc: BaseException, config: AnalysisLLMConfig | None = None) -> str:
     """Judge-failure text safe to render in the Issues panel.
 
     The chat path already scrubs this (``assistant._public_http_error``); the
@@ -372,10 +372,13 @@ def _judge_error_text(exc: BaseException) -> str:
     only debuggable signal left once HTTP text is gone, so they pass through —
     but RequestException is checked first, because requests.JSONDecodeError is
     both a RequestException and a ValueError.
+
+    *config* is the judged connection; it picks the remedy wording (Settings fields
+    or ANALYZE_* variables) as in the chat path.
     """
     if isinstance(exc, ValueError) and not isinstance(exc, requests.RequestException):
         return str(exc)[:200]
-    return _public_http_error(exc)
+    return _public_http_error(exc, config)
 
 
 def iter_judge_overview_issues(
@@ -414,7 +417,7 @@ def iter_judge_overview_issues(
             )
             working[i] = working[i].with_judgment(judgment)
         except Exception as exc:  # noqa: BLE001 — keep other issues judging
-            errors.append(f"{working[i].title}: {_judge_error_text(exc)}")
+            errors.append(f"{working[i].title}: {_judge_error_text(exc, cfg)}")
 
     yield JudgeProgress(
         issues=list(working),

@@ -541,6 +541,19 @@ def _diagnose_locked(*, agent, instance_id, source_path, fmt, expected_sha,
     optional_fingerprints = [_sha256(path) for path in optional_evidence]
     used_judge = False
     try:
+        # Content identity cannot establish parser support. Some backend adapters
+        # accept an unfamiliar native session as an empty trajectory; scoring it
+        # would mistake missing evidence for workflow failures. Require at least
+        # one normalized step before either dossier generation may issue blame.
+        from awe.adapters import load_normalized
+
+        normalized = load_normalized(agent, instance_id)
+        if normalized is None or not normalized.steps:
+            return AttributionResult(
+                False, mode="reference", agent=agent, instance_id=instance_id,
+                reason="the attribution backend could not extract workflow steps "
+                       "from this trajectory; no gold-grounded verdict is issued. "
+                       "Use a trajectory format supported by the backend.")
         if _supports_layer_controls(case_record):
             # Legacy attribution backend: use its full dossier only with verified cached
             # verdicts and its explicit per-call controls.

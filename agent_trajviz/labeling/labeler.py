@@ -7,6 +7,11 @@ one record per parsed step, keyed by ``index`` (the parser's index) and
 ``raw_index`` (the position in the source file), so every label maps back to
 the step it describes. ``--assistant-only`` keeps just the assistant records.
 
+A step whose model call fails twice is labeled unknown. When the API rejects the
+first three steps sent to it (HTTP 401, 403 or 404), or every step sent to the
+model fails, the command writes nothing and exits with status 2: a bad key or URL
+must not replace a good sidecar with an all-unknown one, nor pass for success.
+
 Usage:
     agent-trajviz-label trajectory.json
     agent-trajviz-label trajectory.json -o labels.json --assistant-only
@@ -19,6 +24,7 @@ import logging
 import os
 import sys
 import time
+from collections import Counter
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -48,6 +54,40 @@ SIDECAR_SCHEMA = "trajectory_labels.v2"
 
 class OutputSafetyError(ValueError):
     """Raised when the label output would replace the source trajectory."""
+
+
+class LabelingAborted(RuntimeError):
+    """Raised, before anything is written, when the model calls fail rather than answer.
+
+    Writing on would replace any existing sidecar with one whose assistant steps are
+    all unknown, and the command would report success.
+    """
+
+
+#: The run stops when the first this-many steps sent to the model are all rejected.
+_REJECTION_WINDOW = 3
+#: Failures that retrying cannot fix: a bad key, a missing permission, a wrong URL or model.
+_REJECTED = {f"HTTPError {status}": status for status in (401, 403, 404)}
+_ABORT_REJECTED_KEY = (
+    "labeling aborted: the API rejected the first {count} requests (HTTP {status}); "
+    "check LABEL_API_KEY / --api-key and LABEL_BASE_URL / --base-url"
+)
+_ABORT_REJECTED_URL = (
+    "labeling aborted: the API rejected the first {count} requests (HTTP {status}); "
+    "check LABEL_BASE_URL / --base-url and LABEL_MODEL / --model"
+)
+_ABORT_ALL_FAILED = (
+    "labeling aborted: all {count} assistant steps failed ({summary}); no sidecar written"
+)
+_SOME_FAILED = "%d of %d assistant steps could not be classified (%s)"
+#: What :func:`_failure_name` calls a request whose output budget ran out before any answer.
+_BUDGET_SPENT = llm.LabelBudgetExhausted.__name__
+#: Appended to both summaries when a step ran out of output budget: the class name alone
+#: does not say what to change.
+_BUDGET_REMEDY = (
+    "; raise --max-tokens / LABEL_MAX_TOKENS "
+    "(reasoning models spend the budget on hidden thinking)"
+)
 
 
 def _ensure_output_is_not_input(trajectory_path: str | Path, output_path: str | Path) -> None:
@@ -110,28 +150,63 @@ def _serialize_step(step: dict[str, Any], *, fallback_index: int, label: dict[st
     }
 
 
+def _failure_name(exc: Exception) -> str:
+    """Name a failed model call by its error class, plus the status of an HTTP error.
+
+    ``requests``' ``HTTPError`` carries its response, and ``"HTTPError 401"`` tells a
+    rejected key from a wrong URL (404) or an outage (5xx). The message is never used:
+    HTTP errors echo the URL, and provider errors can echo prompt text.
+    """
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if isinstance(status, int):
+        return f"{type(exc).__name__} {status}"
+    return type(exc).__name__
+
+
 def _classify(step: dict[str, Any], *, system_prompt: str, valid: tuple[set[str], set[str], dict[str, str]],
               base_url: str, api_key: str, model: str, provider: str, temperature: float | None,
-              max_tokens: int | None, max_content_chars: int) -> dict[str, str] | None:
-    """Ask the model for one assistant step's label; retry once, then give up."""
+              max_tokens: int | None,
+              max_content_chars: int) -> tuple[dict[str, str] | None, str | None]:
+    """Ask the model for one assistant step's label; retry once, then give up.
+
+    Returns ``(label, None)`` when the model answered (an unusable answer parses to
+    unknown), or ``(None, failure)`` when both attempts raised, with the last error
+    named as :func:`_failure_name` names it.
+    """
     user_message = build_step_message(step, max_chars=max_content_chars)
+    failure = None
     for attempt in range(2):
         try:
             response = llm.call_llm(
                 base_url=base_url, api_key=api_key, model=model, system_prompt=system_prompt,
                 user_message=user_message, provider=provider, temperature=temperature, max_tokens=max_tokens,
             )
-            return parse_label_response(response, *valid)
+            return parse_label_response(response, *valid), None
         except Exception as exc:  # network, HTTP or response-shape errors from the provider
             # HTTP errors can echo endpoint credentials; malformed provider
-            # responses can echo prompt text. Log the error class, not its body.
-            error_type = type(exc).__name__
+            # responses can echo prompt text. Log the error class (and an HTTP
+            # status), not its message or body.
+            failure = _failure_name(exc)
             if attempt == 0:
-                logger.warning("labeling index %s failed (%s); retrying", step.get("index"), error_type)
+                logger.warning("labeling index %s failed (%s); retrying", step.get("index"), failure)
                 time.sleep(1)
             else:
-                logger.error("labeling index %s failed again (%s); labeled unknown", step.get("index"), error_type)
-    return None
+                logger.error("labeling index %s failed again (%s); labeled unknown", step.get("index"), failure)
+    return None, failure
+
+
+def _stop_if_rejected(failures: list[str | None]) -> None:
+    """Raise :class:`LabelingAborted` when every one of the first calls was rejected.
+
+    401, 403 and 404 mean a bad key, a missing permission or a wrong URL or model, which
+    no later step will get past; labeling on would only file every step as unknown.
+    """
+    statuses = [_REJECTED.get(failure) if failure else None for failure in failures]
+    if None in statuses:
+        return
+    status = statuses[-1]  # the latest status picks the remedy if they differ
+    text = _ABORT_REJECTED_URL if status == 404 else _ABORT_REJECTED_KEY
+    raise LabelingAborted(text.format(count=len(failures), status=status))
 
 
 def label_trajectory(
@@ -155,6 +230,10 @@ def label_trajectory(
 
     Refuses (``OutputSafetyError``) to write over the trajectory itself, and
     replaces an existing sidecar only once the new one is completely written.
+    Raises :class:`LabelingAborted`, writing nothing, when the API rejects the
+    first three steps sent to it (HTTP 401, 403 or 404) or when every step sent
+    to the model failed; when only some failed, the sidecar is written and a
+    warning says how many.
     """
     _ensure_output_is_not_input(trajectory_path, output_path)
     taxonomy_file = Path(taxonomy_path) if taxonomy_path else DEFAULT_TAXONOMY
@@ -170,6 +249,7 @@ def label_trajectory(
 
     labeled_steps: list[dict[str, Any]] = []
     assistant_seen = assistant_unknown = default_count = 0
+    failures: list[str | None] = []  # one per step sent to the model: None, or how it failed
     for position, step in enumerate(all_steps):
         role = str(step.get("role", "unknown") or "unknown").lower()
         if role == "user":
@@ -180,11 +260,16 @@ def label_trajectory(
             default_count += 1
         else:
             assistant_seen += 1
-            classified = None if _is_empty_assistant_step(step) else _classify(
-                step, system_prompt=system_prompt, valid=valid, base_url=base_url, api_key=api_key,
-                model=model, provider=provider, temperature=temperature, max_tokens=max_tokens,
-                max_content_chars=max_content_chars,
-            )
+            classified = None
+            if not _is_empty_assistant_step(step):
+                classified, failure = _classify(
+                    step, system_prompt=system_prompt, valid=valid, base_url=base_url,
+                    api_key=api_key, model=model, provider=provider, temperature=temperature,
+                    max_tokens=max_tokens, max_content_chars=max_content_chars,
+                )
+                failures.append(failure)
+                if len(failures) == _REJECTION_WINDOW:
+                    _stop_if_rejected(failures)
             label = classified or dict(UNKNOWN_LABEL)
             label_source = "llm" if "unknown" not in (label["phase"], label["action"]) else "fallback"
             if label_source == "fallback":
@@ -201,6 +286,19 @@ def label_trajectory(
         labeled_steps = [s for s in labeled_steps if s.get("role") == "assistant"]
         if len(labeled_steps) != assistant_count:
             raise RuntimeError("Internal error: assistant-only output lost assistant records")
+        # The counts describe the records written; no user or other-role record is left.
+        user_count = default_count = 0
+    failed = [failure for failure in failures if failure is not None]
+    if failed:
+        # Each kind of failure with its count, most frequent first: "HTTPError 503 ×26".
+        kinds = Counter(failed)
+        summary = ", ".join(f"{name} ×{count}" for name, count in kinds.most_common())
+        remedy = _BUDGET_REMEDY if _BUDGET_SPENT in kinds else ""
+        # Both summaries count the steps sent to the model; an empty assistant step never is.
+        if len(failed) == len(failures):
+            message = _ABORT_ALL_FAILED.format(count=len(failures), summary=summary)
+            raise LabelingAborted(message + remedy)
+        logger.warning(_SOME_FAILED + remedy, len(failed), len(failures), summary)
 
     output = {
         "schema_version": SIDECAR_SCHEMA,
@@ -238,7 +336,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--provider", default=None, choices=("openai", "anthropic"),
                         help="API flavour (default: LABEL_PROVIDER, else openai)")
     parser.add_argument("--temperature", type=float, default=None, help="Sampling temperature (default: 0.3)")
-    parser.add_argument("--max-tokens", type=int, default=None, help="Max response tokens (default: 1024)")
+    parser.add_argument("--max-tokens", type=int, default=None, help="Max response tokens (default: 4096)")
     parser.add_argument("--max-content-chars", type=int, default=8000, help="Max characters per step sent")
     parser.add_argument("--delay", type=float, default=0.0, help="Seconds to wait between model calls")
     parser.add_argument("--taxonomy", default=None, help="Taxonomy file (default: the bundled taxonomy.md)")
@@ -261,7 +359,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     model = args.model or os.getenv("LABEL_MODEL", "")
     provider = args.provider or os.getenv("LABEL_PROVIDER", "openai")
     temperature = args.temperature if args.temperature is not None else llm.env_float("LABEL_TEMPERATURE", 0.3)
-    max_tokens = args.max_tokens if args.max_tokens is not None else llm.env_int("LABEL_MAX_TOKENS", 1024)
+    max_tokens = args.max_tokens if args.max_tokens is not None else llm.env_int("LABEL_MAX_TOKENS", 4096)
     for value, name, flag in ((base_url, "LABEL_BASE_URL", "--base-url"), (api_key, "LABEL_API_KEY", "--api-key"),
                               (model, "LABEL_MODEL", "--model")):
         if not value:
@@ -281,6 +379,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     except OutputSafetyError as exc:
         parser.error(str(exc))
+    except LabelingAborted as exc:
+        print(f"agent-trajviz-label: {exc}", file=sys.stderr)
+        return 2
     except (ValueError, OSError) as exc:
         print(f"agent-trajviz-label: {exc}", file=sys.stderr)
         return 1

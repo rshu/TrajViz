@@ -4,6 +4,9 @@ import os
 import unittest
 from unittest.mock import patch
 
+import requests
+
+from agent_trajviz.insight import assistant
 from agent_trajviz.insight.issue_judge import (
     judge_issue_fix,
     judge_overview_issues,
@@ -23,7 +26,7 @@ from agent_trajviz.insight.presenters.issues import (
 from tests.overview_session_stub import overview_session
 
 
-def _cfg() -> AnalysisLLMConfig:
+def _cfg(*, source: str = "analyze") -> AnalysisLLMConfig:
     return AnalysisLLMConfig(
         base_url="https://example.test/v1",
         api_key="test-key",
@@ -32,7 +35,18 @@ def _cfg() -> AnalysisLLMConfig:
         temperature=0.0,
         max_tokens=512,
         timeout=30,
-        source="analyze",
+        source=source,
+    )
+
+
+def _issue() -> OverviewIssue:
+    return OverviewIssue(
+        kind="error",
+        title="Bash: exit 1 (1×)",
+        detail="fail",
+        why="no recovery",
+        steps=(1,),
+        source_id="fail:0",
     )
 
 
@@ -219,6 +233,32 @@ class JudgeMockTests(unittest.TestCase):
         self.assertTrue(snaps[2].finished)
         self.assertEqual(calls["n"], 2)
         self.assertTrue(all(i.judgment for i in snaps[2].issues))
+
+    def test_judge_error_names_the_settings_field_for_a_settings_connection(self):
+        session = _session(steps=[{"index": 1, "role": "assistant", "tool_calls": []}])
+        response = requests.models.Response()
+        response.status_code = 401
+
+        def chat_fn(config, system, messages):
+            raise requests.HTTPError("401 Client Error", response=response)
+
+        _, errors = judge_overview_issues(
+            session, [_issue()], config=_cfg(source="session"), chat_fn=chat_fn,
+        )
+        self.assertEqual(errors, [
+            "Bash: exit 1 (1×): "
+            "The analysis API rejected the key (HTTP 401). Check the API key in Settings.",
+        ])
+
+    def test_judge_reports_an_exhausted_output_budget(self):
+        session = _session(steps=[{"index": 1, "role": "assistant", "tool_calls": []}])
+
+        def chat_fn(config, system, messages):
+            raise assistant.OutputBudgetExhausted(2048)
+
+        _, errors = judge_overview_issues(session, [_issue()], config=_cfg(), chat_fn=chat_fn)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("entire output budget of 2048 tokens", errors[0])
 
     def test_render_without_judgment_has_no_change_fix(self):
         html = render_overview_issues_html([

@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .._endpoints import anthropic_messages_url
 from .._llm_http import env_json_dict, merge_llm_headers
 from .._redact import redact
 
@@ -88,6 +89,21 @@ def env_int(name: str, default: int) -> int:
         return default
 
 
+class LabelBudgetExhausted(RuntimeError):
+    """The model reached the output token limit before writing any answer text.
+
+    Reasoning models spend the budget on hidden thinking first, so a small limit
+    yields an empty reply. Raising instead of returning ``""`` lets the labeler
+    retry the step and report it, rather than file it silently as unknown.
+    ``limit`` is the ``max_tokens`` the request carried (``None`` when the request
+    left the limit to the provider).
+    """
+
+    def __init__(self, limit: int | None) -> None:
+        super().__init__("model hit the output token limit")
+        self.limit = limit
+
+
 def call_llm(
     base_url: str,
     api_key: str,
@@ -103,9 +119,10 @@ def call_llm(
     """Send one system + user message pair and return the model's text answer.
 
     *provider* is ``"openai"`` (any OpenAI-compatible ``/chat/completions``
-    endpoint) or ``"anthropic"`` (the ``/messages`` API). Both messages are
+    endpoint) or ``"anthropic"`` (the ``/v1/messages`` API). Both messages are
     redacted first (see :mod:`agent_trajviz._redact`): step text can carry
-    credentials the agent printed.
+    credentials the agent printed. Raises :class:`LabelBudgetExhausted` when the
+    model reached the token limit before writing any answer text.
 
     *headers* are extra gateway HTTP headers. When omitted, ``LABEL_HEADERS``
     from the environment is used.
@@ -147,12 +164,14 @@ def _call_openai(
         timeout=timeout,
     )
     resp.raise_for_status()
-    content = resp.json()["choices"][0]["message"]["content"]
-    if content is None:
-        return ""
-    if not isinstance(content, str):
+    choice = resp.json()["choices"][0]
+    content = choice["message"]["content"]
+    if content is not None and not isinstance(content, str):
         raise ValueError("OpenAI response content is not text")
-    return content.strip()
+    text = (content or "").strip()
+    if not text and choice.get("finish_reason") == "length":
+        raise LabelBudgetExhausted(max_tokens)
+    return text
 
 
 def _call_anthropic(
@@ -166,12 +185,12 @@ def _call_anthropic(
         "model": model,
         "system": system_prompt,
         "messages": [{"role": "user", "content": user_message}],
-        "max_tokens": max_tokens or 1024,
+        "max_tokens": max_tokens or 4096,
     }
     if temperature is not None:
         body["temperature"] = temperature
     resp = requests.post(
-        f"{base_url.rstrip('/')}/messages",
+        anthropic_messages_url(base_url),
         json=body,
         headers=merge_llm_headers(
             extra_headers,
@@ -180,7 +199,11 @@ def _call_anthropic(
         timeout=timeout,
     )
     resp.raise_for_status()
-    texts = [b["text"] for b in resp.json().get("content", []) if b.get("type") == "text"]
+    data = resp.json()
+    texts = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
+    text = "\n".join(texts).strip()
+    if not text and data.get("stop_reason") == "max_tokens":
+        raise LabelBudgetExhausted(body["max_tokens"])
     if not texts:
         raise ValueError("Anthropic response contained no text blocks")
-    return "\n".join(texts).strip()
+    return text

@@ -8,7 +8,9 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import requests
+from urllib3.exceptions import ReadTimeoutError
 
+from .._endpoints import anthropic_messages_url
 from .._llm_http import merge_llm_headers
 from .._redact import redact
 from .analytics import compute_step_analytics
@@ -360,11 +362,58 @@ def _verdict_lines(verdicts: list[dict]) -> list[str]:
     return lines
 
 
+#: Most agent rows the brief lists (see ``_agent_lines``).
+_AGENT_LINE_CAP = 24
+#: Stands in for the agents past the cap; only integers are interpolated.
+_AGENTS_OMITTED_LINE = (
+    "- … {omitted} more sub-agents not listed (showing the {shown} longest-running): "
+    "{steps} assistant steps, {tokens} tok, {tools} tools, {errors} errors in total"
+)
+#: Most insight lines the brief lists (see ``_agent_lines``). An agent raises at
+#: most two (no prompt caching, error rate) and only one agent can take over 60%
+#: of the tokens or 70% of the tool calls, so a session of up to
+#: ``_AGENT_LINE_CAP`` agents never exceeds it and keeps every insight.
+_INSIGHT_LINE_CAP = 2 * _AGENT_LINE_CAP + 2
+#: Stands in for the insights past the cap; only an integer is interpolated.
+_INSIGHTS_OMITTED_LINE = "- … {omitted} more insights not listed"
+
+
 def _agent_lines(summaries: list[dict]) -> list[str]:
+    """One line per agent, then the insights, each list capped.
+
+    Both lists grow with the number of agents. A Claude Code session with 257
+    sub-agents filled the whole brief with agent lines, and the tail cut then
+    dropped every step-level section the model is told to cite. Past
+    ``_AGENT_LINE_CAP`` the parent stays first (``compute_agent_summary``
+    orders agents by first appearance, so it is the first summary), the
+    longest-running sub-agents fill the other lines and one line totals the
+    rest. The insights still read every summary, so an omitted sub-agent can
+    still be flagged. Each agent can raise two of them, though, so a few hundred
+    uncached or erroring sub-agents could crowd out the same sections; past
+    ``_INSIGHT_LINE_CAP`` the first insights, in the order
+    ``generate_agent_insights`` gives them, stay and one line counts the rest.
+    """
     if not summaries:
         return ["(single-agent or unlabeled)"]
+    listed = summaries
+    omitted: list[dict] = []
+    if len(summaries) > _AGENT_LINE_CAP:
+        def rank(value: Any) -> float:
+            # A duration or token count the export did not record ranks last.
+            return float(value) if isinstance(value, (int, float)) else float("-inf")
+
+        others = sorted(
+            summaries[1:],
+            key=lambda agent: (
+                rank(agent.get("total_duration_s")),
+                rank(agent.get("total_tokens")),
+            ),
+            reverse=True,
+        )
+        listed = [summaries[0], *others[: _AGENT_LINE_CAP - 1]]
+        omitted = others[_AGENT_LINE_CAP - 1 :]
     lines = []
-    for agent in summaries:
+    for agent in listed:
         gen_rate = agent.get("output_tokens_per_sec")
         lines.append(
             f"- {agent.get('label')}: {agent.get('step_count')} assistant steps, "
@@ -373,8 +422,27 @@ def _agent_lines(summaries: list[dict]) -> list[str]:
             f"cache {_pct_or_na(agent.get('cache_efficiency_pct'))}, "
             f"gen {'n/a' if gen_rate is None else gen_rate} tok/s"
         )
-    for insight in generate_agent_insights(summaries):
+    if omitted:
+        # Unrecorded counts (None on OTLP rows) add nothing rather than failing.
+        totals = {
+            name: sum(
+                int(agent[key]) for agent in omitted if isinstance(agent.get(key), (int, float))
+            )
+            for name, key in (
+                ("steps", "step_count"),
+                ("tokens", "total_tokens"),
+                ("tools", "tool_call_count"),
+                ("errors", "error_count"),
+            )
+        }
+        lines.append(
+            _AGENTS_OMITTED_LINE.format(omitted=len(omitted), shown=len(listed) - 1, **totals)
+        )
+    insights = generate_agent_insights(summaries)
+    for insight in insights[:_INSIGHT_LINE_CAP]:
         lines.append(f"- insight: {insight}")
+    if len(insights) > _INSIGHT_LINE_CAP:
+        lines.append(_INSIGHTS_OMITTED_LINE.format(omitted=len(insights) - _INSIGHT_LINE_CAP))
     return lines
 
 
@@ -448,6 +516,16 @@ def _waste_lines(streaks: list[dict], flags: list[dict]) -> list[str]:
 def _error_step_lines(steps: list[dict], limit: int = 16) -> list[str]:
     lines: list[str] = []
     for step in steps:
+        if step.get("finish") == "error":
+            # A failed model request fails no tool call, yet it is often where
+            # the run stopped; HEALTH counts it, so name it here as well.
+            lines.append(f"- step {step.get('index')} model request failed")
+            text = _clip(str(step.get("text_preview") or ""), _OUTPUT_CLIP)
+            if text:
+                lines.append(f"  output: {text}")
+            if len(lines) >= limit * 2:
+                lines.append("- …")
+                return lines
         if not step.get("error_count"):
             continue
         for tool_call in step.get("tool_calls") or []:
@@ -493,12 +571,18 @@ def _timeline_row(step: dict) -> str:
     dur = step.get("duration")
     dur_s = f"{dur:.1f}s" if isinstance(dur, (int, float)) else "-"
     tok = (step.get("tokens") or {}).get("total", 0) if isinstance(step.get("tokens"), dict) else 0
-    err = " ERR" if step.get("error_count") else ""
+    # A failed model request is an error step without a failed tool call;
+    # ERROR_STEPS lists it, so the index flags it too.
+    err = " ERR" if step.get("error_count") or step.get("finish") == "error" else ""
     tool_s = ",".join(tools[:6]) if tools else "-"
     preview = ""
     if role == "user":
         preview = " " + _clip(str(step.get("text_preview") or ""), 80)
     return f"{step.get('index')} {role} {dur_s} {tok}tok {tool_s}{err}{preview}"
+
+
+#: Ends a brief cut to ``_BRIEF_CHAR_LIMIT``; ``{sections}`` is filled from the fixed titles only.
+_BRIEF_TRUNCATED_MARKER = "\n…[truncated; sections cut: {sections}]\n"
 
 
 def _compose_brief(
@@ -532,13 +616,29 @@ def _compose_brief(
         ("STEP_INDEX", _timeline_lines(steps)),
     ]
     chunks = ["# Trajectory analysis brief", ""]
+    section_ends: list[tuple[str, int]] = []
     for title, lines in sections:
         chunks.append(f"## {title}")
         chunks.extend(lines)
+        # Offset just past this section's last line in the joined brief.
+        section_ends.append((title, len("\n".join(chunks))))
         chunks.append("")
     brief = "\n".join(chunks).strip() + "\n"
     if len(brief) > _BRIEF_CHAR_LIMIT:
-        brief = brief[: _BRIEF_CHAR_LIMIT - 20] + "\n…[truncated]\n"
+        # A bare "[truncated]" left the model guessing what it could not see;
+        # name every section whose text runs past the cut (header lost, or
+        # only some of its lines kept). Naming more sections lengthens the
+        # marker, which moves the cut earlier and can reach one more section,
+        # so repeat until the set stops growing (at most once per section).
+        cut: list[str] = []
+        while True:
+            marker = _BRIEF_TRUNCATED_MARKER.format(sections=", ".join(cut))
+            keep = max(0, _BRIEF_CHAR_LIMIT - len(marker))
+            lost = [title for title, end in section_ends if end > keep]
+            if lost == cut:
+                break
+            cut = lost
+        brief = brief[:keep] + marker
     return brief
 
 
@@ -636,6 +736,16 @@ def _history_for_api(history: list[dict]) -> list[dict[str, str]]:
     return cleaned[-_HISTORY_TURNS:]
 
 
+class OutputBudgetExhausted(RuntimeError):
+    """The model hit ``max_tokens``; ``text`` is whatever visible text arrived ("" when it all
+    went to reasoning)."""
+
+    def __init__(self, limit: int, text: str = "") -> None:
+        super().__init__("model hit the output token limit")
+        self.limit = limit
+        self.text = text
+
+
 def complete_chat(
     config: AnalysisLLMConfig,
     system: str,
@@ -645,6 +755,9 @@ def complete_chat(
 
     This is where the sidebar and the Issues judge leave the machine, so every
     outgoing string is redacted here (see :mod:`agent_trajviz._redact`).
+
+    Raises :class:`OutputBudgetExhausted` when the model stopped at ``max_tokens``, so a
+    cut-off reply is never passed off as complete.
     """
     system, redacted = redact(system)
     outgoing: list[dict[str, str]] = []
@@ -680,12 +793,13 @@ def _call_openai(
     response = requests.post(url, json=body, headers=headers, timeout=config.timeout)
     response.raise_for_status()
     data = response.json()
-    content = data["choices"][0]["message"]["content"]
-    if content is None:
-        return ""
-    if not isinstance(content, str):
+    choice = data["choices"][0]
+    content = choice["message"]["content"]
+    if content is not None and not isinstance(content, str):
         raise ValueError("OpenAI response content is not text")
-    return content.strip()
+    if choice.get("finish_reason") == "length":
+        raise OutputBudgetExhausted(config.max_tokens, (content or "").strip())
+    return (content or "").strip()
 
 
 def _call_anthropic(
@@ -693,7 +807,7 @@ def _call_anthropic(
     system: str,
     messages: list[dict[str, str]],
 ) -> str:
-    url = f"{config.base_url}/messages"
+    url = anthropic_messages_url(config.base_url)
     headers = merge_llm_headers(
         config.extra_headers,
         auth={"x-api-key": config.api_key, "anthropic-version": "2023-06-01"},
@@ -711,25 +825,123 @@ def _call_anthropic(
     data = response.json()
     blocks = data.get("content", [])
     texts = [block["text"] for block in blocks if isinstance(block, dict) and block.get("type") == "text"]
+    if data.get("stop_reason") == "max_tokens":
+        raise OutputBudgetExhausted(config.max_tokens, "\n".join(texts).strip())
     if not texts:
         raise ValueError("Anthropic response contained no text blocks")
     return "\n".join(texts).strip()
 
 
-def _public_http_error(exc: BaseException) -> str:
-    """Human error without response bodies that might echo secrets."""
-    if isinstance(exc, requests.Timeout):
-        return "The analysis model timed out. Retry, or raise ANALYZE_TIMEOUT."
+# Failure texts for the panel and the Issues banner: constants with at most an integer filled
+# in, never a URL, host, key, response body or provider message. Each remedy comes in two
+# wordings: the ANALYZE_* variables, and the Settings fields for a connection applied in
+# Settings, which those variables no longer affect.
+_TIMED_OUT_ENV = "The analysis model timed out. Retry, or raise ANALYZE_TIMEOUT."
+_TIMED_OUT_SETTINGS = (
+    "The analysis model timed out. Retry, or raise Timeout (seconds) in Settings › Request options."
+)
+_KEY_REJECTED_ENV = "The analysis API rejected the key (HTTP {status}). Check ANALYZE_API_KEY."
+_KEY_REJECTED_SETTINGS = (
+    "The analysis API rejected the key (HTTP {status}). Check the API key in Settings."
+)
+_NOT_FOUND_ENV = "The analysis API returned HTTP 404. Check ANALYZE_BASE_URL and ANALYZE_MODEL."
+_NOT_FOUND_SETTINGS = (
+    "The analysis API returned HTTP 404. Check the Base URL and Model in Settings."
+)
+_UNREACHABLE_ENV = "Could not reach the analysis API. Check ANALYZE_BASE_URL and the network."
+_UNREACHABLE_SETTINGS = (
+    "Could not reach the analysis API. Check the Base URL in Settings and the network."
+)
+_BUDGET_SPENT_ENV = (
+    "The model used its entire output budget of {limit} tokens before writing a reply (reasoning "
+    "models spend it on hidden thinking). Raise ANALYZE_MAX_TOKENS (or Max output tokens in "
+    "Settings), or choose a non-reasoning model."
+)
+_BUDGET_SPENT_SETTINGS = (
+    "The model used its entire output budget of {limit} tokens before writing a reply (reasoning "
+    "models spend it on hidden thinking). Raise Max output tokens in Settings › Request options, "
+    "or choose a non-reasoning model."
+)
+# Appended, in the reply language, to a reply the output limit cut off.
+_CUT_OFF_ENV = (
+    "⚠ Reply cut off at the output limit of {limit} tokens. "
+    "Raise ANALYZE_MAX_TOKENS (or Max output tokens in Settings)."
+)
+_CUT_OFF_SETTINGS = (
+    "⚠ Reply cut off at the output limit of {limit} tokens. "
+    "Raise Max output tokens in Settings › Request options."
+)
+_CUT_OFF_ENV_CHINESE = (
+    "⚠ 回复在 {limit} 个输出 token 的上限处被截断。"
+    "请提高 ANALYZE_MAX_TOKENS（或 Settings 中的 Max output tokens）。"
+)
+_CUT_OFF_SETTINGS_CHINESE = (
+    "⚠ 回复在 {limit} 个输出 token 的上限处被截断。"
+    "请在 Settings › Request options 中提高 Max output tokens。"
+)
+
+
+def _from_settings(config: AnalysisLLMConfig | None) -> bool:
+    """True for a connection applied in Settings, which ignores the ANALYZE_* variables."""
+    return config is not None and config.source == "session"
+
+
+def _body_read_timed_out(exc: BaseException) -> bool:
+    """True for the ConnectionError requests raises when the response body read times out.
+
+    requests raises ReadTimeout (a Timeout) only while it waits for the headers. A provider
+    that sends HTTP 200 headers at once and the body when the model finishes times out in
+    the body read instead, which requests re-raises as a plain ConnectionError carrying
+    urllib3's ReadTimeoutError in its args and context.
+    """
+    if not isinstance(exc, requests.ConnectionError):
+        return False
+    if any(isinstance(arg, ReadTimeoutError) for arg in exc.args):
+        return True
+    seen: set[int] = set()
+    pending: list[BaseException | None] = [exc]
+    while pending:
+        link = pending.pop()
+        if link is None or id(link) in seen:
+            continue
+        if isinstance(link, ReadTimeoutError):
+            return True
+        seen.add(id(link))
+        pending += [link.__cause__, link.__context__]
+    return False
+
+
+def _public_http_error(exc: BaseException, config: AnalysisLLMConfig | None = None) -> str:
+    """Human error without response bodies that might echo secrets.
+
+    *config* is the connection that failed: its remedy names the Settings fields when it
+    was applied in Settings, and the ANALYZE_* variables otherwise (or when omitted).
+    """
+    settings = _from_settings(config)
+    if isinstance(exc, OutputBudgetExhausted):
+        return (_BUDGET_SPENT_SETTINGS if settings else _BUDGET_SPENT_ENV).format(limit=exc.limit)
+    if isinstance(exc, requests.Timeout) or _body_read_timed_out(exc):
+        return _TIMED_OUT_SETTINGS if settings else _TIMED_OUT_ENV
     if isinstance(exc, requests.HTTPError) and exc.response is not None:
         status = exc.response.status_code
         if status in {401, 403}:
-            return f"The analysis API rejected the key (HTTP {status}). Check ANALYZE_API_KEY."
+            return (_KEY_REJECTED_SETTINGS if settings else _KEY_REJECTED_ENV).format(status=status)
         if status == 404:
-            return f"The analysis API returned HTTP {status}. Check ANALYZE_BASE_URL and ANALYZE_MODEL."
+            return _NOT_FOUND_SETTINGS if settings else _NOT_FOUND_ENV
         return f"The analysis API returned HTTP {status}."
     if isinstance(exc, requests.RequestException):
-        return "Could not reach the analysis API. Check ANALYZE_BASE_URL and the network."
+        return _UNREACHABLE_SETTINGS if settings else _UNREACHABLE_ENV
     return f"The analysis model request failed: {type(exc).__name__}."
+
+
+def _truncation_marker(limit: int, config: AnalysisLLMConfig, chinese: bool) -> str:
+    """The note that marks a reply cut off at *limit* tokens and names where to raise it."""
+    settings = _from_settings(config)
+    if chinese:
+        template = _CUT_OFF_SETTINGS_CHINESE if settings else _CUT_OFF_ENV_CHINESE
+    else:
+        template = _CUT_OFF_SETTINGS if settings else _CUT_OFF_ENV
+    return template.format(limit=limit)
 
 
 def answer_question(
@@ -775,8 +987,18 @@ def answer_question(
             reply = chat_fn(cfg, system, api_messages)
         else:
             reply = complete_chat(cfg, system, api_messages)
+    except OutputBudgetExhausted as exc:
+        # Keep what arrived, marked as cut off; with nothing visible, say where the budget went.
+        if exc.text:
+            text = exc.text
+            if text.count("```") % 2:
+                # The cut came inside a code block; close it so the marker is not shown as code.
+                text += "\n```"
+            reply = text + "\n\n" + _truncation_marker(exc.limit, cfg, chinese)
+        else:
+            reply = _public_http_error(exc, cfg)
     except Exception as exc:  # noqa: BLE001 — surface a safe message in the panel
-        reply = _public_http_error(exc)
+        reply = _public_http_error(exc, cfg)
     if not reply:
         reply = "(模型返回了空回复。)" if chinese else "(The model returned an empty reply.)"
     history.append({"role": "assistant", "content": reply})

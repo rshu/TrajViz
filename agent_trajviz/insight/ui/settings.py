@@ -62,7 +62,11 @@ def layout() -> SettingsRefs:
             with gr.Row():
                 temperature = gr.Number(label="Temperature", value=defaults["temperature"],
                                         info="Leave blank to use the provider default.")
-                max_tokens = gr.Number(label="Max output tokens", value=defaults["max_tokens"], precision=0)
+                max_tokens = gr.Number(
+                    label="Max output tokens", value=defaults["max_tokens"], precision=0,
+                    info=("Reasoning models spend part of this on hidden thinking; "
+                          "raise it if replies come back empty or cut off."),
+                )
                 timeout = gr.Number(label="Timeout (seconds)", value=defaults["timeout"], precision=0)
             language = gr.Textbox(label="Reply language", value=defaults["language"], placeholder="English")
         remember = gr.Checkbox(label="Remember connection details in this browser", value=True,
