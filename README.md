@@ -104,6 +104,7 @@ use `agent-trajviz-converge --help`. Every command provides `--help`.
 | Pi | Native JSONL under `~/.pi/agent/sessions/`, using the active history branch |
 | DeepSeek Harness | Native session directories, `session.vN.jsonl[.zstd]`, or legacy session exports |
 | CodeArts | AgentKernel session exports from its `opencode.db` store |
+| CodeAgent | Session JSON exports with `session` + `child_sessions` (data-wrapped messages/parts) |
 | ICode | Chrys expanded-session JSON with nested subagent sessions |
 
 ### Collect sessions and subagents

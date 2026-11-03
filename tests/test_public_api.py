@@ -87,7 +87,7 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertTrue(issubclass(tv.ReportError, ValueError))
 
     def test_formats_is_a_read_only_mapping_of_every_supported_format(self):
-        self.assertEqual(set(tv.FORMATS), {"claude_code", "cursor", "codearts", "icode", "opencode", "codex", "pi", "dsh", "otlp"})
+        self.assertEqual(set(tv.FORMATS), {"claude_code", "cursor", "codeagent", "codearts", "icode", "opencode", "codex", "pi", "dsh", "otlp"})
         with self.assertRaises(TypeError):
             tv.FORMATS["new"] = "New"  # type: ignore[index]
 
