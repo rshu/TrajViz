@@ -21,6 +21,7 @@ change the public API (the names exported from `agent_trajviz`).
   label provenance, including Converge milestone and waterfall labels.
 - Keep missing success, context and timing measurements unavailable.
 - Keep the independent AWE workspace accessible after a native import error.
+- Keep portable HTML report references independent of live dashboard navigation.
 
 ## [0.4.0] - 2026-11-03
 

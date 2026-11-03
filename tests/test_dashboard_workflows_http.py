@@ -69,8 +69,10 @@ def _event_outputs(app, client, name, data):
     payload = json.dumps({"data": data, "session_hash": client.session_hash}).encode()
     request = urllib.request.Request(endpoint, payload, {"Content-Type": "application/json"})
     with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - loopback only
-        event_id = json.load(response)["event_id"]
-    with urllib.request.urlopen(endpoint + "/" + event_id, timeout=30) as response:  # noqa: S310 - loopback only
+        assert json.load(response)["event_id"]
+    # Gradio6.14 keys call streams by session; newer versions also resolve
+    # event IDs. Keep this browser session so AWE preservation is exercised.
+    with urllib.request.urlopen(endpoint + "/" + client.session_hash, timeout=30) as response:  # noqa: S310 - loopback only
         lines = response.read().decode().splitlines()
     assert "event: complete" in lines
     return json.loads(next(line.removeprefix("data: ") for line in lines if line.startswith("data: ")))

@@ -184,7 +184,7 @@ def workflow_agent_chip_options(steps: list[dict]) -> list[tuple[str, str, int]]
     ]
 
 
-def _render_one_agent_card(a: dict, agent_hex: str) -> str:
+def _render_one_agent_card(a: dict, agent_hex: str, *, workflow_links: bool = True) -> str:
     """Build one agent KPI card. Shared by single- and multi-agent paths."""
     label = html.escape(a["label"])
     full_id = html.escape(a.get("agent_id", ""))
@@ -193,11 +193,13 @@ def _render_one_agent_card(a: dict, agent_hex: str) -> str:
     spawn_html = ""
     if a.get("spawned_by_step") is not None:
         sidx = _step_index(a["spawned_by_step"])
+        spawn_attrs = (
+            f"class='insight-step-link' onclick=\"{_diag_jump_onclick(sidx)}\""
+            if workflow_links else "class='insight-step-index'"
+        )
         spawn_html = (
-            f"<div class='agent-card-spawn'>"
-            f"<span class='insight-step-link' onclick=\"{_diag_jump_onclick(sidx)}\">"
-            f"Spawned at step #{sidx}</span>"
-            f"</div>"
+            f"<div class='agent-card-spawn'><span {spawn_attrs}>"
+            f"Spawned at step #{sidx}</span></div>"
         )
 
     _cache_display = (
@@ -239,7 +241,7 @@ def _render_one_agent_card(a: dict, agent_hex: str) -> str:
     )
 
 
-def render_agent_summary_cards(agent_summaries: list[dict]) -> str:
+def render_agent_summary_cards(agent_summaries: list[dict], *, workflow_links: bool = True) -> str:
     """Render per-agent summary cards as styled HTML.
 
     For single-agent sessions, render a single card so the user still sees the
@@ -253,7 +255,7 @@ def render_agent_summary_cards(agent_summaries: list[dict]) -> str:
         )
 
     cards = [
-        _render_one_agent_card(a, AGENT_COLORS[aidx % len(AGENT_COLORS)])
+        _render_one_agent_card(a, AGENT_COLORS[aidx % len(AGENT_COLORS)], workflow_links=workflow_links)
         for aidx, a in enumerate(agent_summaries)
     ]
     return "<div class='agent-cards-grid'>" + "".join(cards) + "</div>"
@@ -1054,7 +1056,7 @@ def _diag_jump_onclick(idx: int) -> str:
 
 
 
-def build_root_cause_html(clusters: list[dict]) -> str:
+def build_root_cause_html(clusters: list[dict], *, workflow_links: bool = True) -> str:
     """Render root-cause candidate summary panel."""
     if not clusters:
         return ""
@@ -1066,9 +1068,12 @@ def build_root_cause_html(clusters: list[dict]) -> str:
     for i, (cluster, summary) in enumerate(zip(clusters, summaries, strict=False)):
         badge_class = "diag-rc-primary" if i == 0 else "diag-rc-secondary"
         first_step = cluster["first_step"]
-        onclick = _diag_jump_onclick(first_step)
+        jump_attr = (
+            f" onclick=\"{_diag_jump_onclick(first_step)}\" style='cursor:pointer;'"
+            if workflow_links else ""
+        )
         items.append(
-            f"<div class='diag-rc-item {badge_class}' onclick=\"{onclick}\" style='cursor:pointer;'>"
+            f"<div class='diag-rc-item {badge_class}'{jump_attr}>"
             f"<span class='diag-rc-rank'>#{i + 1}</span> "
             f"<span class='diag-rc-text'>{html.escape(summary)}</span>"
             f"</div>"
@@ -1357,16 +1362,19 @@ _STEP_CHIP_STYLE = (
 )
 
 
-def _step_link_chip(idx: int) -> str:
+def _step_link_chip(idx: int, *, workflow_links: bool = True) -> str:
     """Clickable ``#N`` chip that jumps to Workflow step *idx*."""
     n = _step_index(idx)
+    if not workflow_links:
+        style = _STEP_CHIP_STYLE.replace("cursor:pointer;", "")
+        return f"<span class='insight-step-index' style='{style}'>#{n}</span>"
     return (
         f"<span class='insight-step-link' style='{_STEP_CHIP_STYLE}' "
         f"onclick=\"{_diag_jump_onclick(n)}\">#{n}</span>"
     )
 
 
-def _step_link_chips(indices: list[int], *, limit: int = 8) -> str:
+def _step_link_chips(indices: list[int], *, limit: int = 8, workflow_links: bool = True) -> str:
     """Deduped step chips; shows ``+N more`` when truncated."""
     seen: list[int] = []
     for raw in indices:
@@ -1378,7 +1386,7 @@ def _step_link_chips(indices: list[int], *, limit: int = 8) -> str:
     if not seen:
         return ""
     shown = seen[:limit]
-    chips = "".join(_step_link_chip(n) for n in shown)
+    chips = "".join(_step_link_chip(n, workflow_links=workflow_links) for n in shown)
     extra = len(seen) - len(shown)
     if extra > 0:
         chips += (
@@ -1424,6 +1432,8 @@ def build_antipattern_summary_html(
     plan_metrics: dict,
     error_count: int = 0,
     error_steps: list[int] | None = None,
+    *,
+    workflow_links: bool = True,
 ) -> str:
     """Render an anti-pattern summary panel with Workflow jump chips."""
     cards = []
@@ -1437,7 +1447,7 @@ def build_antipattern_summary_html(
             "Failed tool calls cost tokens and turns to recover from, and often indicate "
             "environment problems (wrong path, missing dependency, sandbox limits) rather than agent mistakes — "
             "fix the environment and the agent may stop wandering.",
-            steps_html=_step_link_chips(error_steps or []),
+            steps_html=_step_link_chips(error_steps or [], workflow_links=workflow_links),
         ))
 
     # Fruitless streaks
@@ -1463,7 +1473,7 @@ def build_antipattern_summary_html(
             "Three or more consecutive searches that returned no matches. Each one still "
             "consumes tokens and latency; sustained streaks suggest the agent is looking "
             "in the wrong place rather than refining its query.",
-            steps_html=_step_link_chips(streak_indices),
+            steps_html=_step_link_chips(streak_indices, workflow_links=workflow_links),
         ))
 
     # Tool selection
@@ -1476,7 +1486,7 @@ def build_antipattern_summary_html(
             "Reading files via shell pipes bypasses the Read tool's structure — "
             "no line numbers, no cross-turn cache, no output cap — which inflates "
             "context size and makes the trajectory harder to analyze.",
-            steps_html=_step_link_chips(bash_steps),
+            steps_html=_step_link_chips(bash_steps, workflow_links=workflow_links),
         ))
 
     # Stalled plan items
@@ -1495,7 +1505,7 @@ def build_antipattern_summary_html(
             "Items marked in_progress in TodoWrite but never marked completed, "
             "or completed more than 20 steps after they started. Often means the "
             "agent context-switched away and forgot to close the loop.",
-            steps_html=_step_link_chips(stall_steps),
+            steps_html=_step_link_chips(stall_steps, workflow_links=workflow_links),
         ))
 
     if not cards:

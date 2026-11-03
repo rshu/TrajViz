@@ -9,7 +9,7 @@ from ..rendering import _step_link_chip, build_antipattern_summary_html
 from ..session import LoadedSession
 
 
-def build_antipattern_html(session: LoadedSession) -> str:
+def build_antipattern_html(session: LoadedSession, *, workflow_links: bool = True) -> str:
     """Anti-pattern summary HTML for Overview and Patterns."""
     from ..telemetry_quality import supports
 
@@ -24,17 +24,18 @@ def build_antipattern_html(session: LoadedSession) -> str:
         session.plan_metrics,
         error_count=error_count,
         error_steps=error_steps,
+        workflow_links=workflow_links,
     )
 
 
-def render_tool_sequences_html(sequences: list[dict]) -> str:
+def render_tool_sequences_html(sequences: list[dict], *, workflow_links: bool = True) -> str:
     """Render tool sequence patterns as an HTML table."""
     if not sequences:
         return "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>No recurring tool sequences detected (minimum frequency: 3).</div>"
     rows = []
     for s in sequences[:20]:
         seq_str = " → ".join(html.escape(t) for t in s["sequence"])
-        indices = "".join(_step_link_chip(i) for i in s["step_indices"][:10])
+        indices = "".join(_step_link_chip(i, workflow_links=workflow_links) for i in s["step_indices"][:10])
         if len(s["step_indices"]) > 10:
             indices += f" … (+{len(s['step_indices']) - 10} more)"
         rows.append(
@@ -53,7 +54,9 @@ def render_tool_sequences_html(sequences: list[dict]) -> str:
     )
 
 
-def render_failure_patterns_html(patterns: list[dict], *, available: bool = True) -> str:
+def render_failure_patterns_html(
+    patterns: list[dict], *, available: bool = True, workflow_links: bool = True,
+) -> str:
     """Render failure pattern clusters as cards with Workflow jump chips."""
     if not available:
         return "<div style='padding:1em;color:var(--ov-muted);'>Failure-pattern checks unavailable: tool outcomes are not fully recorded.</div>"
@@ -68,7 +71,7 @@ def render_failure_patterns_html(patterns: list[dict], *, available: bool = True
         recovery_html = " → ".join(html.escape(t) for t in recovery) if recovery else "<em>No recovery path found</em>"
         step_ids = p.get("steps") or []
         steps_html = (
-            "".join(_step_link_chip(int(idx)) for idx in step_ids)
+            "".join(_step_link_chip(int(idx), workflow_links=workflow_links) for idx in step_ids)
             if step_ids
             else "<em>—</em>"
         )

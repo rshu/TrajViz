@@ -72,14 +72,14 @@ def build_report_html(
     request at all.
     """
     session = _as_session(source, file_path=file_path)
-    ov = build_overview_outputs(session)
-    ch = build_chart_outputs(session, dark=dark)
-    dg = build_diagnostics_outputs(session, dark=dark)
-    pat_tool = render_tool_sequences_html(session.tool_sequences)
+    ov = build_overview_outputs(session, workflow_links=False)
+    ch = build_chart_outputs(session, dark=dark, workflow_links=False)
+    dg = build_diagnostics_outputs(session, dark=dark, workflow_links=False)
+    pat_tool = render_tool_sequences_html(session.tool_sequences, workflow_links=False)
     from .telemetry_quality import supports
 
-    pat_fail = render_failure_patterns_html(session.failure_patterns, available=supports(session.steps, "tool_outcomes"))
-    antipattern = build_antipattern_html(session)
+    pat_fail = render_failure_patterns_html(session.failure_patterns, available=supports(session.steps, "tool_outcomes"), workflow_links=False)
+    antipattern = build_antipattern_html(session, workflow_links=False)
     issues_panel = ov["issues_html"]
 
     figures: list[tuple[str, go.Figure]] = [

@@ -390,7 +390,7 @@ def build_summary_outputs(session: LoadedSession) -> dict:
     }
 
 
-def build_overview_outputs(session: LoadedSession) -> dict:
+def build_overview_outputs(session: LoadedSession, *, workflow_links: bool = True) -> dict:
     """Compute overview-related outputs: banner, KPI, metadata, and metrics markdown."""
     steps = session.steps
     raw = session.raw
@@ -410,7 +410,7 @@ def build_overview_outputs(session: LoadedSession) -> dict:
         agent_summaries=session.agent_summaries,
         tokens_estimated=tokens_are_estimates(session.raw),
     )
-    issues_html = build_overview_issues_html(session, issues=ranked_issues)
+    issues_html = build_overview_issues_html(session, issues=ranked_issues, workflow_links=workflow_links)
     metrics_text = format_performance_md(metrics, wfmt)
 
     behavior_text = format_behavioral_md(metrics, diag_metrics=session.diagnostic_metrics)
@@ -472,20 +472,20 @@ CHART_VIEWS = {
 }
 
 
-def build_chart_outputs(session: LoadedSession, dark: bool = False) -> dict:
+def build_chart_outputs(session: LoadedSession, dark: bool = False, *, workflow_links: bool = True) -> dict:
     """Build Overview chart figures, each from the session's public view."""
     charts = {slot: view_figure(session, view_id, dark=dark) for slot, view_id in CHART_VIEWS.items()}
-    return {**charts, "agent_cards_html": render_agent_summary_cards(session.agent_summaries)}
+    return {**charts, "agent_cards_html": render_agent_summary_cards(session.agent_summaries, workflow_links=workflow_links)}
 
 
-def build_diagnostics_outputs(session: LoadedSession, dark: bool = False) -> dict:
+def build_diagnostics_outputs(session: LoadedSession, dark: bool = False, *, workflow_links: bool = True) -> dict:
     """Build diagnostics outputs from precomputed session domain data."""
     empty_fig = empty_plotly_fig()
     interactions = session.file_interactions
     target_files = session.target_files
     file_chart = view_figure(session, "file_interactions", dark=dark) if interactions else empty_fig
 
-    rootcause_html = build_root_cause_html(session.clusters) if session.show_root_cause else ""
+    rootcause_html = build_root_cause_html(session.clusters, workflow_links=workflow_links) if session.show_root_cause else ""
 
     pressure_fig = view_figure(session, "context_pressure", dark=dark)
     pressure_html = format_context_pressure_html(

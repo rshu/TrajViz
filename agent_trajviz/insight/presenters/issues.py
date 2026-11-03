@@ -25,12 +25,12 @@ ISSUE_KIND_COLORS: dict[IssueKind, str] = {
 }
 
 
-def _issue_card(issue: OverviewIssue) -> str:
+def _issue_card(issue: OverviewIssue, *, workflow_links: bool = True) -> str:
     """Compact scan row: title + steps + visible Fix; Why behind a disclosure."""
     title = html.escape(issue.title)
     detail = html.escape(issue.detail)
     border = ISSUE_KIND_COLORS[issue.kind]
-    steps_html = _step_link_chips(list(issue.steps))
+    steps_html = _step_link_chips(list(issue.steps), workflow_links=workflow_links)
 
     judgment_html = ""
     if issue.judgment is not None:
@@ -87,9 +87,9 @@ def _issue_card(issue: OverviewIssue) -> str:
     )
 
 
-def _issue_cards_html(issues: list[OverviewIssue]) -> str:
+def _issue_cards_html(issues: list[OverviewIssue], *, workflow_links: bool = True) -> str:
     """Render all issue cards (no preview cap)."""
-    return "".join(_issue_card(issue) for issue in issues)
+    return "".join(_issue_card(issue, workflow_links=workflow_links) for issue in issues)
 
 
 def render_overview_issues_html(
@@ -98,6 +98,7 @@ def render_overview_issues_html(
     banner: str = "",
     progress: str = "",
     limited_evidence: bool = False,
+    workflow_links: bool = True,
 ) -> str:
     """Render a foldable Issues panel with an evidence-aware empty state.
 
@@ -166,6 +167,12 @@ def render_overview_issues_html(
         if judged and not progress
         else "Ranked problems — click a step to open Workflow; expand Why for context"
     )
+    if not workflow_links:
+        hint = (
+            "LLM Change/Fix shown below — step numbers refer to the recorded trajectory"
+            if judged and not progress else
+            "Ranked problems — step numbers refer to the recorded trajectory; expand Why for context"
+        )
     return (
         "<details class='overview-issues-panel' id='overview-issues' open>"
         "<summary class='overview-issues-summary'>"
@@ -176,7 +183,7 @@ def render_overview_issues_html(
         f"{progress_html}"
         f"{banner_html}"
         f"<div style='font-size:12px;color:var(--ov-muted);margin:0 0 8px;'>{hint}</div>"
-        + _issue_cards_html(issues)
+        + _issue_cards_html(issues, workflow_links=workflow_links)
         + "</div></details>"
     )
 
@@ -187,12 +194,13 @@ def build_overview_issues_html(
     issues: list[OverviewIssue] | None = None,
     banner: str = "",
     progress: str = "",
+    workflow_links: bool = True,
 ) -> str:
     """Collect, rank, and render Overview Issues for *session*."""
     if issues is None:
         ranked = rank_issues(collect_overview_issues(session))
     else:
         ranked = list(issues)
-    return render_overview_issues_html(ranked, banner=banner, progress=progress,
+    return render_overview_issues_html(ranked, banner=banner, progress=progress, workflow_links=workflow_links,
                                        limited_evidence=(session.format == "otlp" or bool(
                                            getattr(session, "metrics", {}).get("tool_unknown_outcomes"))))

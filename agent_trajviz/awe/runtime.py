@@ -368,10 +368,12 @@ def run_operation(operation: str, settings: EvaluationSettings, *, agent: str | 
     code comes only from the installed TrajViz package.
     """
     job = None
+    phase = "validating operation inputs"
     try:
         engine, reference, options = _validated(operation, settings, agent, instance_id, limit, payload)
         profile = _json_object(settings.benchmark_profile, "Benchmark profile")
         context = _json_object(settings.execution_context, "Execution context")
+        phase = "preparing private output"
         base = Path(settings.output_root).expanduser().resolve() if settings.output_root else None
         if base is not None:
             if base in (engine, reference) or base.is_relative_to(engine) or (reference is not None and base.is_relative_to(reference)):
@@ -387,6 +389,7 @@ def run_operation(operation: str, settings: EvaluationSettings, *, agent: str | 
             if not agents:
                 raise ValueError("No agents are declared by data/eval_<agent>.json files; select agents explicitly or provide official outcomes.")
         shadow, output = job / "engine", job / "engine" / "data"
+        phase = "copying isolated engine and saved inputs"
         _safe_copy(engine, shadow)
         output.mkdir(parents=True, exist_ok=True)
         code_files = {str(path.relative_to(shadow)): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -489,31 +492,42 @@ def run_operation(operation: str, settings: EvaluationSettings, *, agent: str | 
                    "import sys;sys.path.insert(0,sys.argv[1]);from agent_trajviz.awe._worker import main;main()",
                    package_root]
         log_path = job / "operation.log"
+        phase = "opening operation log"
         with log_path.open("w+b") as stream:
+            phase = "starting isolated worker"
             process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=stream, stderr=stream,
                                        cwd=job, env=environment, start_new_session=os.name != "nt")
             try:
+                phase = "waiting for isolated worker"
                 process.communicate(encoded.encode(), timeout=settings.timeout)
             except subprocess.TimeoutExpired:
+                phase = "stopping timed-out process tree"
                 tree_stopped = _stop_process_tree(process)
                 try:
+                    phase = "waiting for timed-out worker"
                     process.wait(timeout=2)
                 except subprocess.TimeoutExpired:
+                    phase = "force-stopping timed-out process tree"
                     tree_stopped = _stop_process_tree(process, force=True)
+                    phase = "reaping timed-out worker"
                     process.wait()
                 if os.name != "nt":
                     # The parent may exit on SIGTERM while a child ignores it.
                     # Kill any surviving group members even after reaping it.
+                    phase = "cleaning up remaining descendants"
                     tree_stopped = _stop_process_tree(process, force=True)
+                phase = "reading timeout log"
                 stream.seek(0, 2)
                 size = stream.tell()
                 stream.seek(max(0, size - _MAX_LOG))
                 logs = _redact(stream.read().decode(errors="replace"), settings.api_key)
+                phase = "saving timeout log"
                 log_path.write_text(logs, encoding="utf-8")
                 reason = ("Evaluation operation timed out; its process tree was stopped." if tree_stopped
                           else "Evaluation operation timed out; descendant termination could not be confirmed.")
                 return OperationResult(False, True, reason,
                                        operation, str(output), str(output), logs=logs)
+        phase = "reading operation output"
         with log_path.open("rb") as stream:
             stream.seek(0, 2)
             stream.seek(max(0, stream.tell() - _MAX_LOG))
@@ -539,6 +553,7 @@ def run_operation(operation: str, settings: EvaluationSettings, *, agent: str | 
                     "artifact_sha256": fingerprints, "network_enabled": settings.allow_network,
                     "agent": agent, "instance_id": instance_id, "limit": limit,
                     "model": settings.judge_model or None, "api_key_stored": False}
+        phase = "saving operation manifest"
         (selected_output / "operation-manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         return OperationResult(process.returncode == 0, True,
                                None if process.returncode == 0 else (data.get("reason")
@@ -548,7 +563,13 @@ def run_operation(operation: str, settings: EvaluationSettings, *, agent: str | 
                                (*artifacts, "operation-manifest.json"), logs)
     except (OSError, ValueError, TypeError, subprocess.TimeoutExpired) as exc:
         # Validation messages are deliberately written here, not forwarded from a engine.
-        reason = str(exc) if isinstance(exc, ValueError) else f"AWE operation could not start ({type(exc).__name__})."
+        if isinstance(exc, ValueError):
+            reason = str(exc)
+        else:
+            # Stage and errno identify parent-process failures without exposing
+            # exception messages, paths, subprocess arguments or environment.
+            errno = f"; errno={exc.errno}" if isinstance(exc, OSError) and type(exc.errno) is int else ""
+            reason = f"AWE operation failed while {phase} ({type(exc).__name__}{errno})."
         if job is not None:
             shutil.rmtree(job, ignore_errors=True)
         return OperationResult(False, False, _redact(reason, settings.api_key), operation)
