@@ -13,6 +13,7 @@ from .charts.activity import (
 from .styles import APP_CSS
 from .ui import (
     attribution_tab,
+    awe_tab,
     comparison_tab,
     overview_tab,
     patterns_tab,
@@ -67,22 +68,40 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
 
         sidebar_refs = sidebar.layout()
         upload_refs = upload.layout()
-        settings_refs = settings.layout()
+        with gr.Group() as native_settings:
+            settings_refs = settings.layout()
         # Global health strip — above Overview/Patterns/… so it stays visible on every tab.
         overview_kpi_html = gr.HTML(
             "",
             visible=False,
             elem_classes=["overview-kpi-strip"],
         )
-        with gr.Tabs(visible=False) as main_tabs:
+        with gr.Tabs(visible=True) as main_tabs:
             overview = overview_tab.layout(overview_kpi_html)
             patterns = patterns_tab.layout()
             attribution = attribution_tab.layout(allow_server_paths=allow_server_paths)
+            awe = awe_tab.layout(allow_server_paths=allow_server_paths)
             comparison = comparison_tab.layout()
             workflow = workflow_tab.layout()
             raw = raw_tab.layout()
             # Only when views were registered (by the application or a plugin).
             views = views_tab.layout()
+
+        def _workspace_visibility(run, is_awe=False):
+            native = not is_awe
+            loaded = bool(run is not None and run.steps)
+            return (gr.update(visible=native), gr.update(visible=native), gr.update(visible=native),
+                    gr.update(visible=native and loaded), gr.update(visible=native and loaded))
+
+        # Saved AWE imports have their own controls and state. Keep the native
+        # upload/settings panels out of that workspace while retaining the brand.
+        from functools import partial
+        for tab in main_tabs.children:
+            if isinstance(tab, gr.Tab):
+                tab.select(fn=partial(_workspace_visibility, is_awe=tab.label == "AWE"),
+                           inputs=shared.state_run,
+                           outputs=[upload_refs.upload_accordion, native_settings, sidebar_refs.analysis_sidebar,
+                                    overview_kpi_html, upload_refs.summary_area], api_name=False)
 
         slots = merge_load_slots(
             main_tabs=main_tabs,
@@ -97,7 +116,7 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
         )
         # One Python load path; picking a file re-clicks Load in the browser.
         # Everything chained off these events (export writer, sidebar hook,
-        # DECAF autodiagnosis) therefore runs once per gesture.
+        # ATTRIBUTION autodiagnosis) therefore runs once per gesture.
         load_events = bind_load(
             file_upload=upload_refs.file_upload,
             load_btn=upload_refs.load_btn,
@@ -114,6 +133,7 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                       model_events=sidebar_events + judge_events)
         attribution_tab.bind(attribution, shared, upload_refs, load_events,
                              allow_server_paths=allow_server_paths)
+        awe_tab.bind(awe, app, allow_server_paths=allow_server_paths)
         comparison_tab.bind(comparison, shared, upload_refs)
         workflow_tab.bind(workflow, shared)
         views_tab.bind(views, shared, load_events)

@@ -257,7 +257,7 @@ def bind_load(*, file_upload, load_btn, format_selector, state_dark, slots: dict
 
     Auto-load on file change is a browser-side re-click of the same button, not a
     second Python binding: every load event fans out to ``bind_export``,
-    ``sidebar.on_trajectory_loaded`` and the DECAF autodiagnosis, so binding
+    ``sidebar.on_trajectory_loaded`` and the ATTRIBUTION autodiagnosis, so binding
     ``_do_load`` to ``change`` as well made one gesture (pick a file, then click
     Load) run the whole analytics fan-out twice — two report writes, two
     diagnoses serialized behind the ``attribution`` concurrency id. Clearing the

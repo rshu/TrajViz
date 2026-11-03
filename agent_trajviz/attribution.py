@@ -1,10 +1,7 @@
-"""Failure attribution with DECAF: which workflow capability broke, and why.
+"""Built-in failure attribution: workflow capabilities and their evidence.
 
-DECAF is not on PyPI; attribution works when a DECAF checkout is importable
-(``AWE_DECAF_PATH``) and reference data for the task exists
-(``TRAJVIZ_REFERENCE_ROOT``). Without either, :func:`diagnose` returns a
-result whose ``available`` is false and whose ``reason`` says what is missing
--- it never raises and never guesses.
+Reference patches and outcomes ground each verdict. Without matching inputs,
+``diagnose`` returns an unavailable result and its reason; it never guesses.
 """
 
 from __future__ import annotations
@@ -22,10 +19,10 @@ __all__ = ["available", "diagnose"]
 
 
 def available() -> tuple[bool, str | None]:
-    """``(True, None)`` when DECAF can be imported, else ``(False, reason)``."""
+    """``(True, None)`` when the bundled attribution engine can be imported, else ``(False, reason)``."""
     from .insight import attribution as _attr
 
-    return bool(_attr.DECAF_AVAILABLE), (None if _attr.DECAF_AVAILABLE else str(_attr._IMPORT_ERROR))
+    return bool(_attr.ATTRIBUTION_AVAILABLE), (None if _attr.ATTRIBUTION_AVAILABLE else str(_attr._IMPORT_ERROR))
 
 
 def diagnose(
@@ -40,7 +37,7 @@ def diagnose(
     *agent* and *instance_id* default to the run's file layout
     (``.../<agent>/<instance_id>.json``). The displayed content is checked
     against the reference set by hash, so a file that changed after loading
-    is refused rather than diagnosed. Returns DECAF's result as a dict:
+    is refused rather than diagnosed. Returns attribution's result as a dict:
     ``available``, ``reason``, ``mode``, the primary failure, the capability
     scorecard and the faults.
     """

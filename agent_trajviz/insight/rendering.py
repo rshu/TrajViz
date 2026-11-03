@@ -1184,7 +1184,29 @@ def _attr_chain_context_html(chain: dict) -> str:
     return "".join(details)
 
 
-def _attr_fault_html(fault: dict) -> str:
+def _attr_record_details(title: str, value, *, opened: bool = False) -> str:
+    if value is None:
+        return ""
+    body = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2, default=str)
+    return (f"<details class='attr-evidence-detail'{' open' if opened else ''}>"
+            f"<summary style='display:list-item;padding:4px 0;font-size:12px;'>{html.escape(title)}</summary>"
+            "<pre style='white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-height:550px;overflow:auto;'>"
+            f"{html.escape(body)}</pre></details>")
+
+
+def _attr_case_context_html(data: dict) -> str:
+    record = data.get("dossier") if isinstance(data.get("dossier"), dict) else data
+    return "".join(_attr_record_details(title, record.get(key), opened=key == "task")
+                   for key, title in (("task", "Task and reference context"),
+                                      ("attribution_trace", "Exact attribution policy trace"),
+                                      ("fault_side", "Model, scaffold and grader context"),
+                                      ("execution_context", "Execution context"),
+                                      ("event_ledger", "Action/result ledger and recovery episodes"),
+                                      ("thinking_process", "Recorded reasoning and action excerpts"),
+                                      ("symptom_analysis", "Unscored symptom observations")))
+
+
+def _attr_fault_html(fault: dict, *, refuted: bool = False) -> str:
     """One collapsible fault panel: claim + strength badge + evidence chain."""
     cap, et = fault.get("capability", ""), fault.get("error_type", "")
     chain = fault.get("evidence_chain") or {}
@@ -1193,7 +1215,7 @@ def _attr_fault_html(fault: dict) -> str:
     if weight == 0:
         # arbiter-refuted candidate: neutral badge, never a tier color that
         # could read as an attributed fault
-        color, tier_label = "#9ca3af", "refuted"
+        color, tier_label = "#9ca3af", "refuted" if refuted else "zero blame"
     else:
         color, tier_label = _STRENGTH_STYLE.get(strength, ("#6b7280", strength or "—"))
     primary_tag = " ★ primary" if fault.get("is_primary") else ""
@@ -1216,6 +1238,15 @@ def _attr_fault_html(fault: dict) -> str:
     audit = (fault.get("audit") or {}).get("verdict", "")
     audit_html = (f"<div class='attr-audit'>audit: {html.escape(audit)}</div>"
                   if audit else "")
+    extra_html = ""
+    if fault.get("confidence") is not None:
+        extra_html += f"<div class='attr-audit'>confidence: {html.escape(str(fault['confidence']))}</div>"
+    for key, title in (("detector_evidence", "Detector evidence"), ("code_evidence", "Agent and reference code"),
+                       ("audit", "Independent audit and mismatches"), ("countermeasures", "Matched remedy specifications"),
+                       ("countermeasure_decisions", "Remedy selection decisions"),
+                       ("recommendation", "Recommendation"), ("recommendation_support", "Recommendation support")):
+        if key in fault:
+            extra_html += _attr_record_details(title, fault[key])
     return (
         f"<details class='judge-panel'{' open' if fault.get('is_primary') else ''}>"
         f"<summary>"
@@ -1224,7 +1255,7 @@ def _attr_fault_html(fault: dict) -> str:
         f"<span style='color:var(--ov-muted);font-size:12px;'>"
         f"(blame {weight:.2f}{primary_tag})</span>"
         f"</summary>"
-        f"<div class='judge-reasoning'>{''.join(links_html)}{_attr_chain_context_html(chain)}{audit_html}</div>"
+        f"<div class='judge-reasoning'>{''.join(links_html)}{_attr_chain_context_html(chain)}{audit_html}{extra_html}</div>"
         f"</details>"
     )
 
@@ -1236,12 +1267,13 @@ def _attr_arbiter_html(arb: dict | None) -> str:
         return ""
     applied = arb.get("applied", "")
     refuted = applied in ("demoted_to_conjunctive", "refuted_reassigned",
-                          "refuted_unattributed")
+                          "refuted_unattributed", "unattributed_after_refute")
     color = "#dc2626" if refuted else ("#059669" if applied == "corroborated"
                                        else "#9ca3af")
     verb = {"demoted_to_conjunctive": "refuted (demoted to conjunctive)",
             "refuted_reassigned": "refuted (blame reassigned to a deductive fault)",
             "refuted_unattributed": "refuted (no attributed cause remains)",
+            "unattributed_after_refute": "refuted (no attributed cause remains)",
             "corroborated": "corroborated", "noted": "noted"}.get(applied, applied)
     tgt = arb.get("target") or {}
     rationale = arb.get("rationale") or ""
@@ -1287,20 +1319,24 @@ def build_attribution_html(data: dict) -> str:
 
     faults = data.get("faults", [])
     attributed = [f for f in faults if float(f.get("blame_weight") or 0) > 0]
-    refuted = [f for f in faults if float(f.get("blame_weight") or 0) == 0]
+    zero_blame = [f for f in faults if float(f.get("blame_weight") or 0) == 0]
     out = (banner + notes_html
            + _attr_arbiter_html(data.get("arbiter"))
-           + _attr_scorecard_html(data.get("scorecard", []), primary))
+           + _attr_scorecard_html(data.get("scorecard", []), primary)
+           + _attr_case_context_html(data))
     out += ("<div style='margin-top:12px;font-weight:600;font-size:13px;'>"
             "Diagnosed faults (evidence chains)</div>")
     out += "".join(_attr_fault_html(f) for f in attributed) or _attr_notice(
-        "No attributed faults — no cause survived (see the arbiter verdict "
-        "above / coverage gap).", warn=False)
-    if refuted:
+        "No positive-blame faults are recorded. Review the policy trace and available evidence.", warn=False)
+    if zero_blame:
         out += ("<div style='margin-top:12px;font-weight:600;font-size:13px;"
-                "color:var(--ov-muted);'>Refuted candidates (zero blame — kept "
-                "for audit)</div>")
-        out += "".join(_attr_fault_html(f) for f in refuted)
+                "color:var(--ov-muted);'>Zero-blame candidates (kept for audit)</div>")
+        arbiter = data.get("arbiter") or {}
+        target = arbiter.get("target") or {}
+        out += "".join(_attr_fault_html(f, refuted=(arbiter.get("support") == "refute"
+                            and target.get("error_type") == f.get("error_type")
+                            and (not target.get("capability") or target.get("capability") == f.get("capability"))))
+                       for f in zero_blame)
     return out
 
 

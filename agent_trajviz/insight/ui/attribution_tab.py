@@ -53,7 +53,7 @@ def layout(*, allow_server_paths: bool = True) -> AttributionRefs:
             # A path on the serving machine: offered only on a local launch.
             attr_root_override = gr.Textbox(
                 label="Reference data root",
-                placeholder="default: auto-detected sibling checkout",
+                placeholder="default: launch directory or configured reference root",
                 scale=2,
                 visible=allow_server_paths,
                 interactive=allow_server_paths,
@@ -110,11 +110,9 @@ def bind(
             detected = detect_format(overview_raw)
             fmt = None if detected == "unknown" else detected
 
-        # A DSH export tree merges sibling sub-agent logs that `expected_sha`
-        # cannot cover, so the loader counts them and `diagnose` refuses rather
-        # than comparing a parent-only hash against the canonical file. Without
-        # passing it, that refusal is unreachable from the UI — the only path a
-        # user actually takes.
+        # Native parent/child trees carry one composite content identity. Keep
+        # their merge context while the evaluator verifies the complete source
+        # fingerprint and refuses any stale or mismatched displayed content.
         merged = overview_raw.get("_source_merged_count") or 0 if isinstance(overview_raw, dict) else 0
 
         result = _attr.diagnose(

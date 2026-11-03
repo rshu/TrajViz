@@ -50,7 +50,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # Keys written into the throwaway launch-directory ``.env`` the probe runs in.
-# ``AWE_DECAF_PATH`` is deliberately among them: honouring it at import time
+# ``AWE_ATTRIBUTION_PATH`` is deliberately among them: honouring it at import time
 # would prepend a launch-directory-controlled path to ``sys.path``.
 _DOTENV_KEYS = {
     "ANALYZE_API_KEY": "sk-import-surface-sentinel",
@@ -58,11 +58,11 @@ _DOTENV_KEYS = {
     "ANALYZE_MODEL": "import-surface-model",
     "LABEL_API_KEY": "sk-import-surface-label",
     "TRAJVIZ_IMPORT_SURFACE_SENTINEL": "leaked",
-    "AWE_DECAF_PATH": "",  # filled in with a path inside the temp launch dir
+    "AWE_ATTRIBUTION_PATH": "",  # filled in with a path inside the temp launch dir
 }
 
-# No module may write the process environment at import. The DECAF bridge reads
-# its settings once at import and configures DECAF through its attributes, not
+# No module may write the process environment at import. The ATTRIBUTION bridge reads
+# its settings once at import and configures ATTRIBUTION through its attributes, not
 # through environment variables, so there is nothing to allow here.
 
 _PROBE = '''
@@ -180,7 +180,7 @@ class ImportSideEffectTests(unittest.TestCase):
         cls._probe_dir = tempfile.TemporaryDirectory(prefix="trajviz-probe-")
         launch = Path(cls._launch.name)
         dotenv = dict(_DOTENV_KEYS)
-        dotenv["AWE_DECAF_PATH"] = str(launch / "fake-decaf")
+        dotenv["AWE_ATTRIBUTION_PATH"] = str(launch / "fake-attribution")
         cls.dotenv = dotenv
         (launch / ".env").write_text(
             "".join(f"{k}={v}\n" for k, v in dotenv.items()), encoding="utf-8",
@@ -220,15 +220,15 @@ class ImportSideEffectTests(unittest.TestCase):
         ``llm_config.load_env_files`` is fill-only and belongs to ``build_ui``.
         If any module started calling it (or its own dotenv reader) at import,
         merely importing TrajViz — or collecting this test suite — would arm
-        ``ANALYZE_*``/``LABEL_*`` and point ``AWE_DECAF_PATH`` at a directory
+        ``ANALYZE_*``/``LABEL_*`` and point ``AWE_ATTRIBUTION_PATH`` at a directory
         chosen by whoever owns the launch directory.
         """
         leaked = sorted(k for k in self.dotenv if k in self.report["env_added"])
         self.assertEqual(leaked, [], f"import read the launch directory's .env: {leaked}")
         self.assertEqual(self.report["env_changed"], [], "import overwrote existing environment variables")
-        fake_decaf = self.dotenv["AWE_DECAF_PATH"]
+        fake_attribution = self.dotenv["AWE_ATTRIBUTION_PATH"]
         self.assertNotIn(
-            fake_decaf, self.report["new_sys_path"],
+            fake_attribution, self.report["new_sys_path"],
             "import put a launch-directory-controlled path on sys.path",
         )
 

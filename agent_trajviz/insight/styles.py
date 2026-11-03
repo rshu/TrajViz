@@ -1195,7 +1195,7 @@ html.tv-theme-dark {
     border-top: 1px solid var(--ov-border);
 }
 
-/* DECAF attribution tab */
+/* ATTRIBUTION attribution tab */
 .attr-banner {
     padding: 12px 14px; margin-bottom: 12px; border-radius: 8px;
     background: var(--ov-card); border: 1px solid var(--ov-border);

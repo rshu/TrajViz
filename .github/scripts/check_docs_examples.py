@@ -241,6 +241,13 @@ def main(argv: list[str] | None = None) -> int:
             raise ExampleError("no explicitly marked Python examples found")
         results = []
         for path in docs:
+            if path.stem == "awe":
+                target = _import_package(args.package_root, args.expected_version)
+                release = tuple(int(part) for part in re.match(r"(\d+)\.(\d+)", target.__version__).groups())
+                if release < (0, 4):
+                    results.append({"page": path.name, "executed": 0, "skipped": len(read_examples(path)),
+                                    "version": target.__version__, "package": str(Path(target.__file__).resolve())})
+                    continue
             command = [sys.executable, "-I", str(Path(__file__).resolve()), "--run-page", str(path), "--extras", args.extras]
             if args.package_root is not None:
                 command += ["--package-root", str(args.package_root.resolve())]

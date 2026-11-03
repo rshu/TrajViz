@@ -108,7 +108,7 @@ class LabelerTests(unittest.TestCase):
                 "LABEL_API_KEY='synthetic-key' # test only\n"
                 "ANALYZE_MODEL=analysis-model\n"
                 "HTTPS_PROXY=https://example.invalid\n"
-                "AWE_DECAF_PATH=/synthetic/untrusted\n"
+                "AWE_ATTRIBUTION_PATH=/synthetic/untrusted\n"
                 "PYTHONPATH=/synthetic/untrusted\n"
                 "LABEL_INVALID.KEY=ignored\n",
                 encoding="utf-8",

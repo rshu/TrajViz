@@ -3,7 +3,7 @@
 ``load_env_files`` runs when the dashboard starts and reads ``.env`` from the
 launch directory. It used to accept every key, so launching TrajViz inside an
 untrusted folder (an unpacked trajectory dataset, say) let that folder's
-``.env`` set ``AWE_DECAF_PATH`` — which decides what code the Attribution tab
+``.env`` set ``AWE_ATTRIBUTION_PATH`` — which decides what code the Attribution tab
 imports — or any other variable the process reads. The documented purpose
 (README, ``.env.example``) is the ``ANALYZE_*`` / ``LABEL_*`` LLM settings, so
 that is all it loads now.
@@ -42,12 +42,12 @@ class DotenvScopeTests(unittest.TestCase):
 
     def test_only_analysis_and_labeler_keys_are_loaded(self):
         env = self._load(
-            "ANALYZE_MODEL=m\nLABEL_API_KEY=k\nAWE_DECAF_PATH=/tmp/evil\n"
+            "ANALYZE_MODEL=m\nLABEL_API_KEY=k\nAWE_ATTRIBUTION_PATH=/tmp/evil\n"
             "TRAJVIZ_REFERENCE_ROOT=/tmp/x\nPYTHONPATH=/tmp/p\nTRAJVIZ_DSH_EXPORT_ROOT=/\n"
         )
         self.assertEqual(env.get("ANALYZE_MODEL"), "m")
         self.assertEqual(env.get("LABEL_API_KEY"), "k")
-        for key in ("AWE_DECAF_PATH", "TRAJVIZ_REFERENCE_ROOT", "PYTHONPATH", "TRAJVIZ_DSH_EXPORT_ROOT"):
+        for key in ("AWE_ATTRIBUTION_PATH", "TRAJVIZ_REFERENCE_ROOT", "PYTHONPATH", "TRAJVIZ_DSH_EXPORT_ROOT"):
             self.assertNotIn(key, env)
 
     def test_repo_root_env_is_read_only_from_a_source_checkout(self):

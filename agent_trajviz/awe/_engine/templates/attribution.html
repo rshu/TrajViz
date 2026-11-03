@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AWE · Numbered attribution graphs</title>
+<style>
+:root{color-scheme:light dark;--bg:#f7f9fb;--fg:#182534;--muted:#536171;--panel:#fff;--line:#c6d0db;--accent:#245886;--input:#ecf1f6;--observed:#e5f3e9;--observed-ink:#215336;--inferred:#fff2d9;--inferred-ink:#715017;--llm:#eee5fb;--llm-ink:#63418d;--selected:#e1edfb;--selected-ink:#244e7e;--unknown:#eceff2;--unknown-ink:#4d5963}
+@media(prefers-color-scheme:dark){:root{--bg:#101724;--fg:#e6eef7;--muted:#b0bdd0;--panel:#192336;--line:#43516a;--accent:#8cc4f4;--input:#253149;--observed:#203c32;--observed-ink:#b6e3c7;--inferred:#433621;--inferred-ink:#f5d798;--llm:#372c4e;--llm-ink:#decbfa;--selected:#263b57;--selected-ink:#bddafa;--unknown:#303846;--unknown-ink:#c7d0dc}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,-apple-system,sans-serif}main{max-width:1180px;margin:auto;padding:28px 22px 60px}h1{font-size:29px;line-height:1.25;margin:0 0 8px}h2{font-size:20px;margin:0 0 12px}h3{font-size:17px;margin:0 0 6px}p{margin:8px 0}a{color:var(--accent)}.muted{color:var(--muted)}.links{display:flex;gap:18px;flex-wrap:wrap}.controls{display:flex;align-items:end;gap:18px;flex-wrap:wrap;margin:24px 0 14px}.case-field{flex:1;min-width:0}.case-field label{display:block;font-weight:600;margin-bottom:5px}select{width:100%;max-width:100%;padding:10px;font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:6px}.toggle{display:flex;gap:8px;align-items:center;padding:10px 0}.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:13px}.legend span{padding:4px 9px;border-radius:4px}.observation,.input{background:var(--observed);color:var(--observed-ink)}.inference,.policy{background:var(--inferred);color:var(--inferred-ink)}.llm{background:var(--llm);color:var(--llm-ink)}.decision{background:var(--selected);color:var(--selected-ink)}.unknown,.hypothesis,.refuted,.no_attribution{background:var(--unknown);color:var(--unknown-ink)}.scope{margin:8px 0 16px;font-size:13px;overflow-wrap:anywhere}.layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:20px;align-items:start}.graph-wrap{position:relative;min-width:0}.graph-content{position:relative;z-index:1}.arrows{position:absolute;left:0;top:0;width:100%;height:100%;z-index:0;overflow:visible;pointer-events:none}.arrows path{stroke:var(--line);stroke-width:1.5;fill:none}.arrows path.active{stroke:var(--accent);stroke-width:2.5}.arrows path.hypothesis{stroke-dasharray:5 4}.arrows marker path{fill:var(--line);stroke:none}.phase{margin:0 0 60px}.phase:last-child{margin-bottom:0}.phase-label{font-size:12px;color:var(--muted);margin-bottom:7px}.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));gap:12px}.node{display:block;width:100%;text-align:left;color:var(--fg);padding:13px;border:1px solid var(--line);border-radius:9px;font:inherit;cursor:pointer;min-width:0;overflow-wrap:anywhere}.node .number{font-size:13px;font-weight:650;display:block;margin-bottom:5px}.node .title{font-weight:650;display:block;margin-bottom:6px}.node .line{font-size:13px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;margin-top:4px}.node .source{font-size:11px;display:block;margin-top:9px}.node .badge{font-size:11px;font-weight:600;display:block;margin-top:4px}.node[aria-pressed=true]{outline:3px solid var(--accent);outline-offset:2px}.node.dim{opacity:.48}.node.path{border-color:var(--accent)}.detail{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:17px;overflow-wrap:anywhere;min-width:0}.detail p{font-size:14px}.detail .source{font-size:12px}.detail pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,monospace;max-height:500px;overflow:auto;background:var(--input);padding:12px}.episode{padding:12px;margin:10px 0;border:1px solid var(--line);border-radius:6px;overflow-wrap:anywhere}.section{margin-top:28px}details summary{cursor:pointer;color:var(--accent);font-weight:600}code{font-size:.9em}button:focus-visible,summary:focus-visible,select:focus-visible{outline:3px solid var(--accent);outline-offset:3px}.empty{padding:28px;background:var(--panel);border:1px solid var(--line);border-radius:9px}.case-heading{margin:18px 0 8px;overflow-wrap:anywhere}.case-note{font-size:13px;color:var(--muted);margin-bottom:16px}.relation-key{font-size:12px;color:var(--muted);margin:15px 0}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+@media(max-width:960px){.layout{grid-template-columns:minmax(0,1fr)}.detail{order:-1}.detail pre{max-height:300px}}@media(max-width:520px){main{padding:20px 14px}.controls{display:block}.row{grid-template-columns:1fr}.phase{margin-bottom:48px}h1{font-size:25px}}
+[hidden]{display:none!important}.node.dim{opacity:.75}.graph-content{padding-left:18px}
+</style>
+</head>
+<body>
+<main>
+<header>
+<h1>How AWE reached each attribution</h1>
+<p>Follow numbered evidence, assessments and selection decisions. Click a node to inspect its sources and highlight the inputs leading to it.</p>
+<p class="muted">These are provenance DAGs. Arrows explain the diagnosis process; they do not prove an operation caused a failure. Reasoning numbers differ from original trajectory step IDs.</p>
+<p class="links"><a href="INSIGHTS.md">Run insights</a><a href="RECOMMENDATIONS.md">Recommendation plan</a><a href="faults.json">Complete source dossier</a><a href="attribution_graphs.json">Graph data</a></p>
+</header>
+<div id="scope" class="scope"></div>
+<div class="controls" id="controls">
+<div class="case-field"><label for="caseSelect">Diagnosed case</label><select id="caseSelect"></select></div>
+<label class="toggle"><input id="alternatives" type="checkbox"> Show other fault candidates</label>
+</div>
+<div class="legend" aria-label="Node provenance legend">
+<span class="observation">Observed inputs / artifact evidence</span><span class="inference">Rule inference / policy</span><span class="llm">LLM assessment / arbiter</span><span class="decision">Reported decision</span><span class="hypothesis">Untested check / refuted entry</span><span class="unknown">Origin unavailable / conflicting</span>
+</div>
+<h2 id="caseHeading" class="case-heading"></h2><p id="caseNote" class="case-note"></p>
+<div class="layout" id="layout">
+<div class="graph-wrap" id="graphWrap"><svg class="arrows" id="arrows" aria-hidden="true"></svg><div class="graph-content" id="graphContent" role="group" aria-label="Numbered attribution graph"></div></div>
+<aside id="detail" class="detail" aria-label="Selected node evidence"></aside>
+</div>
+<p class="relation-key">Solid arrows: documented evidence and decision inputs. Dashed arrows: a proposed validation check. Typed edge relations appear in the selected node's details. Hidden branches still participate in recorded policy calculations.</p>
+<section class="section" id="actionsSection"><details><summary>Observed action/result links and recovery episodes</summary><p class="muted">Protocol links are kept separate from attribution. A later success on the same action is recovery evidence, not proof that it fixed the task.</p><div id="actionContent"></div></details></section>
+<section class="section" id="excerptSection"><details><summary>Original trajectory excerpt and step references</summary><p class="muted">This is the existing bounded dossier excerpt. Omitted events and unavailable reasoning remain unavailable; no full-trajectory reconstruction is claimed.</p><ol id="excerptContent"></ol></details></section>
+<div id="announcement" class="sr-only" aria-live="polite"></div>
+</main>
+<script type="application/json" id="graphData">__AWE_GRAPH_DATA__</script>
+<script>
+(()=>{
+'use strict';
+const data=JSON.parse(document.getElementById('graphData').textContent);
+const byId=new Map(data.graphs.map(g=>[g.case_id,g]));
+const select=document.getElementById('caseSelect'),alt=document.getElementById('alternatives');
+const content=document.getElementById('graphContent'),wrap=document.getElementById('graphWrap'),svg=document.getElementById('arrows');
+const detail=document.getElementById('detail');
+const phases={1:'Task context',2:'Recorded evidence',3:'Assessment',4:'Fault candidate',5:'Arbiter review',6:'Weighting and selection policy',7:'Reported attribution',8:'Proposed validation'};
+let current=null,visible=[],selected=null,activeNodes=new Set(),activeEdges=new Set();
+function element(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;}
+function sourceText(source){return source?(source.available===false?'Source unavailable: ':'')+source.artifact+' · JSON pointer '+source.json_pointer:'No source reference recorded.';}
+function showDetails(node){
+ detail.replaceChildren(element('h3',node.number+'. '+node.title),element('p','Provenance: '+node.provenance+' · status: '+node.status));
+ node.lines.forEach(line=>detail.appendChild(element('p',line)));
+ detail.appendChild(element('p',sourceText(node.source),'source'));
+ const links=current.edges.filter(e=>e.to===node.id);
+ if(links.length)detail.appendChild(element('p','Inputs: '+links.map(e=>{const source=current.nodes.find(n=>n.id===e.from);return source.number+'. '+source.title+' ['+e.relation+']';}).join('; '),'source'));
+ const more=element('details');more.appendChild(element('summary','Complete recorded evidence and policy fields'));
+ more.appendChild(element('pre',JSON.stringify(node.details,null,2)));detail.appendChild(more);
+}
+function choose(node,announce=true){
+ selected=node.id;activeNodes=new Set([node.id]);activeEdges=new Set();
+ const pending=[node.id];while(pending.length){const target=pending.pop();for(const e of current.edges){if(e.to!==target)continue;activeEdges.add(e.from+'>'+e.to);if(!activeNodes.has(e.from)){activeNodes.add(e.from);pending.push(e.from);}}}
+ for(const button of content.querySelectorAll('button.node')){button.setAttribute('aria-pressed',String(button.dataset.node===node.id));button.classList.toggle('dim',!activeNodes.has(button.dataset.node));button.classList.toggle('path',activeNodes.has(button.dataset.node));}
+ showDetails(node);drawEdges();if(announce)document.getElementById('announcement').textContent='Selected reasoning step '+node.number+': '+node.title;
+}
+function svgElement(name,attributes){const e=document.createElementNS('http://www.w3.org/2000/svg',name);for(const [key,value]of Object.entries(attributes))e.setAttribute(key,String(value));return e;}
+function drawEdges(){
+ svg.replaceChildren();if(!current)return;
+ const box=wrap.getBoundingClientRect();svg.setAttribute('viewBox','0 0 '+box.width+' '+box.height);
+ const defs=svgElement('defs',{}),marker=svgElement('marker',{id:'aweArrow',viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:6,markerHeight:6,orient:'auto'});
+ marker.appendChild(svgElement('path',{d:'M 0 0 L 10 5 L 0 10 z'}));defs.appendChild(marker);svg.appendChild(defs);
+ const buttons=new Map([...content.querySelectorAll('button.node')].map(b=>[b.dataset.node,b]));
+ for(const e of current.edges){const a=buttons.get(e.from),b=buttons.get(e.to);if(!a||!b)continue;const ra=a.getBoundingClientRect(),rb=b.getBoundingClientRect();const x1=ra.left+ra.width/2-box.left,y1=ra.bottom-box.top,x2=rb.left+rb.width/2-box.left,y2=rb.top-box.top;const mid=(y1+y2)/2;
+  const sourceNode=current.nodes.find(n=>n.id===e.from),targetNode=current.nodes.find(n=>n.id===e.to);
+  const skips=visible.some(n=>n.phase>sourceNode.phase&&n.phase<targetNode.phase)||visible.some(n=>n.id!==sourceNode.id&&n.phase===sourceNode.phase&&buttons.get(n.id)?.getBoundingClientRect().top>ra.bottom);
+  const route=skips?`M ${x1} ${y1+2} C ${x1} ${y1+24}, 6 ${y1+24}, 6 ${y1+32} L 6 ${y2-24} C 6 ${y2-12}, ${x2} ${y2-12}, ${x2} ${y2-4}`:`M ${x1} ${y1+2} C ${x1} ${mid}, ${x2} ${mid}, ${x2} ${y2-4}`;
+  const path=svgElement('path',{d:route,'data-from':e.from,'data-to':e.to,'data-routed-around':String(skips),'marker-end':'url(#aweArrow)',class:(activeEdges.has(e.from+'>'+e.to)?'active ':'')+(e.relation==='proposes_check'?'hypothesis':'')});
+  path.appendChild(svgElement('title',{}));path.lastChild.textContent=e.relation;svg.appendChild(path);
+ }
+}
+function actionView(){
+ const target=document.getElementById('actionContent');target.replaceChildren();const action=current.action_graph;
+ target.appendChild(element('p',action.scope+' Missing/unobserved result calls: '+action.missing_result_calls));
+ if(!action.nodes.length){target.appendChild(element('p','No observed failure/recovery links recorded. This does not establish that no actions occurred.'));return;}
+ const nodes=new Map(action.nodes.map(n=>[n.id,n]));
+ for(const edge of action.edges){const a=nodes.get(edge.from),b=nodes.get(edge.to),line=element('div',undefined,'episode');
+  line.appendChild(element('strong',a.title+' → '+b.title));line.appendChild(element('p','Relation: '+edge.relation+' · '+edge.basis));
+  line.appendChild(element('p','Thread: '+String(a.reference.thread??'main')+' · positions: '+a.position+' → '+b.position));
+  const more=element('details');more.appendChild(element('summary','Command, output and source references'));more.appendChild(element('pre',JSON.stringify({from:a,to:b,episode:action.episodes[a.episode_index]},null,2)));line.appendChild(more);target.appendChild(line);
+ }
+}
+function renderCase(){
+ current=byId.get(select.value);if(!current)return;
+ document.getElementById('caseHeading').textContent=current.case_id;
+ document.getElementById('caseNote').textContent='Recorded status: '+current.status+'. '+(current.trace_available?'Exact selection trace is available; weights are not causal probabilities.':'Historical record: exact decision trace unavailable; rounded weights cannot establish ties.')+(current.primary_fault_ids.length&&!alt.checked?' Showing the primary branch and relevant arbiter target. Other candidate inputs remain in the policy details.':' Showing all recorded fault candidates.');
+ const keep=new Set(current.primary_fault_ids);
+ if(current.primary_fault_ids.length&&!alt.checked){for(const e of current.edges){if(e.relation==='reviews_candidate')keep.add(e.from);}}
+ visible=current.nodes.filter(n=>alt.checked||!current.primary_fault_ids.length||!n.fault_id||keep.has(n.fault_id));
+ content.replaceChildren();
+ for(let phase=1;phase<=8;phase++){const items=visible.filter(n=>n.phase===phase);if(!items.length)continue;const section=element('section',undefined,'phase');section.appendChild(element('div',phase+' · '+phases[phase],'phase-label'));const row=element('div',undefined,'row');
+  for(const node of items){const statusClass=['refuted','no_attribution'].includes(node.status)?node.status:node.provenance;const button=element('button',undefined,'node '+statusClass);button.type='button';button.dataset.node=node.id;button.setAttribute('aria-pressed','false');button.appendChild(element('span','Step '+node.number,'number'));button.appendChild(element('span',node.title,'title'));node.lines.forEach(text=>button.appendChild(element('span',text,'line')));button.appendChild(element('span','Source: '+(node.source?.artifact||'unavailable'),'source'));button.appendChild(element('span',node.provenance+' · '+node.status,'badge'));button.addEventListener('click',()=>choose(node));row.appendChild(button);}section.appendChild(row);content.appendChild(section);
+ }
+ const preferred=visible.find(n=>n.id===selected)||visible.find(n=>n.id==='decision');choose(preferred,false);
+ actionView();const excerpt=document.getElementById('excerptContent');excerpt.replaceChildren();
+ for(const event of current.trajectory_excerpt){const ref=event.source_ref;const text='Original step '+event.step+' · '+event.kind+(ref?' · thread '+String(ref.thread??'main')+' · position '+ref.position:' · thread/position unavailable')+' — '+(event.text||JSON.stringify(event.files?.length?event.files:event.args||{}));excerpt.appendChild(element('li',text));}
+ if(!current.trajectory_excerpt.length)excerpt.appendChild(element('li','No trajectory excerpt recorded.'));
+ requestAnimationFrame(drawEdges);
+}
+document.getElementById('scope').textContent=data.scope.benchmark+' · '+data.scope.diagnosed_failed_cases+' diagnosed failures · '+data.scope.agents.length+' agents · '+data.scope.instance_ids.length+' input tasks · dossier hash '+data.source_cases_sha256.slice(0,12);
+if(!data.graphs.length){document.getElementById('controls').hidden=true;document.getElementById('layout').hidden=true;document.getElementById('actionsSection').hidden=true;document.getElementById('excerptSection').hidden=true;const empty=element('p','No diagnosed failures in this dossier. Consult run insights for outcome and input coverage.','empty');document.getElementById('caseHeading').after(empty);return;}
+for(const graph of data.graphs){const option=element('option',graph.case_id+' · '+graph.status);option.value=graph.case_id;select.appendChild(option);}
+function readHash(){const requested=new URLSearchParams(location.hash.slice(1)).get('case');if(requested&&byId.has(requested))select.value=requested;renderCase();}
+select.addEventListener('change',()=>{location.hash='case='+encodeURIComponent(select.value);selected=null;renderCase();});alt.addEventListener('change',renderCase);window.addEventListener('hashchange',readHash);new ResizeObserver(drawEdges).observe(wrap);readHash();
+})();
+</script>
+</body>
+</html>

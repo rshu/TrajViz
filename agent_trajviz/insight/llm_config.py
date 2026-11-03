@@ -29,7 +29,7 @@ def _clean_env_scalar(raw: str) -> str:
 # The dashboard's .env configures the analysis LLM (ANALYZE_*) and shares the
 # step labeler's settings (LABEL_*); that is its documented purpose (README,
 # .env.example). It is read from the launch directory, so accepting any key let
-# a .env in an untrusted folder set AWE_DECAF_PATH (which decides the code the
+# a .env in an untrusted folder set AWE_ATTRIBUTION_PATH (which decides the code the
 # Attribution tab imports) or anything else the process reads.
 _DOTENV_PREFIXES = ("ANALYZE_", "LABEL_")
 _DOTENV_KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")

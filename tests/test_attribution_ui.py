@@ -18,9 +18,9 @@ GOLD_INST = "astropy__astropy-13033"
 
 
 def _reference_present() -> bool:
-    if not attribution.DECAF_AVAILABLE:
+    if not attribution.ATTRIBUTION_AVAILABLE:
         return False
-    from awe import config
+    from agent_trajviz.awe._engine import config
     return config.requirements_path(GOLD_INST).is_file()
 
 
