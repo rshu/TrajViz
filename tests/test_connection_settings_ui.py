@@ -5,7 +5,9 @@ from __future__ import annotations
 import copy
 import json
 import os
+import shutil
 import socket
+import subprocess
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -83,6 +85,7 @@ def test_probe_is_only_wired_to_explicit_button_and_has_no_trajectory_inputs(ui)
     assert len(trigger.outputs) == 2
     assert trigger.outputs[0] is test_button
     assert isinstance(trigger.outputs[1], gr.HTML)
+    assert not any(isinstance(component, gr.Textbox) and component.type == "password" for component in trigger.outputs)
     assert not any(isinstance(component, (gr.State, gr.BrowserState, gr.Chatbot)) for component in trigger.outputs)
 
 
@@ -93,12 +96,14 @@ def test_probe_reports_progress_before_request_and_uses_current_form_connection(
     progress = next(run)
     request.assert_not_called()
     assert progress[0]["interactive"] is False
+    assert len(progress) == 2
     assert "test" in progress[1].lower()
     finished = next(run)
     with pytest.raises(StopIteration):
         next(run)
     assert finished[0]["interactive"] is True
     assert "Connection successful." in finished[1]
+    assert len(finished) == 2, "testing must never send a password component update"
     config = request.call_args.args[0]
     assert (config.provider, config.base_url, config.model, config.api_key) == (
         "anthropic", "https://entered.example.test/v1", "entered-model", "entered-private-key",
@@ -129,6 +134,7 @@ def test_blank_key_tests_retained_key_only_for_same_endpoint_and_provider(ui, pr
     assert request.call_args.args[0].api_key == previous.config.api_key
     assert request.call_args.args[0].model == "new-selected-model"
     assert previous.config.api_key not in finished[1]
+    assert len(finished) == 2
 
 
 @pytest.mark.parametrize("overrides", [
@@ -189,6 +195,25 @@ def test_unexpected_probe_exception_does_not_expose_connection_or_key(ui, previo
         assert value not in result[1]
 
 
+def test_failed_retained_key_probe_does_not_overwrite_password_input(ui, previous, monkeypatch):
+    monkeypatch.setattr(settings_ui, "check_connection", Mock(return_value=ConnectionTestResult(False, "Key rejected.")))
+    responses = list(_probe(ui, previous, provider="openai", base_url=previous.config.base_url, api_key=""))
+    assert len(responses) == 2
+    assert all(len(response) == 2 for response in responses)
+    assert previous.config.api_key not in json.dumps(responses)
+
+
+@pytest.mark.parametrize("key", ["short-secret", "a-considerably-longer-retained-private-key"])
+def test_retained_success_never_outputs_a_key_or_replaces_the_password_input(ui, previous, monkeypatch, key):
+    from dataclasses import replace
+
+    active = replace(previous, config=replace(previous.config, api_key=key))
+    monkeypatch.setattr(settings_ui, "check_connection", Mock(return_value=ConnectionTestResult(True, "Verified.")))
+    responses = list(_probe(ui, active, provider="openai", base_url=active.config.base_url, api_key=""))
+    assert all(len(response) == 2 for response in responses)
+    assert key not in json.dumps(responses)
+
+
 def test_connection_edits_cancel_and_clear_the_previous_result(ui):
     trigger = _function(ui, "on_test_connection")
     result_component = trigger.outputs[1]
@@ -198,6 +223,44 @@ def test_connection_edits_cancel_and_clear_the_previous_result(ui):
         events = [fn for fn in ui.fns.values() if (component._id, "change") in fn.targets]
         assert any(result_component in fn.outputs for fn in events), component.label
         assert any(trigger._id in fn.cancels for fn in events), component.label
+
+
+def test_destination_and_clear_edits_use_only_client_placeholder_updates_without_password_values(ui):
+    probe = _function(ui, "on_test_connection")
+    password_id = next(component._id for component in probe.inputs if component.label == "API key")
+    assert password_id not in [component._id for component in probe.outputs]
+    fields = [component for component in probe.inputs if component.label in ("Provider", "Base URL", "Clear API key")]
+    dependencies = ui.get_config_file()["dependencies"]
+    scripts = []
+    for field in fields:
+        events = [event for event in dependencies if (field._id, "input") in map(tuple, event["targets"])]
+        assert events and all(event["backend_fn"] is False and event["inputs"] == []
+                              and event["outputs"] == [password_id] for event in events)
+        scripts.extend(event["js"] for event in events)
+        # Existing backend cancellation/status handlers can run on .change,
+        # but replacing password props there would erase an unsaved draft.
+        backend = [event for event in dependencies if event["backend_fn"] and any(
+            (field._id, kind) in map(tuple, event["targets"]) for kind in ("input", "change"))]
+        assert all(password_id not in event["outputs"] for event in backend)
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is required to verify the local password hint handler")
+    source = r"""
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const scripts = JSON.parse(process.argv[1]);
+for (const source of scripts) {
+    // The handler receives no password input and cannot access the DOM. Its
+    // public Gradio props update must omit value entirely, preserving drafts.
+    const update = vm.runInNewContext('(' + source + ')', {})();
+    assert.deepEqual(JSON.parse(JSON.stringify(update)), {__type__: 'update', placeholder: ''});
+    assert.equal(Object.prototype.hasOwnProperty.call(update, 'value'), false);
+}
+console.log('client password hint update omits the native value');
+"""
+    result = subprocess.run([node, "-e", source, json.dumps(scripts)], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert "client password hint update omits the native value" in result.stdout
 
 
 @pytest.mark.parametrize("name", ["on_apply_settings", "on_reset_settings"])
@@ -264,6 +327,8 @@ def test_http_probe_uses_current_fields_without_applying_them_or_exposing_keys(s
     assert (probes[-1].provider, probes[-1].model, probes[-1].api_key) == ("anthropic", "draft-model", draft_key)
     assert "Connection successful." in json.dumps(result)
     assert all(secret not in json.dumps(result) for secret in (draft_key, applied_key, _ENV["ANALYZE_API_KEY"]))
+    # gradio_client omits the Button output; the only public result is status.
+    assert isinstance(result, str)
     calls = []
 
     def complete(config, _system, _messages):
@@ -282,10 +347,11 @@ def test_http_probe_uses_current_fields_without_applying_them_or_exposing_keys(s
 def test_http_sessions_cannot_reuse_another_sessions_retained_key(served_ui, monkeypatch):
     app, url = served_ui
     first, second = Client(url, verbose=False), Client(url, verbose=False)
-    _invoke(app, first, "on_apply_settings", {
+    applied = _invoke(app, first, "on_apply_settings", {
         "Provider": "openai", "Base URL": "https://active.example.test/v1", "Model": "active-model",
         "API key": "first-client-key", "Remember connection details in this browser": False,
     })
+    assert applied[0] == gr.update(value="", placeholder="********")
     request = Mock(return_value=ConnectionTestResult(True, "Verified."))
     monkeypatch.setattr(settings_ui, "check_connection", request)
     result = _invoke(app, second, "on_test_connection", {
@@ -295,8 +361,29 @@ def test_http_sessions_cannot_reuse_another_sessions_retained_key(served_ui, mon
     request.assert_not_called()
     assert "API key" in json.dumps(result)
     assert "first-client-key" not in json.dumps(result)
-    _invoke(app, first, "on_test_connection", {
+    retained = _invoke(app, first, "on_test_connection", {
         "Provider": "openai", "Base URL": "https://active.example.test/v1", "Model": "active-model",
         "API key": "", "Clear API key": False,
     })
     assert request.call_args.args[0].api_key == "first-client-key"
+    assert isinstance(retained, str)
+    assert "first-client-key" not in json.dumps(retained)
+
+
+def test_http_changed_destination_or_clear_flag_cannot_verify_a_retained_key(served_ui, monkeypatch):
+    app, url = served_ui
+    client = Client(url, verbose=False)
+    _invoke(app, client, "on_apply_settings", {
+        "Provider": "openai", "Base URL": "https://active.example.test/v1", "Model": "active-model",
+        "API key": "retained-destination-key", "Remember connection details in this browser": False,
+    })
+    request = Mock(return_value=ConnectionTestResult(True, "Verified."))
+    monkeypatch.setattr(settings_ui, "check_connection", request)
+    for overrides in ({"Provider": "anthropic"}, {"Base URL": "https://different.example.test/v1"},
+                      {"Clear API key": True}):
+        values = {"Provider": "openai", "Base URL": "https://active.example.test/v1", "Model": "active-model",
+                  "API key": "", "Clear API key": False, **overrides}
+        result = _invoke(app, client, "on_test_connection", values)
+        request.assert_not_called()
+        assert isinstance(result, str)
+        assert "retained-destination-key" not in json.dumps(result)

@@ -52,6 +52,12 @@ def _invoke(app, client, name, values=None):
     return client.predict(*inputs, api_name="/" + fn.api_name)
 
 
+def _public_output(app, name, result, label):
+    outputs = [component for component in _function(app, name).outputs
+               if not isinstance(component, (gr.State, gr.BrowserState))]
+    return next(value for component, value in zip(outputs, result, strict=True) if component.label == label)
+
+
 def _apply(app, client, **overrides):
     values = {
         "Provider": "openai",
@@ -164,11 +170,9 @@ class SettingsHttpTests(unittest.TestCase):
         result = _apply(self.app, client, **{"API key": "entered-secret-not-for-output"})
         self.assertNotIn("entered-secret-not-for-output", json.dumps(result))
         self.assertNotIn(_SERVER_KEY, json.dumps(result))
-        output_components = [component for component in _function(self.app, "on_apply_settings").outputs
-                             if not isinstance(component, (gr.State, gr.BrowserState))]
-        password_index = next(index for index, component in enumerate(output_components)
-                              if component.label == "API key")
-        self.assertEqual(result[password_index], "")
+        password = _public_output(self.app, "on_apply_settings", result, "API key")
+        self.assertEqual(password["value"], "")
+        self.assertEqual(password["placeholder"], "********")
         self.assertEqual(self.calls, [])
         self.load(client)
         self.ask(client)
@@ -194,6 +198,9 @@ class SettingsHttpTests(unittest.TestCase):
         _apply(self.app, client)
         result = _invoke(self.app, client, "on_reset_settings")
         self.assertNotIn(_SERVER_KEY, json.dumps(result))
+        password = _public_output(self.app, "on_reset_settings", result, "API key")
+        self.assertEqual(password["value"], "")
+        self.assertEqual(password["placeholder"], "********")
         self.assertEqual(self.calls, [])
         self.load(client)
         self.ask(client)
@@ -202,7 +209,10 @@ class SettingsHttpTests(unittest.TestCase):
 
     def test_new_target_cannot_receive_an_inherited_server_secret(self):
         client = self.client()
-        _apply(self.app, client, **{"API key": "", "Base URL": "https://different.example.test/v1"})
+        applied = _apply(self.app, client, **{"API key": "", "Base URL": "https://different.example.test/v1"})
+        password = _public_output(self.app, "on_apply_settings", applied, "API key")
+        self.assertEqual(password["value"], "")
+        self.assertEqual(password["placeholder"], "")
         self.load(client)
         result = self.ask(client)
         self.assertEqual(self.calls, [])
@@ -234,7 +244,7 @@ class SettingsHttpTests(unittest.TestCase):
         self.assertEqual(nonsecret_settings(active)["language"], "Spanish")
         for component, value in zip(restore.outputs, restored, strict=True):
             if component.label == "API key":
-                self.assertEqual(value, "")
+                self.assertEqual(value, gr.update(value="", placeholder=""))
             if isinstance(component, gr.BrowserState):
                 self.assertNotIn("api_key", value["values"])
                 self.assertNotIn("forged-browser-secret", json.dumps(value))

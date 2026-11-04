@@ -117,7 +117,7 @@ def test_restore_and_reset_preserve_manual_reply_choice_and_connection_secret_ru
     assert _output(restore, restored, refs.language) == gr.skip()
     assert _output(restore, restored, refs.model) == "saved-model"
     assert _output(restore, restored, refs.base_url) == "https://saved.example.test/v1"
-    assert _output(restore, restored, refs.api_key) == ""
+    assert _output(restore, restored, refs.api_key) == gr.update(value="", placeholder="")
     active = _output(restore, restored, shared.state_settings)
     assert active.language == "German" and active.config.api_key == ""
     remembered = _output(restore, restored, refs.browser_state)
@@ -130,7 +130,7 @@ def test_restore_and_reset_preserve_manual_reply_choice_and_connection_secret_ru
     assert _output(reset, reset_values, refs.language) == gr.skip()
     assert _output(reset, reset_values, refs.model) == "environment-model"
     assert _output(reset, reset_values, refs.browser_state) == {}
-    assert _output(reset, reset_values, refs.api_key) == ""
+    assert _output(reset, reset_values, refs.api_key) == gr.update(value="", placeholder="********")
     assert _output(reset, reset_values, shared.state_settings) is None
     assert refs.language.value == "English"
 
@@ -139,8 +139,10 @@ def test_restore_and_reset_preserve_manual_reply_choice_and_connection_secret_ru
 def test_missing_or_invalid_saved_preferences_cannot_clobber_the_reply_dropdown(make_settings, saved):
     app, refs, _, _, _, _ = make_settings("zh-CN")
     restore = _function(app, "on_restore_settings")
-    restored = restore.fn(saved)
+    with patch.dict(os.environ, _ENV, clear=True):
+        restored = restore.fn(saved)
     assert _output(restore, restored, refs.language) == gr.skip()
+    assert _output(restore, restored, refs.api_key) == gr.update(value="", placeholder="********")
     assert refs.language.value == "Simplified Chinese"
 
 
@@ -154,7 +156,41 @@ def test_apply_remembers_only_nonsecret_values_and_does_not_rewrite_the_reply_ch
     assert remembered["values"]["language"] == choice
     assert "api_key" not in remembered["values"] and "entered-private-key" not in json.dumps(remembered)
     assert _output(apply, applied, shared.state_settings).config.api_key == "entered-private-key"
-    assert _output(apply, applied, refs.api_key) == "" and refs.language not in apply.outputs
+    assert _output(apply, applied, refs.api_key) == gr.update(value="", placeholder="********")
+    assert refs.language not in apply.outputs
+
+
+@pytest.mark.parametrize("key", ["short-secret", "a-much-longer-private-key-that-must-never-be-visible"])
+def test_applied_key_presence_uses_constant_placeholder_without_exposing_key_or_length(make_settings, key):
+    app, refs, _, shared, _, _ = make_settings()
+    apply = _function(app, "on_apply_settings")
+    applied = apply.fn("openai", "https://active.example.test/v1", key, "active-model",
+                       .3, 1024, 30, "English", False, True, None, [], None)
+    assert _output(apply, applied, refs.api_key) == gr.update(value="", placeholder="********")
+    assert _output(apply, applied, shared.state_settings).config.api_key == key
+    public = [value for component, value in zip(apply.outputs, applied, strict=True)
+              if not isinstance(component, gr.State)]
+    assert key not in json.dumps(public)
+    assert "api_key" not in _output(apply, applied, refs.browser_state)["values"]
+
+
+@pytest.mark.parametrize("changed_endpoint,clear", [(True, False), (False, True)])
+def test_changed_or_cleared_endpoint_has_no_retained_key_placeholder(make_settings, changed_endpoint, clear):
+    app, refs, _, shared, _, _ = make_settings()
+    previous = shared.state_settings.value
+    apply = _function(app, "on_apply_settings")
+    applied = apply.fn("openai", "https://different.example.test/v1" if changed_endpoint else previous.config.base_url,
+                       "", "active-model", .3, 1024, 30, "English", clear, False, previous, [], None)
+    assert _output(apply, applied, shared.state_settings).config.api_key == ""
+    assert _output(apply, applied, refs.api_key) == gr.update(value="", placeholder="")
+
+
+def test_reset_with_no_environment_key_clears_the_presence_placeholder(make_settings):
+    app, refs, _, _, _, _ = make_settings()
+    reset = _function(app, "on_reset_settings")
+    with patch.dict(os.environ, {**_ENV, "ANALYZE_API_KEY": ""}, clear=True):
+        reset_values = reset.fn([], None)
+    assert _output(reset, reset_values, refs.api_key) == gr.update(value="", placeholder="")
 
 
 def test_standalone_legacy_preferences_normalize_dropdown_without_changing_stored_fallback(make_settings):

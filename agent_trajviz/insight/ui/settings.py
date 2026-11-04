@@ -16,12 +16,20 @@ from ..llm_config import (
     is_chinese,
     nonsecret_settings,
     request_reply_language,
+    resolve_session_settings,
 )
 from ..presenters.issues import build_overview_issues_html
 from ..session import session_from_run
 from .shared import SharedState
 
 _FIELDS = ("provider", "base_url", "model", "temperature", "max_tokens", "timeout", "language")
+_KEY_MASK = "********"
+_CLEAR_KEY_HINT_JS = "() => ({__type__: 'update', placeholder: ''})"
+
+
+def _key_field_update(settings=None):
+    """Clear the submitted secret; disclose only whether a session key exists."""
+    return gr.update(value="", placeholder=_KEY_MASK if resolve_session_settings(settings).config.api_key else "")
 
 
 @dataclass
@@ -76,6 +84,7 @@ def layout() -> SettingsRefs:
             with gr.Column(min_width=0):
                 api_key = gr.Textbox(
                     label="API key", value="", type="password", html_attributes={"autocomplete": "off"},
+                    placeholder=_KEY_MASK if resolve_session_settings().config.api_key else "",
                     info="Leave blank to keep the active key for this endpoint. Session only.",
                     elem_classes=["settings-field"],
                 )
@@ -158,7 +167,7 @@ def bind(refs: SettingsRefs, shared: SharedState, sidebar, overview, app, *, mod
 
         refs.language.value = on_reply_language_change(language.value)
         language.change(fn=on_reply_language_change, inputs=[language], outputs=[refs.language],
-                        cancels=list(model_events), queue=False, show_progress="hidden", api_name=False)
+                        cancels=list(model_events), queue=False, show_progress="hidden", api_name=False, api_visibility="private")
 
     def _form_updates(values):
         # Browser restoration and resetting connections must not race the
@@ -193,6 +202,9 @@ def bind(refs: SettingsRefs, shared: SharedState, sidebar, overview, app, *, mod
         except Exception:
             # No exception/provider text enters the UI: it may contain credentials.
             result = ConnectionTestResult(False, "The connection test could not be completed. Please retry.")
+        # Never update the password field from a connection test. Its typed
+        # draft or saved-key placeholder stays masked, including on failure
+        # or cancellation, and testing never applies a draft credential.
         yield gr.update(interactive=True), _test_status_html(result)
 
     test_event = refs.test.click(
@@ -200,6 +212,13 @@ def bind(refs: SettingsRefs, shared: SharedState, sidebar, overview, app, *, mod
         inputs=[refs.provider, refs.base_url, refs.model, refs.api_key, refs.clear_api_key, refs.timeout, state],
         outputs=[refs.test, refs.test_status], api_name="test_connection", show_progress="hidden",
     )
+
+    # Destination/clear edits invalidate the hint immediately in the browser.
+    # Updating password component props on the server can erase unsaved input,
+    # so this touches only its placeholder and never reads or writes its value.
+    for field in (refs.provider, refs.base_url, refs.clear_api_key):
+        field.input(fn=None, js=_CLEAR_KEY_HINT_JS, outputs=[refs.api_key], queue=False, show_progress="hidden",
+                    api_name=False, api_visibility="private")
 
     def reset_connection_test():
         return gr.update(interactive=True), _test_status_html()
@@ -226,12 +245,12 @@ def bind(refs: SettingsRefs, shared: SharedState, sidebar, overview, app, *, mod
         if not selected.config.ready:
             status += ui_text("Connection incomplete; enter the missing connection fields before requesting analysis.") + " "
         status += ui_text("API keys are session-only. No model request was sent.")
-        return (selected, "", False, status, remembered, [], "",
+        return (selected, _key_field_update(selected), False, status, remembered, [], "",
                 config_status_html(config=selected.config, loaded_steps=len(steps or [])), _offline_issues(run))
 
     def on_reset_settings(steps, run):
         defaults = nonsecret_settings()
-        values = (None, "", False, ui_text("Using environment defaults. Remembered connection details cleared."),
+        values = (None, _key_field_update(), False, ui_text("Using environment defaults. Remembered connection details cleared."),
                   {}, [], "", config_status_html(loaded_steps=len(steps or [])), _offline_issues(run))
         return (*values, *_form_updates(defaults), False)
 
@@ -268,7 +287,7 @@ def bind(refs: SettingsRefs, shared: SharedState, sidebar, overview, app, *, mod
                 defaults = nonsecret_settings(restored)
                 cleaned = {"version": 1, "values": defaults}
                 message = "Connection details restored. Enter your API key and apply settings to enable analysis."
-        return (active, *_form_updates(defaults), "", False, remember, ui_text(message), cleaned,
+        return (active, *_form_updates(defaults), _key_field_update(active), False, remember, ui_text(message), cleaned,
                 config_status_html(config=active.config if active is not None else None, loaded_steps=0))
 
     app.load(fn=on_restore_settings, inputs=[refs.browser_state],
