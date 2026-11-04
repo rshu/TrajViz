@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 
 from ...i18n import text as ui_text
+from ...i18n.label_names import label_attrs, label_text
 from ..charts import (
     build_label_action_count_chart,
     build_label_action_duration_chart,
@@ -14,6 +15,11 @@ from ..charts import (
 )
 from ..labels import aggregate_labels, load_labeled_json
 from ..palette import LABEL_PHASE_COLORS
+
+
+def _phase_chip_foreground(phase: str) -> str:
+    """Keep small taxonomy captions readable on their existing phase fills."""
+    return "#ffffff" if phase == "debug" or phase not in LABEL_PHASE_COLORS else "#000000"
 
 
 def validate_labels_for_run(data: dict, run) -> None:
@@ -130,7 +136,7 @@ def build_label_ui_payload(file_path: str, dark: bool = False, *, run=None) -> d
 
     bar_segments = "".join(
         f"<span style='flex:{count};background:{LABEL_PHASE_COLORS.get(phase, '#6b7280')};height:8px;'"
-        f" title='{html.escape(str(phase))}: {count}'></span>"
+        f" {label_attrs('phase', phase, count=count)}></span>"
         for phase, count in phase_counts.items()
         if count > 0
     )
@@ -145,8 +151,8 @@ def build_label_ui_payload(file_path: str, dark: bool = False, *, run=None) -> d
 
     phase_chips = "".join(
         f"<span style='display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;"
-        f"background:{LABEL_PHASE_COLORS.get(phase, '#6b7280')};color:white;'>"
-        f"{html.escape(str(phase))}: {count}</span>"
+        f"background:{LABEL_PHASE_COLORS.get(phase, '#6b7280')};color:{_phase_chip_foreground(phase)};'>"
+        f"{label_text('phase', phase)}: {count}</span>"
         for phase, count in phase_counts.items()
         if count > 0
     )
@@ -154,7 +160,7 @@ def build_label_ui_payload(file_path: str, dark: bool = False, *, run=None) -> d
     badge = (
         "<div style='display:flex;flex-direction:column;gap:6px;margin:6px 0;'>"
         "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;'>"
-        "<span style='background:#059669;color:white;"
+        "<span style='background:#059669;color:#0f172a;"
         "padding:4px 12px;border-radius:12px;font-size:13px;'>"
         f"{coverage}</span>"
         "<a href='#' onclick=\"if(window.tvClickMainTab){window.tvClickMainTab('Overview');}else{var t=document.querySelectorAll('button[role=tab]');"
@@ -162,7 +168,7 @@ def build_label_ui_payload(file_path: str, dark: bool = False, *, run=None) -> d
         "}"
         "var r=document.querySelector(&quot;.overview-section-radio input[value='Labels']&quot;);"
         "if(r){r.click();r.scrollIntoView({behavior:'smooth',block:'center'});}"
-        "return false;\" style='font-size:12px;color:#059669;text-decoration:underline;cursor:pointer;'>"
+        "return false;\" style='font-size:12px;color:#047857;text-decoration:underline;cursor:pointer;'>"
         f"{ui_text('Jump to Labels')}</a>"
         "</div>"
         "<div class='label-coverage' style='font-size:11px;line-height:1.45;color:var(--ov-muted);max-width:64rem;'>"

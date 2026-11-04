@@ -47,7 +47,9 @@
             if (typeof value === "string") return window.tvTranslate(value);
             if (Array.isArray(value)) return value.map(chrome);
             if (Object.prototype.hasOwnProperty.call(value, "literal")) return value.literal;
-            return window.tvTranslate(value.template, value.params || {});
+            const params = {...value.params};
+            for (const [key, expression] of Object.entries(value.labels || {})) params[key] = chrome(expression);
+            return window.tvTranslate(value.template, params);
         };
         const same = (actual, expected) => Array.isArray(expected)
             ? Array.isArray(actual) && actual.length === expected.length

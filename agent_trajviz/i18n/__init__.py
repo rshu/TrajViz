@@ -25,7 +25,7 @@ def catalog() -> dict[str, str]:
     translations: dict[str, str] = {}
     for name in ("catalog_common", "catalog_insight", "catalog_awe", "catalog_converge", "catalog_settings",
                  "catalog_comparison", "catalog_comparison_ui", "catalog_comparison_charts",
-                 "catalog_comparison_outcomes"):
+                 "catalog_comparison_outcomes", "catalog_labels", "catalog_labels_charts"):
         try:
             module = importlib.import_module(f"{__name__}.{name}")
         except ModuleNotFoundError as exc:
@@ -84,13 +84,21 @@ def _chart_label_spec(value: Any) -> Any:
     if isinstance(value, dict):
         if set(value) == {"literal"} and isinstance(value["literal"], (str, int, float, bool, type(None))):
             return copy.deepcopy(value)
-        if (set(value) <= {"template", "params"} and isinstance(value.get("template"), str)
-                and isinstance(value.get("params", {}), dict)):
+        if (set(value) <= {"template", "params", "labels"} and isinstance(value.get("template"), str)
+                and isinstance(value.get("params", {}), dict) and isinstance(value.get("labels", {}), dict)):
             # Plotly labels accept HTML, so interpolated data stays escaped.
-            return {"template": value["template"], "params": {
+            result = {"template": value["template"], "params": {
                 key: html.escape(item) if isinstance(item, str) else item
                 for key, item in value.get("params", {}).items()
             }}
+            labels = value.get("labels", {})
+            fields = {field for _, field, _, _ in Formatter().parse(value["template"]) if field is not None}
+            if any(not isinstance(key, str) or not re.fullmatch(r"[A-Za-z_]\w*", key)
+                   or key not in fields or key in result["params"] for key in labels):
+                raise ValueError("Owned chart label parameters must name distinct template fields.")
+            if labels:
+                result["labels"] = {key: _chart_label_spec(item) for key, item in labels.items()}
+            return result
     raise ValueError("Chart labels must be authored strings, lists, templates, or literal scalars.")
 
 
@@ -101,7 +109,10 @@ def _chart_label_source(value: Any) -> Any:
         return [_chart_label_source(item) for item in value]
     if "literal" in value:
         return value["literal"]
-    return value["template"].format(**value["params"]) if value["params"] else value["template"]
+    params = {**value["params"], **{
+        key: _chart_label_source(item) for key, item in value.get("labels", {}).items()
+    }}
+    return value["template"].format(**params) if params else value["template"]
 
 
 def _set_chart_layout_label(fig: Any, path: str, value: Any) -> None:
@@ -123,6 +134,8 @@ def localize_figure(fig: Any, *, trace_names: bool = False, annotations: bool = 
     Extra display labels are opt-in: strings are prose keys, lists combine
     display labels, ``{\"literal\": value}`` preserves a recorded category, and
     ``{\"template\": key, \"params\": args}`` formats escaped data arguments.
+    A template's optional ``labels`` map supplies explicitly owned labels;
+    those labels translate before interpolation while plain params stay data.
     Only presentation fields can be registered; x/y/customdata stay untouched.
     """
     layout = fig.layout.to_plotly_json()

@@ -344,6 +344,53 @@ const flush = async () => { for (let index = 0; index < 8; index++) await new Pr
     window.tvSetLanguage('en'); release(); await flush();
     assert.equal(JSON.stringify(graph.data[0].text), '["First Edit","Reference"]');
     window.tvSetLanguage('zh-CN'); await flush(); verifyChinese();
+    // Taxonomy names translate inside authored templates, while raw fields
+    // with the same strings stay literal. Numeric params retain formatting.
+    Object.assign(window.__tvTranslations, {file_discovery: '文件定位', understand: '理解',
+        '{action}  ({duration:.1f}s)': '{action}（{duration:.1f} 秒）',
+        '{action} ({phase})': '{action}（{phase}）',
+        '<b>Step {index} — user prompt</b><br>{preview}': '<b>步骤 {index} — 用户提示</b><br>{preview}',
+    });
+    const taxonomyMetadata = {layout: {}, layout_labels: {'xaxis.ticktext': [
+        'file_discovery', {literal: 'understand'}
+    ]}, trace_labels: {'0': {text: [
+        {template: '{action}  ({duration:.1f}s)', params: {duration: 2.8}, labels: {action: 'file_discovery'}},
+        {template: '{action}  ({duration:.1f}s)', params: {duration: 7}, labels: {action: {literal: 'understand'}}},
+    ], hovertext: [
+        {template: '{action} ({phase})', labels: {action: 'file_discovery', phase: 'understand'}},
+        {template: '<b>Step {index} — user prompt</b><br>{preview}',
+            params: {index: 'understand', preview: 'file_discovery &lt;raw&gt;'}},
+    ]}}};
+    const resetTaxonomy = () => {
+        graph.data[0] = {name: 'understand', x: ['file_discovery', 'understand'], y: [2.8, 7],
+            customdata: ['understand', 'file_discovery'], text: ['file_discovery  (2.8s)', 'understand  (7.0s)'],
+            hovertext: ['file_discovery (understand)', '<b>Step understand — user prompt</b><br>file_discovery &lt;raw&gt;']};
+        graph.layout.xaxis.tickvals = ['file_discovery', 'understand'];
+        graph.layout.xaxis.ticktext = ['file_discovery', 'understand'];
+    };
+    graph.layout.meta = {tv_i18n: taxonomyMetadata}; resetTaxonomy();
+    const taxonomyCoordinates = JSON.stringify({x: graph.data[0].x, y: graph.data[0].y,
+        customdata: graph.data[0].customdata, ticks: graph.layout.xaxis.tickvals});
+    window.tvSetLanguage('zh-CN'); await flush();
+    const verifyTaxonomy = () => {
+        assert.equal(JSON.stringify(graph.layout.xaxis.ticktext), '["文件定位","understand"]');
+        assert.equal(JSON.stringify(graph.data[0].text), '["文件定位（2.8 秒）","understand（7.0 秒）"]');
+        assert.equal(JSON.stringify(graph.data[0].hovertext),
+            '["文件定位（理解）","<b>步骤 understand — 用户提示</b><br>file_discovery &lt;raw&gt;"]');
+        assert.equal(graph.data[0].name, 'understand', 'recorded run labels remain unchanged');
+        assert.equal(JSON.stringify({x: graph.data[0].x, y: graph.data[0].y,
+            customdata: graph.data[0].customdata, ticks: graph.layout.xaxis.tickvals}), taxonomyCoordinates);
+    };
+    verifyTaxonomy();
+    const taxonomyCalls = calls;
+    for (let index = 0; index < 10; index++) events.plotly_afterplot();
+    await flush(); assert.equal(calls, taxonomyCalls, 'nested labels must not loop');
+    resetTaxonomy(); events.plotly_afterplot(); await flush(); verifyTaxonomy();
+    window.tvSetLanguage('en'); await flush();
+    assert.equal(JSON.stringify(graph.data[0].text), '["file_discovery  (2.8s)","understand  (7.0s)"]');
+    assert.equal(JSON.stringify(graph.data[0].hovertext),
+        '["file_discovery (understand)","<b>Step understand — user prompt</b><br>file_discovery &lt;raw&gt;"]');
+    window.tvSetLanguage('zh-CN'); await flush(); verifyTaxonomy();
     console.log('plot localization state and race checks passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
