@@ -78,7 +78,9 @@ file. **Export HTML** saves an Overview, charts and Patterns snapshot.
 `--inline-plotly` embeds the chart runtime for offline reports.
 
 Use **EN | 中** in the header to switch between English and Simplified Chinese. The
-browser remembers the choice; recorded content and model reply language stay unchanged.
+browser remembers the choice and sets the default AI reply language. In
+**AI Trajectory Analysis → Settings**, choose **English** or **简体中文** under
+**Reply language** for the next analysis, answer or suggested fix.
 
 Use `--port 8080` to change ports. Set `TRAJVIZ_AUTH=user:password` before
 exposing the dashboard with `--host 0.0.0.0` or `--share`; remote visitors can

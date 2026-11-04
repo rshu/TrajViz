@@ -45,7 +45,16 @@ def test_every_model_callback_receives_the_same_session_state(handlers):
     )]
     state = callbacks[0].inputs[-1]
     assert isinstance(state, gr.State)
-    assert all(bf.inputs[-1] is state for bf in callbacks)
+    assert all(state in bf.inputs for bf in callbacks)
+    language = callbacks[2].inputs[-2]
+    assert isinstance(language, gr.Radio)
+    assert language.choices == [("EN", "en"), ("中", "zh-CN")]
+    reply_language = callbacks[2].inputs[-1]
+    assert isinstance(reply_language, gr.Dropdown)
+    assert reply_language.choices == [("English", "English"), ("简体中文", "Simplified Chinese")]
+    assert all(bf.inputs[-2] is language for bf in callbacks[2:])
+    assert all(bf.inputs[-1] is reply_language for bf in callbacks[2:])
+    assert all(bf.inputs[-3] is state for bf in callbacks[2:])
 
 
 def test_closed_sidebar_load_does_not_request_analysis_with_ui_settings(handlers):
@@ -92,6 +101,15 @@ def test_followups_keep_sessions_isolated_and_leave_environment_untouched(handle
     assert [c.kwargs["config"] for c in call.call_args_list] == [first.config, second.config]
     assert [c.kwargs["language"] for c in call.call_args_list] == ["French", "German"]
     assert dict(os.environ) == environment
+
+
+@pytest.mark.parametrize("ui_language,expected", [("en", "English"), ("zh-CN", "Simplified Chinese")])
+def test_optional_missing_reply_choice_defaults_to_current_ui_language(handlers, ui_language, expected):
+    settings = _settings(language="German")
+    with patch.object(sidebar, "answer_question", return_value=[]) as call:
+        handlers["on_analysis_ask"].fn("Why?", [], "packed", settings, ui_language)
+    assert call.call_args.kwargs["language"] == expected
+    assert call.call_args.kwargs["config"] is settings.config
 
 
 def test_initial_analysis_prompt_uses_explicit_language_over_environment():

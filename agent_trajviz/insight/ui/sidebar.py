@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import gradio as gr
 
 from ..assistant import analyze_loaded_trajectory, answer_question
-from ..llm_config import AnalysisSettings, config_status_html, resolve_session_settings
+from ..llm_config import AnalysisSettings, config_status_html, request_reply_language, resolve_session_settings
 from . import settings as settings_ui
 from .shared import SharedState
 
@@ -79,22 +79,33 @@ def layout() -> SidebarRefs:
     )
 
 
-def _run_analysis(steps, brief, settings: AnalysisSettings | None = None):
+def _run_analysis(steps, brief, settings: AnalysisSettings | None = None, ui_language=None, reply_language=None):
     """First LLM pass using this session's settings and packed trajectory brief."""
     active = resolve_session_settings(settings)
     if not steps:
         return "", [], config_status_html(loaded_steps=0, config=active.config)
     packed = brief if isinstance(brief, str) else ""
     brief, history = analyze_loaded_trajectory(
-        steps, brief=packed, config=active.config, language=active.language,
+        steps, brief=packed, config=active.config,
+        language=request_reply_language(active.language, ui_language, reply_language),
     )
     return brief, history, config_status_html(loaded_steps=len(steps), config=active.config)
 
 
-def bind(refs: SidebarRefs, shared: SharedState, load_events) -> tuple:
+def bind(refs: SidebarRefs, shared: SharedState, load_events, *, language: gr.Radio | None = None,
+         reply_language: gr.Dropdown | None = None) -> tuple:
     """Bind chat and return model event handles so settings can cancel stale work."""
     state_analysis_brief = shared.state_analysis_brief
     settings_inputs = [shared.state_settings] if shared.state_settings is not None else []
+    # An optional locale input must not occupy the settings argument's slot in
+    # an embedder that has no session overrides.
+    if (language is not None or reply_language is not None) and not settings_inputs:
+        settings_inputs = [gr.State(None)]
+    language_inputs = [language] if language is not None else []
+    if reply_language is not None:
+        if language is None:
+            language_inputs = [gr.State(None)]
+        language_inputs.append(reply_language)
     model_events = []
 
     def on_trajectory_loaded(steps, brief, settings=None):
@@ -132,24 +143,25 @@ def bind(refs: SidebarRefs, shared: SharedState, load_events) -> tuple:
         ],
     )
 
-    def on_analyze_trajectory(steps, brief, settings=None):
-        return _run_analysis(steps, brief, settings)
+    def on_analyze_trajectory(steps, brief, settings=None, ui_language=None, reply_language=None):
+        return _run_analysis(steps, brief, settings, ui_language, reply_language)
 
     model_events.append(refs.analysis_run.click(
         fn=on_analyze_trajectory,
-        inputs=[shared.state_steps, state_analysis_brief, *settings_inputs],
+        inputs=[shared.state_steps, state_analysis_brief, *settings_inputs, *language_inputs],
         outputs=[state_analysis_brief, refs.analysis_chatbot, refs.analysis_status],
     ))
 
-    def on_analysis_ask(question, history, brief, settings=None):
+    def on_analysis_ask(question, history, brief, settings=None, ui_language=None, reply_language=None):
         active = resolve_session_settings(settings)
         return answer_question(
-            question, history, brief, config=active.config, language=active.language,
+            question, history, brief, config=active.config,
+            language=request_reply_language(active.language, ui_language, reply_language),
         ), ""
 
     model_events.append(refs.analysis_input.submit(
         fn=on_analysis_ask,
-        inputs=[refs.analysis_input, refs.analysis_chatbot, state_analysis_brief, *settings_inputs],
+        inputs=[refs.analysis_input, refs.analysis_chatbot, state_analysis_brief, *settings_inputs, *language_inputs],
         outputs=[refs.analysis_chatbot, refs.analysis_input],
     ))
     refs.analysis_clear.click(fn=lambda: [], outputs=[refs.analysis_chatbot])

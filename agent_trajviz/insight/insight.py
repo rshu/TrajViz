@@ -157,10 +157,12 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
         )
         upload.bind_export(upload_refs, shared, load_events)
 
-        sidebar_events = sidebar.bind(sidebar_refs, shared, load_events)
-        judge_events = overview_tab.bind(overview, shared, upload_refs, load_events)
+        sidebar_events = sidebar.bind(sidebar_refs, shared, load_events, language=upload_refs.language,
+                                      reply_language=settings_refs.language)
+        judge_events = overview_tab.bind(overview, shared, upload_refs, load_events, language=upload_refs.language,
+                                        reply_language=settings_refs.language)
         settings.bind(settings_refs, shared, sidebar_refs, overview, app,
-                      model_events=sidebar_events + judge_events)
+                      model_events=sidebar_events + judge_events, language=upload_refs.language)
         attribution_tab.bind(attribution, shared, upload_refs, load_events,
                              allow_server_paths=allow_server_paths, auto_diagnose=False)
         trajectory_inspection.bind(inspection, shared, load_events)

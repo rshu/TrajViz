@@ -68,13 +68,13 @@ def load_env_files() -> None:
         _load_dotenv(str(_REPO_ROOT / ".env"))
 
 
-# Reply language of the AI sidebar and the Issues judge: English unless
+# Default reply language for calls without dashboard selectors: English unless
 # ANALYZE_LANGUAGE (any language name) says otherwise.
 DEFAULT_ANALYSIS_LANGUAGE = "English"
 
 
 def analysis_language() -> str:
-    """The language the LLM features reply in."""
+    """The default reply language for callers without a dashboard selection."""
     return _env("ANALYZE_LANGUAGE") or DEFAULT_ANALYSIS_LANGUAGE
 
 
@@ -228,6 +228,24 @@ def resolve_session_settings(settings: AnalysisSettings | None = None) -> Analys
     if not isinstance(settings, AnalysisSettings):
         raise ValueError("Invalid settings state. Reset settings and try again.")
     return settings
+
+
+def request_reply_language(language: str, ui_language: object | None = None,
+                           reply_language: object | None = None) -> str:
+    """Use the selected reply language, then the UI locale or non-UI fallback.
+
+    Read both selectors with each model request rather than mutating connection
+    state when the language changes. This preserves credentials and drafts.
+    """
+    if reply_language is not None:
+        if isinstance(reply_language, str) and is_chinese(reply_language):
+            return "Simplified Chinese"
+        if isinstance(reply_language, str) and reply_language.strip().lower() in {"english", "en"}:
+            return "English"
+        raise ValueError("Reply language must be English or Simplified Chinese.")
+    if ui_language is None:
+        return language
+    return "Simplified Chinese" if ui_language == "zh-CN" else "English"
 
 
 def _validated_base_url(value: str) -> str:

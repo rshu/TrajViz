@@ -1,6 +1,9 @@
 """Simplified Chinese for model settings and credential-safe connection status."""
 
 ZH_CN = {
+    "Choose the language for the next reply. Switching EN | 中 updates this choice.":
+        "选择下一条回复的语言。切换 EN | 中 会更新此选项。",
+    "Simplified Chinese": "简体中文",
     "Testing connection…": "正在测试连接…",
     "Not tested. Sends a small model request; no trajectory data. Testing does not apply settings.":
         "尚未测试。测试会发送一个小型模型请求，不包含轨迹数据，也不会应用设置。",

@@ -34,7 +34,7 @@ from ..presenters.overview import (
     load_warnings_html,
 )
 from ..issue_judge import JUDGE_ISSUE_CAP, iter_judge_overview_issues
-from ..llm_config import resolve_session_settings
+from ..llm_config import request_reply_language, resolve_session_settings
 from ..session import LoadedSession, session_from_run
 from .shared import SharedState, safe_callback
 from .upload import UploadRefs
@@ -437,6 +437,9 @@ def bind(
     shared: SharedState,
     upload: UploadRefs,
     load_events: tuple = (),  # kept for the uniform tab-bind signature
+    *,
+    language: gr.Radio | None = None,
+    reply_language: gr.Dropdown | None = None,
 ) -> tuple:
     overview_section_names = OVERVIEW_SECTION_NAMES
     overview_sections = _resolve_overview_sections(refs)
@@ -453,7 +456,7 @@ def bind(
         js="() => { if (window.tvExpandFileTimeline) { window.tvExpandFileTimeline(); setTimeout(window.tvExpandFileTimeline, 200); } }",
     )
 
-    def on_suggest_fixes(run, settings=None):
+    def on_suggest_fixes(run, settings=None, ui_language=None, reply_language=None):
         """Run the LLM Issues judge on request; progress shows inside the panel."""
         if run is None or not run.steps:
             yield ""
@@ -477,7 +480,8 @@ def bind(
         judged = ranked
         errors: list[str] = []
         for progress in iter_judge_overview_issues(
-            session, ranked, config=cfg, limit=JUDGE_ISSUE_CAP, language=active.language,
+            session, ranked, config=cfg, limit=JUDGE_ISSUE_CAP,
+            language=request_reply_language(active.language, ui_language, reply_language),
         ):
             judged = progress.issues
             errors = progress.errors
@@ -513,9 +517,17 @@ def bind(
                 session, issues=judged, banner=banner,
             )
 
+    judge_settings_inputs = [shared.state_settings] if shared.state_settings is not None else []
+    if (language is not None or reply_language is not None) and not judge_settings_inputs:
+        judge_settings_inputs = [gr.State(None)]
+    judge_language_inputs = [language] if language is not None else []
+    if reply_language is not None:
+        if language is None:
+            judge_language_inputs = [gr.State(None)]
+        judge_language_inputs.append(reply_language)
     judge_event = dict(
         fn=on_suggest_fixes,
-        inputs=[shared.state_run, *([shared.state_settings] if shared.state_settings is not None else [])],
+        inputs=[shared.state_run, *judge_settings_inputs, *judge_language_inputs],
         outputs=[refs.issues_html],
         show_progress="minimal",
         concurrency_id="issues_judge",

@@ -118,7 +118,8 @@ class NativeOpenCodeV2Tests(unittest.TestCase):
         run = self.load(data)
         self.assertIsNone(run.metrics["patch_error"])
         self.assertTrue(any("incomplete" in warning for warning in run.warnings))
-        self.assertTrue(any("interrupted" in warning for warning in run.warnings))
+        self.assertIn("Session turn interrupted.", run.raw["_opencode_v2_history_errors"])
+        self.assertFalse(any("Session turn interrupted." in warning for warning in run.warnings))
 
     def test_tool_errors_keep_text_and_native_error_evidence(self):
         data = capture()
@@ -149,8 +150,12 @@ class NativeOpenCodeV2Tests(unittest.TestCase):
                 data["messages"][-1]["outcome"] = outcome
                 run = self.load(data)
                 self.assertEqual(len(run.steps), 2)
-                self.assertIn(outcome, " ".join(run.warnings))
+                if outcome == "failed":
+                    self.assertIn(outcome, " ".join(run.warnings))
+                else:
+                    self.assertFalse(run.warnings)
                 self.assertIn(outcome, run.raw["output"]["error"])
+                self.assertIn(outcome, " ".join(run.raw["_opencode_v2_history_errors"]))
 
     def test_shell_native_lifecycle_and_paged_output(self):
         for status, exit_code, successes, failures in [

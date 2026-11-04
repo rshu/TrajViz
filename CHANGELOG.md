@@ -18,6 +18,10 @@ change the public API (the names exported from `agent_trajviz`).
   labels consistently, including results refreshed after switching languages.
 - Preserve readable badge and status colors when switching dashboard languages.
 - Translate built-in phase and action labels in charts, timelines and label summaries.
+- Add English and Simplified Chinese reply-language choices for AI analyses,
+  follow-up answers and suggested fixes, defaulting to the dashboard language.
+- Keep routine OpenCode interruptions in the recorded history without showing
+  them as global import warnings.
 
 ## [0.4.2] - 2026-11-04
 

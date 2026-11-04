@@ -102,7 +102,9 @@ report_path = tv.write_report(run, "report.html", inline_plotly=True)
 With the `app` extra installed through pip, or with Homebrew, run
 `agent-trajviz` and open the local URL it prints. Load the same session there.
 Open **AI Trajectory Analysis → Settings** to configure the model
-connection, request options and reply language. Use **Analyze trajectory** on
+connection and request options. The **Reply language** dropdown selects English
+or Simplified Chinese for the next response; **EN | 中** updates its default.
+Use **Analyze trajectory** on
 the Analysis tab when you are ready. **Test API key** checks the entered connection
 with a small model request without applying settings or sending trajectory data. Connection details can be
 remembered in the browser; entered API keys remain in that session. Applying

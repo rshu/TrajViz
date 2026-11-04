@@ -61,7 +61,7 @@ def _apply(app, client, **overrides):
         "Temperature": 0.4,
         "Max output tokens": 777,
         "Timeout (seconds)": 45,
-        "Reply language": "German",
+        "Reply language": "English",
         "Clear API key": False,
         "Remember connection details in this browser": False,
     }
@@ -120,8 +120,11 @@ class SettingsHttpTests(unittest.TestCase):
             "Format": "", "Captured session": None,
         })
 
-    def ask(self, client):
-        return _invoke(self.app, client, "on_analysis_ask", {"Question": "Explain this run", "Analysis": []})
+    def ask(self, client, language="en", reply_language="English"):
+        return _invoke(self.app, client, "on_analysis_ask", {
+            "Question": "Explain this run", "Analysis": [], "Language / 语言": language,
+            "Reply language": reply_language,
+        })
 
     def test_server_key_is_absent_from_public_page_config_and_api_metadata(self):
         for path in ("/", "/config", "/gradio_api/info"):
@@ -137,18 +140,21 @@ class SettingsHttpTests(unittest.TestCase):
     def test_two_sessions_use_their_own_connection_and_language(self):
         first, second, untouched = self.client(), self.client(), self.client()
         _apply(self.app, first, **{"Model": "first-model", "API key": "first-key",
-                                  "Reply language": "German", "Provider": "anthropic"})
+                                  "Reply language": "Simplified Chinese", "Provider": "anthropic"})
         _apply(self.app, second, **{"Model": "second-model", "API key": "second-key",
-                                   "Reply language": "Spanish"})
+                                   "Reply language": "English"})
         self.assertEqual(self.calls, [], "applying settings must not call a provider")
-        for client in (first, second, untouched):
+        for client, language, reply_language in ((first, "en", "Simplified Chinese"),
+                                                 (second, "zh-CN", "English"), (untouched, "en", "English")):
             self.load(client)
-            self.ask(client)
+            self.ask(client, language, reply_language)
         self.assertEqual([call[0].model for call in self.calls], ["first-model", "second-model", "server-model"])
         self.assertEqual([call[0].api_key for call in self.calls], ["first-key", "second-key", _SERVER_KEY])
         self.assertEqual([call[0].provider for call in self.calls], ["anthropic", "openai", "openai"])
-        for call, language in zip(self.calls, ("German", "Spanish", "English"), strict=True):
+        for call, language in zip(self.calls, ("Simplified Chinese", "English", "English"), strict=True):
             self.assertIn(language, call[1])
+            self.assertNotIn("Write the entire reply in German", call[1])
+            self.assertNotIn("Write the entire reply in Spanish", call[1])
         self.assertEqual(self.calls[0][0].max_tokens, 777)
         self.assertEqual(self.calls[0][0].timeout, 45)
         self.assertEqual(self.calls[0][0].temperature, 0.4)

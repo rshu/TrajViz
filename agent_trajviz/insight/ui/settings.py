@@ -13,7 +13,9 @@ from ..connection_test import ConnectionTestResult, check_connection
 from ..llm_config import (
     build_session_settings,
     config_status_html,
+    is_chinese,
     nonsecret_settings,
+    request_reply_language,
 )
 from ..presenters.issues import build_overview_issues_html
 from ..session import session_from_run
@@ -31,7 +33,7 @@ class SettingsRefs:
     temperature: gr.Number
     max_tokens: gr.Number
     timeout: gr.Number
-    language: gr.Textbox
+    language: gr.Dropdown
     clear_api_key: gr.Checkbox
     remember: gr.Checkbox
     test: gr.Button
@@ -43,6 +45,11 @@ class SettingsRefs:
 
     def form_fields(self) -> list:
         return [getattr(self, name) for name in _FIELDS]
+
+
+def _reply_language_choice(value) -> str:
+    """Project legacy language preferences onto the two supported UI choices."""
+    return "Simplified Chinese" if isinstance(value, str) and is_chinese(value) else "English"
 
 
 def layout() -> SettingsRefs:
@@ -96,8 +103,13 @@ def layout() -> SettingsRefs:
                     timeout = gr.Number(label="Timeout (seconds)", value=defaults["timeout"], precision=0,
                                         elem_classes=["settings-field"])
                 with gr.Column(min_width=0):
-                    language = gr.Textbox(label="Reply language", value=defaults["language"], placeholder="English",
-                                          elem_classes=["settings-field"])
+                    language = gr.Dropdown(
+                        label="Reply language", value=_reply_language_choice(defaults["language"]),
+                        choices=[("English", "English"), ("简体中文", "Simplified Chinese")],
+                        interactive=True, allow_custom_value=False, filterable=False,
+                        info="Choose the language for the next reply. Switching EN | 中 updates this choice.",
+                        elem_classes=["settings-field"],
+                    )
         remember = gr.Checkbox(label="Remember connection details in this browser", value=True,
                                 info="API keys stay in this session and are never remembered.",
                                 elem_classes=["settings-check"])
@@ -137,9 +149,24 @@ def _offline_issues(run) -> str:
     return build_overview_issues_html(session_from_run(run, "")) if run is not None and run.steps else ""
 
 
-def bind(refs: SettingsRefs, shared: SharedState, sidebar, overview, app, *, model_events=()) -> None:
+def bind(refs: SettingsRefs, shared: SharedState, sidebar, overview, app, *, model_events=(), language=None) -> None:
     assert shared.state_settings is not None
     state = shared.state_settings
+    if language is not None:
+        def on_reply_language_change(locale):
+            return request_reply_language("English", locale)
+
+        refs.language.value = on_reply_language_change(language.value)
+        language.change(fn=on_reply_language_change, inputs=[language], outputs=[refs.language],
+                        cancels=list(model_events), queue=False, show_progress="hidden", api_name=False)
+
+    def _form_updates(values):
+        # Browser restoration and resetting connections must not race the
+        # current UI selector or overwrite a manually selected reply language.
+        display = dict(values)
+        display["language"] = gr.skip() if language is not None else _reply_language_choice(values["language"])
+        return tuple(display[name] for name in _FIELDS)
+
     outputs = [state, refs.api_key, refs.clear_api_key, refs.status, refs.browser_state,
                sidebar.analysis_chatbot, sidebar.analysis_input, sidebar.analysis_status, overview.issues_html]
 
@@ -206,7 +233,7 @@ def bind(refs: SettingsRefs, shared: SharedState, sidebar, overview, app, *, mod
         defaults = nonsecret_settings()
         values = (None, "", False, ui_text("Using environment defaults. Remembered connection details cleared."),
                   {}, [], "", config_status_html(loaded_steps=len(steps or [])), _offline_issues(run))
-        return (*values, *(defaults[name] for name in _FIELDS), False)
+        return (*values, *_form_updates(defaults), False)
 
     apply_event = refs.apply.click(
         fn=on_apply_settings,
@@ -241,7 +268,7 @@ def bind(refs: SettingsRefs, shared: SharedState, sidebar, overview, app, *, mod
                 defaults = nonsecret_settings(restored)
                 cleaned = {"version": 1, "values": defaults}
                 message = "Connection details restored. Enter your API key and apply settings to enable analysis."
-        return (active, *(defaults[name] for name in _FIELDS), "", False, remember, ui_text(message), cleaned,
+        return (active, *_form_updates(defaults), "", False, remember, ui_text(message), cleaned,
                 config_status_html(config=active.config if active is not None else None, loaded_steps=0))
 
     app.load(fn=on_restore_settings, inputs=[refs.browser_state],
