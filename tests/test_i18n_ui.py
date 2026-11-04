@@ -92,6 +92,24 @@ def _updates(event, language):
     return {component._id: update for component, update in zip(event.outputs, event.fn(language), strict=True)}
 
 
+def test_compact_language_control_preserves_two_fixed_labels_and_canonical_values():
+    _, change, restore, refs = _language_fixture()
+    selector = refs["language"]
+    assert isinstance(selector, gr.Radio)
+    assert selector.choices == [("EN", "en"), ("中", "zh-CN")]
+    assert selector.value == "en"
+    assert selector.show_label is False
+    assert selector.container is False
+    assert selector.interactive is True
+    assert selector.label  # Remains available to the native accessible control.
+    assert selector._id not in _updates(change, "zh-CN")
+    assert selector._id not in _updates(change, "en")
+    restored = _updates(restore, "zh-CN")[selector._id]
+    assert restored["value"] == "zh-CN" and "choices" not in restored
+    assert selector.choices == [("EN", "en"), ("中", "zh-CN")]
+    assert selector.value == "en"
+
+
 def test_language_updates_preserve_credentials_selections_results_and_numbers():
     app, change, restore, refs = _language_fixture()
     updates = _updates(change, "zh-CN")

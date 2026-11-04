@@ -40,7 +40,7 @@ class UploadRefs:
     summary_banner: gr.HTML
     label_badge_html: gr.HTML
     session_selector: gr.Dropdown
-    language: gr.Dropdown
+    language: gr.Radio
 
 
 def layout() -> UploadRefs:

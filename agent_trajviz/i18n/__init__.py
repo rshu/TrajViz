@@ -12,7 +12,7 @@ import json
 from string import Formatter
 from typing import Any
 
-LANGUAGES = (("English", "en"), ("简体中文", "zh-CN"))
+LANGUAGES = (("EN", "en"), ("中", "zh-CN"))
 
 
 def normalize_language(value: object) -> str:

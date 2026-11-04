@@ -62,9 +62,9 @@ class _OwnedHTML(HTMLParser):
 def language_selector():
     """Build a visible, bilingual selector without changing input data."""
     import gradio as gr
-    return gr.Dropdown(choices=list(LANGUAGES), value="en", label="Language / 语言",
-                       interactive=True, filterable=False, allow_custom_value=False,
-                       scale=0, min_width=160, elem_id="tv-language-selector")
+    return gr.Radio(choices=list(LANGUAGES), value="en", label="Language / 语言",
+                    show_label=False, container=False, interactive=True,
+                    scale=0, min_width=84, elem_id="tv-language-selector")
 
 
 def bind_language(app, selector):
@@ -153,16 +153,22 @@ def presentation(options: dict) -> dict:
     #tv-app-header {align-items:center; gap:20px; padding-right:180px; box-sizing:border-box;}
     #tv-app-header .tv-header {padding-right:0;}
     #tv-converge-header {align-items:center;gap:20px;}
+    #tv-app-header>.form,#tv-converge-header>.form {background:transparent!important;border:0!important;box-shadow:none!important;padding:0!important;}
     #tv-app-header .app-title {flex:1; min-width:220px;}
-    #tv-language-selector {max-width:200px; margin-left:auto; margin-bottom:8px;}
-    #tv-language-selector input {cursor:pointer;}
+    #tv-language-selector {max-width:104px;margin-left:auto;margin-bottom:0;padding:0!important;border:0!important;background:transparent!important;box-shadow:none!important;}
+    #tv-language-selector .wrap {display:flex;flex-wrap:nowrap;align-items:center;gap:12px;}
+    #tv-language-selector label {position:relative;display:inline-flex;justify-content:center;align-items:center;min-width:36px;margin:0!important;padding:6px 10px!important;border:0!important;border-radius:6px;background:transparent!important;box-shadow:none!important;cursor:pointer;line-height:1.3;}
+    #tv-language-selector label+label::before {content:"";position:absolute;left:-6px;top:50%;width:1px;height:14px;transform:translateY(-50%);background:#64748b;}
+    #tv-language-selector input[type="radio"] {position:absolute;width:1px;height:1px;opacity:0;}
+    #tv-language-selector label:has(input:checked) {color:#1d4ed8!important;background:#eef2ff!important;font-weight:700;}
+    #tv-language-selector label:has(input:focus-visible) {outline:2px solid #1d4ed8;outline-offset:2px;}
     html[lang="zh-CN"] .gradio-container {font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;}
     #analysis-sidebar.right:not(.open) .toggle-button[aria-label="AI 轨迹分析"]::after {content:"AI 轨迹分析";}
     @media(max-width:600px){
-        #tv-app-header{padding-right:0;flex-direction:column!important;align-items:stretch;gap:6px;}
+        #tv-app-header{padding-right:114px;flex-direction:row!important;align-items:center;gap:8px;}
         #tv-app-header .app-title{min-width:0;}
-        #tv-app-header>.form{width:100%;}
-        #tv-language-selector{max-width:100%;width:100%;margin-bottom:6px;}
+        #tv-app-header>.form{width:auto;}
+        #tv-language-selector{max-width:104px;width:auto;margin-bottom:0;}
     }
     """
     return {**options, "head": head, "css": css}
