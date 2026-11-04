@@ -7,6 +7,33 @@ change the public API (the names exported from `agent_trajviz`).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-04
+
+### Added
+
+- Inspect loaded trajectories directly in AWE, with recorded findings, file and
+  test activity, recovery observations, and links to supporting Workflow steps.
+- Add `awe.inspect_trajectory(run)` for inspection from an already-loaded session.
+- Test model connections from AI Trajectory Analysis Settings with a small,
+  explicit request that sends no trajectory data.
+
+### Changed
+
+- Make trajectory inspection the default AWE view, with optional reference-based
+  attribution and a separate saved-run viewer.
+- Move model settings into AI Trajectory Analysis and require an explicit action
+  to start model analysis. Keep API keys in the current session.
+
+### Fixed
+
+- Preserve native tool outcomes, file actions and child-thread identities; keep
+  quoted output and incomplete recordings from creating unsupported findings.
+- Correct comparison file identities, context-window explanations and label
+  coverage, and remove excess padding from labeled step timelines.
+- Protect source files during label exports and handle malformed optional saved
+  evidence without crashing or inventing assessments.
+- Improve responsive settings, evidence links, contrast and AWE navigation.
+
 ## [0.4.1] - 2026-11-03
 
 ### Fixed
@@ -388,7 +415,8 @@ First release as the `agent-trajviz` package.
   passwords, authorization headers and generated-looking values of
   secret-named assignments become `[REDACTED]`.
 
-[Unreleased]: https://github.com/rshu/TrajViz/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/rshu/TrajViz/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/rshu/TrajViz/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/rshu/TrajViz/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/rshu/TrajViz/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/rshu/TrajViz/compare/v0.3.1...v0.3.2
