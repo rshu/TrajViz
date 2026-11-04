@@ -43,8 +43,35 @@
         const metadata = node.layout?.meta?.tv_i18n;
         if (!metadata || !window.Plotly?.relayout) return;
         const fingerprint = JSON.stringify(metadata);
-        const chrome = value => typeof value === "string" ? window.tvTranslate(value)
-            : window.tvTranslate(value.template, value.params || {});
+        const chrome = value => {
+            if (typeof value === "string") return window.tvTranslate(value);
+            if (Array.isArray(value)) return value.map(chrome);
+            if (Object.prototype.hasOwnProperty.call(value, "literal")) return value.literal;
+            return window.tvTranslate(value.template, value.params || {});
+        };
+        const same = (actual, expected) => Array.isArray(expected)
+            ? Array.isArray(actual) && actual.length === expected.length
+                && expected.every((item, index) => same(actual[index], item))
+            : actual === expected;
+        // Explicit display fields never include plotted coordinates, category
+        // IDs or customdata. Literal expressions keep recorded labels intact.
+        const layoutLabels = {...metadata.layout};
+        for (const [path, expression] of Object.entries(metadata.layout_labels || {})) {
+            if (/^(?:title\.text|legend\.title\.text|[xy]axis\d*\.(?:title\.text|ticktext)|annotations\[\d+\]\.text)$/.test(path)) {
+                layoutLabels[path] = expression;
+            }
+        }
+        const traceLabels = {};
+        for (const [index, original] of Object.entries(metadata.traces || {})) {
+            traceLabels[index] = {name: original};
+        }
+        for (const [index, fields] of Object.entries(metadata.trace_labels || {})) {
+            for (const [field, expression] of Object.entries(fields)) {
+                if (["name", "text", "hovertext", "hovertemplate"].includes(field)) {
+                    (traceLabels[index] ||= {})[field] = expression;
+                }
+            }
+        }
         let state = figures.get(node);
         if (!state) {
             state = {language: null, fingerprint: null, pending: false};
@@ -53,23 +80,30 @@
         }
         const read = (object, path) => path.replace(/\[(\d+)\]/g, ".$1").split(".")
             .reduce((value, key) => value == null ? undefined : value[key], object);
-        const current = () => Object.entries(metadata.layout || {}).every(
-            ([key, original]) => read(node.layout, key) === chrome(original))
-            && Object.entries(metadata.traces || {}).every(
-                ([index, original]) => node.data?.[Number(index)]?.name === chrome(original));
+        const current = () => Object.entries(layoutLabels).every(
+            ([key, original]) => same(read(node.layout, key), chrome(original)))
+            && Object.entries(traceLabels).every(([index, fields]) => Object.entries(fields).every(
+                ([field, original]) => same(node.data?.[Number(index)]?.[field], chrome(original))));
         if (state.pending || state.language === language && state.fingerprint === fingerprint && current()) return;
         state.pending = true;
         state.language = language;
         state.fingerprint = fingerprint;
         const requested = language;
         const update = {};
-        for (const [key, original] of Object.entries(metadata.layout || {})) {
+        for (const [key, original] of Object.entries(layoutLabels)) {
             update[key] = chrome(original);
         }
         let succeeded = false;
         Promise.resolve().then(() => window.Plotly.relayout(node, update)).then(async () => {
-            for (const [index, original] of Object.entries(metadata.traces || {})) {
-                await window.Plotly.restyle(node, {name: chrome(original)}, [Number(index)]);
+            for (const [index, fields] of Object.entries(traceLabels)) {
+                const updates = {};
+                for (const [field, original] of Object.entries(fields)) {
+                    const value = chrome(original);
+                    // Plotly treats an outer array as values for trace indices.
+                    // One trace's list of labels therefore needs another array.
+                    updates[field] = Array.isArray(value) ? [value] : value;
+                }
+                await window.Plotly.restyle(node, updates, [Number(index)]);
             }
             succeeded = true;
         }).catch(() => { state.fingerprint = null; }).finally(() => {
@@ -145,6 +179,15 @@
         apply(document.body);
         new MutationObserver(records => {
             for (const record of records) {
+                if (record.type === "attributes") {
+                    // Renderers can update a marker's arguments or restore an
+                    // English tooltip without replacing its DOM node. Only
+                    // the explicitly marked target owns those attributes.
+                    if (record.target instanceof Element && record.target.matches("[data-tv-i18n]")) {
+                        mark(record.target);
+                    }
+                    continue;
+                }
                 // Gradio can update an existing HTML text node in place. A
                 // child-list observer alone misses refreshed status/findings.
                 const parent = record.target instanceof Element ? record.target : record.target.parentElement;
@@ -155,7 +198,9 @@
                 const graph = record.target instanceof Element && record.target.closest(".js-plotly-plot");
                 if (graph) plot(graph);
             }
-        }).observe(document.body, {childList: true, characterData: true, subtree: true});
+        }).observe(document.body, {childList: true, characterData: true, subtree: true,
+            attributes: true, attributeFilter: ["data-tv-i18n", "data-tv-i18n-args", "data-tv-i18n-en",
+                "data-tv-i18n-attr", "title", "aria-label", "data-help"]});
     }
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, {once: true});
     else start();

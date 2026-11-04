@@ -151,7 +151,8 @@ def layout(*, allow_server_paths: bool = True, embedded: bool = False) -> AWERef
             with gr.Row():
                 runtime["apply"] = gr.Button("Apply AWE settings", variant="secondary", scale=0)
                 runtime["reset"] = gr.Button("Clear AWE settings", scale=0)
-            runtime["settings_status"] = gr.Markdown("No evaluation session settings applied.")
+            runtime["settings_status"] = gr.HTML(text("No evaluation session settings applied."),
+                                                 container=False, padding=False)
             with gr.Accordion("Evaluation capabilities", open=False):
                 runtime["capabilities"] = gr.HTML("")
             with gr.Row():

@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import gradio as gr
 import plotly.graph_objects as go
 
+from ...i18n import text as ui_text
+
 from ..charts import build_run_group_agent_timeline
 from ..comparison import run_comparison
 from ..run_group import (
@@ -24,17 +26,14 @@ from .upload import UploadRefs
 
 _CMP_STATUS_PLACEHOLDER = (
     "<div style='padding:2em;color:var(--ov-muted);text-align:center;font-size:14px;'>"
-    "Load a trajectory in the Overview tab first &mdash; it becomes the "
-    "<b>baseline</b> for <b>Run group</b> and the <b>compared</b> trajectory "
-    "for pairwise comparison."
+    f"{ui_text('Load a trajectory in the Overview tab first — it becomes the baseline for Run group and the compared trajectory for pairwise comparison.')}"
     "<br><span style='font-size:12px;'>"
-    "In Run group, upload one or more additional runs to scorecard against Overview."
+    f"{ui_text('In Run group, upload one or more additional runs to scorecard against Overview.')}"
     "</span></div>"
 )
 _RG_SCORECARD_PLACEHOLDER = (
     "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
-    "Load a trajectory in <b>Overview</b>, upload one or more "
-    "comparison runs, then click <b>Build scorecard</b>.</div>"
+    f"{ui_text('Load a trajectory in Overview, upload one or more comparison runs, then click Build scorecard.')}</div>"
 )
 
 
@@ -254,21 +253,21 @@ def bind(refs: ComparisonRefs, shared: SharedState, upload: UploadRefs) -> None:
         if overview_run is None or not overview_run.steps:
             return (
                 "<div style='color:var(--ov-warn);padding:1em;text-align:center;'>"
-                "Load a trajectory in the Overview tab first — it will be the compared trajectory.</div>",
+                f"{ui_text('Load a trajectory in the Overview tab first — it will be the compared trajectory.')}</div>",
                 empty_fig,
                 empty_fig,
                 "<div style='padding:2em;color:var(--ov-muted);text-align:center;'>"
-                "Load a trajectory in the Overview tab first.</div>",
+                f"{ui_text('Load a trajectory in the Overview tab first.')}</div>",
             )
 
         if ref_file is None:
             return (
                 "<div style='color:var(--ov-warn);padding:1em;text-align:center;'>"
-                "Upload a reference trajectory first.</div>",
+                f"{ui_text('Upload a reference trajectory first.')}</div>",
                 empty_fig,
                 empty_fig,
                 "<div style='padding:2em;color:var(--ov-muted);text-align:center;'>"
-                "Upload a reference trajectory.</div>",
+                f"{ui_text('Upload a reference trajectory.')}</div>",
             )
 
         ref_path = ref_file if isinstance(ref_file, str) else ref_file.name
@@ -350,19 +349,19 @@ def bind(refs: ComparisonRefs, shared: SharedState, upload: UploadRefs) -> None:
 
                 logging.getLogger(__name__).debug("Phase comparison chart build failed: %s", exc)
                 label_notice = ("<div style='color:var(--ov-warn);padding:0.5em;'>"
-                                "Label comparison unavailable: the sidecars could not be aligned with these trajectories.</div>")
+                                f"{ui_text('Label comparison unavailable: the sidecars could not be aligned with these trajectories.')}</div>")
 
         if result.get("ok", True):
-            status = "<div style='color:var(--ov-success);padding:0.5em;font-size:13px;'>Comparison complete.</div>"
+            status = f"<div style='color:var(--ov-success);padding:0.5em;font-size:13px;'>{ui_text('Comparison complete.')}</div>"
         elif result.get("unavailable") == "transcript_alignment":
             status = (
                 "<div style='color:var(--ov-warn);padding:0.5em;font-size:13px;'>"
-                "Transcript alignment unavailable; observed metrics remain available in Overview and Run group.</div>"
+                f"{ui_text('Transcript alignment unavailable; observed metrics remain available in Overview and Run group.')}</div>"
             )
         else:
             status = (
                 "<div style='color:var(--ov-warn);padding:0.5em;font-size:13px;'>"
-                "Comparison failed &mdash; see the report panel for details.</div>"
+                f"{ui_text('Comparison failed — see the report panel for details.')}</div>"
             )
 
         return (result["report_html"], phase_count_fig, phase_duration_fig, status + label_notice)

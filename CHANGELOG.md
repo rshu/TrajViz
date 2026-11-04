@@ -12,6 +12,11 @@ change the public API (the names exported from `agent_trajviz`).
 - Switch the dashboards between English and Simplified Chinese, remembering
   the browser's choice while preserving loaded trajectories and session settings.
 
+### Fixed
+
+- Translate comparison scorecards, coverage tables, explanations and chart
+  labels consistently, including results refreshed after switching languages.
+
 ## [0.4.2] - 2026-11-04
 
 ### Added

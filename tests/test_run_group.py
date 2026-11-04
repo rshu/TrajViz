@@ -5,6 +5,8 @@ import os
 import tempfile
 import unittest
 
+from i18n_test_helpers import unmark_html
+
 from agent_trajviz.converge.canonical import CanonicalAction
 from agent_trajviz.insight.charts import (
     bind_timeline_agents,
@@ -1013,7 +1015,7 @@ class CoverageMatrixExpandTests(unittest.TestCase):
         self.assertEqual(len(behavior["action_matrix"]), n_actions)
         self.assertEqual(behavior["action_matrix_total"], n_actions)
         html = build_run_group_behavior_html({"behavior": behavior, "ok": True})
-        self.assertIn(f"Show all {n_actions} actions", html)
+        self.assertIn(f"Show all {n_actions} actions", unmark_html(html))
         self.assertIn("src/", html)
         self.assertIn(f"{n_files} files", html)
         self.assertIn(f"f{n_files - 1}.py", html)
@@ -1087,8 +1089,8 @@ class FileCoverageFolderTests(unittest.TestCase):
         self.assertIn("rg-tree-unique", html)
         self.assertIn("rg-run-0", html)
         self.assertIn("rg-run-1", html)
-        self.assertIn("Claude only", html)
-        self.assertIn("Codex only", html)
+        self.assertIn("Claude only", unmark_html(html))
+        self.assertIn("Codex only", unmark_html(html))
         self.assertIn("rg-run-swatch", html)
 
     def test_single_file_folder_stays_a_row(self):

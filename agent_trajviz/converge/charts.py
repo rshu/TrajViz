@@ -9,6 +9,7 @@ try:
 except ImportError:
     pass
 
+import html
 import textwrap
 
 import plotly.graph_objects as go
@@ -115,6 +116,7 @@ def build_milestone_timeline_chart(
             showarrow=False, font=dict(size=9, color=_DELTA_COLOR),
         )
 
+    trace_labels = {}
     for milestones, other, label, color, offset in (
         (ref_milestones, cmp_milestones, "Reference", _REF_COLOR, 0.14),
         (cmp_milestones, ref_milestones, "Compared", _CMP_COLOR, -0.14),
@@ -123,18 +125,27 @@ def build_milestone_timeline_chart(
         if not present:
             continue
         comparisons = []
+        comparison_labels = []
         for name in present:
             if other.get(name) is None:
                 comparisons.append("Matching milestone not recorded in the other run")
+                comparison_labels.append("Matching milestone not recorded in the other run")
             else:
                 delta = cmp_milestones[name] - ref_milestones[name]
                 comparisons.append(f"Compared − reference: {delta:+} steps")
+                comparison_labels.append({"template": "Compared − reference: {delta} steps",
+                                          "params": {"delta": f"{delta:+}"}})
+        hovertemplate = "<b>%{text}</b><br>Step: %{x}<br>%{hovertext}<extra>" + label + "</extra>"
+        labels = [_MILESTONE_LABELS.get(name, name) for name in present]
+        trace_labels[len(fig.data)] = {
+            "text": labels, "hovertext": comparison_labels, "hovertemplate": hovertemplate,
+        }
         fig.add_trace(go.Scatter(
             x=[milestones[name] for name in present], y=[lanes[name] + offset for name in present],
             mode="markers", marker=dict(size=12, color=color, symbol="diamond"),
-            text=[_MILESTONE_LABELS.get(name, name) for name in present], customdata=comparisons,
+            text=labels, customdata=comparisons, hovertext=comparisons,
             name=label,
-            hovertemplate="<b>%{text}</b><br>Step: %{x}<br>%{customdata}<extra>" + label + "</extra>",
+            hovertemplate=hovertemplate,
         ))
 
     _apply_chart_layout(
@@ -146,7 +157,9 @@ def build_milestone_timeline_chart(
         yaxis_ticktext=["<br>".join(textwrap.wrap(_MILESTONE_LABELS.get(name, name), width=18)) for name in names],
         yaxis_tickfont=dict(size=10), yaxis_showticklabels=True, yaxis_zeroline=False,
     )
-    return localize_figure(fig, trace_names=True, annotations=True)
+    return localize_figure(fig, trace_names=True, annotations=True,
+                           layout_labels={"yaxis.ticktext": list(fig.layout.yaxis.ticktext)},
+                           trace_labels=trace_labels)
 
 
 # -- Segment cost chart -------------------------------------------------------
@@ -263,9 +276,12 @@ def build_divergence_waterfall_chart(patterns: list[dict]) -> go.Figure:
     _apply_chart_layout(
         fig, "Divergence Cost Breakdown by Pattern",
         xaxis="Pattern", yaxis="Extra Tokens",
+        xaxis_tickmode="array", xaxis_tickvals=labels,
         yaxis_range=[low - padding if low < 0 else 0, high + padding],
     )
-    return localize_figure(fig, trace_names=True, annotations=True)
+    return localize_figure(fig, trace_names=True, annotations=True, layout_labels={
+        "xaxis.ticktext": [{"literal": html.escape(label)} for label in labels[:-1]] + ["Total"],
+    })
 
 
 # -- Anchor class recall chart ------------------------------------------------
@@ -324,4 +340,6 @@ def build_anchor_class_chart(anchor_analysis: dict | None) -> go.Figure:
         barmode="group", yaxis_range=[0, max(100, *ref_recalls, *cmp_recalls) * 1.14],
         uniformtext=dict(minsize=11, mode="show"),
     )
-    return localize_figure(fig, trace_names=True, annotations=True)
+    return localize_figure(fig, trace_names=True, annotations=True, trace_labels={
+        index: {"hovertemplate": trace.hovertemplate} for index, trace in enumerate(fig.data)
+    })

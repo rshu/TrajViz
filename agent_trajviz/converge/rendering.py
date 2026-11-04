@@ -194,7 +194,7 @@ def build_comparison_report_html(report: dict) -> str:
                 ordered_keys.append(k)
 
         def _fmt_step(v):
-            return f"#{int(v)}" if isinstance(v, (int, float)) else "N/A"
+            return f"#{int(v)}" if isinstance(v, (int, float)) else ui_text("N/A")
 
         parts.append(f"<h2>{ui_text('Milestones')}</h2>")
         parts.append('<table class="cvg-milestone-table">')
@@ -206,8 +206,8 @@ def build_comparison_report_html(report: dict) -> str:
             label = MILESTONE_LABELS.get(name, name.replace("_", " ").title())
             shown_label = ui_text(label) if name in MILESTONE_LABELS else _esc(label)
             parts.append(f"<tr><td>{shown_label}</td>"
-                         f"<td>{_esc(_fmt_step(ref_ms.get(name)))}</td>"
-                         f"<td>{_esc(_fmt_step(cmp_ms.get(name)))}</td></tr>")
+                         f"<td>{_fmt_step(ref_ms.get(name))}</td>"
+                         f"<td>{_fmt_step(cmp_ms.get(name))}</td></tr>")
         parts.append("</tbody></table>")
 
     # ── Top divergence patterns ──────────────────────────────

@@ -109,6 +109,74 @@ def _input_errors_html(errors: list[dict], shown: dict[str, str]) -> str:
     return f"<h3>{ui_text('Input errors ({count})', count=len(errors))}</h3><ul class='cvg-warning'>{''.join(rows)}</ul>"
 
 
+def _recommendation_html(report: dict) -> str:
+    """Localize only recommendations reconstructed from owned report fields.
+
+    Metric identifiers stay literal parameters. Unrecognized report prose is
+    escaped rather than treated as a translation template.
+    """
+    recommendation = str(report.get("recommendation", ""))
+    fixed = (
+        "No comparable metric observations are available.",
+        "No significant changes detected.",
+        "Mixed results — review per-metric deltas.",
+        "Intervention effects are unavailable: no successful task pairs are available.",
+    )
+    if recommendation in fixed:
+        return ui_text(recommendation)
+
+    deltas = report.get("intervention_effect", {})
+    improved = [name for name, delta in deltas.items() if delta.get("direction") == "improved"]
+    regressed = [name for name, delta in deltas.items() if delta.get("direction") == "regressed"]
+    guarded = [warning["metric"] for warning in report.get("guardrail_warnings", []) if "metric" in warning]
+    candidates = (
+        ("Intervention improved {improved} with minor regressions in {regressed} (below guardrail thresholds).",
+         {"improved": ", ".join(improved[:2]), "regressed": ", ".join(regressed[:2])}),
+        ("Intervention improved {improved} without regressions.",
+         {"improved": ", ".join(improved[:3])}),
+        ("Intervention improved {improved} but regressed {regressed}. Review tradeoffs.",
+         {"improved": ", ".join(improved[:2]), "regressed": ", ".join(guarded[:2])}),
+        ("Intervention regressed {regressed} without improvements.",
+         {"regressed": ", ".join(regressed[:3])}),
+    )
+    for template, params in candidates:
+        if recommendation == template.format(**params):
+            return ui_text(template, **params)
+    return html.escape(recommendation)
+
+
+def _guardrail_warning_html(guardrail: dict) -> str:
+    """Keep unknown warnings literal; translate the engine's exact template."""
+    warning = str(guardrail.get("warning", ""))
+    try:
+        before = guardrail["before_mean"]
+        delta = abs(guardrail["delta"])
+        # Recompute from the original values, as the stored relative regression
+        # is rounded and may differ at the display precision boundary.
+        relative = delta / abs(before) if before else (1.0 if delta else 0.0)
+        params = {
+            "metric": guardrail["metric"],
+            "before": f"{before:.4f}",
+            "after": f"{guardrail['after_mean']:.4f}",
+            "relative": f"{relative * 100:.1f}",
+        }
+        if guardrail.get("p_value") is None:
+            template = "{metric} regressed from {before} to {after} ({relative}% relative)"
+        else:
+            template = "{metric} regressed from {before} to {after} ({relative}% relative, p={p_value})"
+            params["p_value"] = str(guardrail["p_value"])
+        if warning == template.format(**params):
+            return ui_text(template, **params)
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        # Imported/extended reports may carry arbitrary warning details.
+        pass
+    return html.escape(warning)
+
+
+def _direction_html(direction: str) -> str:
+    return ui_text(direction) if direction in {"improved", "regressed", "unchanged"} else html.escape(direction)
+
+
 def compare_uploads(ref_upload, cmp_upload, anchor_upload, rate, fuzzy) -> tuple:
     """Pairwise view: report HTML, three figures and the anchor-chart update."""
     from .charts import (
@@ -217,7 +285,7 @@ def batch_report_html(manifest_upload, rate, fuzzy, *, data_root: str | os.PathL
             parts.append(f"<tr><td>{html.escape(ptype)}</td>"
                          f"<td>{data.get('count', 0)}</td>"
                          f"<td>{data.get('prevalence', 0)*100:.0f}%</td>"
-                         f"<td><span class='cvg-badge'>{html.escape(badge)}</span></td></tr>")
+                         f"<td><span class='cvg-badge'>{ui_text(badge)}</span></td></tr>")
         parts.append("</tbody></table>")
 
     parts.append("</div>")
@@ -265,10 +333,10 @@ def before_after_report_html(before_upload, after_upload, rate, fuzzy, *, data_r
 
     rec = report.get("recommendation", "")
     if rec:
-        parts.append(f'<div class="cvg-note"><b>{ui_text("Recommendation:")}</b> {html.escape(rec)}</div>')
+        parts.append(f'<div class="cvg-note"><b>{ui_text("Recommendation:")}</b> {_recommendation_html(report)}</div>')
 
     for g in report.get("guardrail_warnings", []):
-        parts.append(f'<div class="cvg-warning">! {html.escape(g["warning"])}</div>')
+        parts.append(f'<div class="cvg-warning">! {_guardrail_warning_html(g)}</div>')
 
     deltas = report.get("intervention_effect", {})
     if deltas:
@@ -284,7 +352,7 @@ def before_after_report_html(before_upload, after_upload, rate, fuzzy, *, data_r
                 f'<td>{d["before_mean"]:.4f}</td>'
                 f'<td>{d["after_mean"]:.4f}</td>'
                 f'<td>{d["delta"]:+.4f}</td>'
-                f'<td style="color:{color};">{html.escape(str(d["direction"]))}</td></tr>')
+                f'<td style="color:{color};">{_direction_html(str(d["direction"]))}</td></tr>')
         parts.append("</tbody></table>")
 
     parts.append("</div>")

@@ -17,6 +17,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from agent_trajviz.i18n import attrs as _ui_attrs, text as _ui
+
 from agent_trajviz.converge.alignment import (
     _detect_success,
     align_trajectories,
@@ -408,13 +410,25 @@ def _run_class(index: int) -> str:
     return f"rg-run-{int(index) % _RUN_PALETTE}"
 
 
-def _run_swatch_html(index: int, label: str, extra_class: str = "rg-legend-run", *, compact: bool = False) -> str:
+def _run_swatch_html(index: int, label: str, extra_class: str = "rg-legend-run", *,
+                     compact: bool = False, caption_html: str | None = None,
+                     label_message: tuple[str, dict] | None = None) -> str:
     escaped = html.escape(str(label), quote=True)
     title = f" title='{escaped}' aria-label='{escaped}'"
+    caption_attrs = ""
+    if label_message is not None:
+        template, params = label_message
+        # One owned attribute per node: the swatch owns its hover text; its
+        # caption supplies the accessible name, with literal run data as args.
+        title = " " + _ui_attrs(template, **params)
+        caption_attrs = " role='img' " + _ui_attrs(template, attribute="aria-label", **params)
     style = " style='min-width:0;max-width:100%;overflow:hidden;'" if compact else ""
-    text = ("<span style='min-width:0;max-width:100%;white-space:normal;word-break:break-word;"
+    caption = escaped if caption_html is None else caption_html
+    text = (f"<span{caption_attrs} style='min-width:0;max-width:100%;white-space:normal;word-break:break-word;"
             "display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.25;'>"
-            + escaped + "</span>") if compact else escaped
+            + caption + "</span>") if compact else caption
+    if caption_attrs and not compact:
+        text = f"<span{caption_attrs}>{caption}</span>"
     return (
         f"<span class='{extra_class} {_run_class(index)}'{title}{style}>"
         f"<span class='rg-run-swatch' aria-hidden='true'></span>"
@@ -767,6 +781,7 @@ def build_run_group_scorecard(
     rows: list[dict] = []
     loaded_runs: list[dict] = []
     used_ids: set[str] = set()
+    timeline_labels: dict[str, dict] = {}
 
     def _append_raw(
         raw: dict,
@@ -862,8 +877,10 @@ def build_run_group_scorecard(
             blabel = baseline_label
         elif src:
             blabel = f"{baseline_id} (baseline)"
+            timeline_labels[baseline_id] = {"template": "{run} (baseline)", "params": {"run": baseline_id}}
         else:
             blabel = "Overview (baseline)"
+            timeline_labels[baseline_id] = {"template": "Overview (baseline)", "params": {}}
         _append_raw(
             baseline_raw,
             path=src or "(overview)",
@@ -907,6 +924,9 @@ def build_run_group_scorecard(
             "run_id": r["run_id"],
             "label": r["label"],
             "steps": r.get("steps") or [],
+            # Explicit presentation metadata distinguishes our generated suffix
+            # from a supplied label that happens to contain the same words.
+            **({"label_i18n": timeline_labels[r["run_id"]]} if r["run_id"] in timeline_labels else {}),
         }
         for r in loaded_runs
     ]
@@ -968,6 +988,38 @@ def _f1_bg(f1: float) -> str:
     return f"background:rgb({r},{g},{b});"
 
 
+def _run_label_html(label: Any, run_id: str, *, baseline: bool = False) -> str:
+    """Keep recorded names literal; localize only our generated baseline suffix."""
+    value = str(label)
+    if baseline and value == f"{run_id} (baseline)":
+        return html.escape(run_id) + " " + _ui("(baseline)")
+    if baseline and run_id == "overview" and value == "Overview (baseline)":
+        return _ui("Overview") + " " + _ui("(baseline)")
+    return html.escape(value)
+
+
+def _run_label_message(label: Any, run_id: str, *, baseline: bool = False,
+                       description: str = "name", count: int = 0) -> tuple[str, dict] | None:
+    """An attribute template owns generated prose, never the supplied run name."""
+    value = str(label)
+    generated = baseline and value == f"{run_id} (baseline)"
+    overview = baseline and run_id == "overview" and value == "Overview (baseline)"
+    if description == "name" and not (generated or overview):
+        return None
+    templates = {
+        "name": ("{run}", "{run} (baseline)", "Overview (baseline)"),
+        "only_in": ("{count} only in {run}", "{count} only in {run} (baseline)",
+                    "{count} only in Overview (baseline)"),
+        "read_only": ("{count} files read only by {run}", "{count} files read only by {run} (baseline)",
+                      "{count} files read only by Overview (baseline)"),
+    }
+    template = templates[description][2 if overview else 1 if generated else 0]
+    params = {} if overview else {"run": run_id if generated else value}
+    if description != "name":
+        params["count"] = count
+    return template, params
+
+
 def _render_similarity_html(behavior: dict) -> str:
     ids = behavior.get("run_ids") or []
     labels = behavior.get("labels") or {}
@@ -975,18 +1027,19 @@ def _render_similarity_html(behavior: dict) -> str:
     if len(ids) < 2:
         return ""
     parts = [
-        "<h4 style='margin:1.25em 0 0.35em;font-size:14px;'>Behavioral similarity (alignment F1)</h4>",
+        f"<h4 style='margin:1.25em 0 0.35em;font-size:14px;'>{_ui('Behavioral similarity (alignment F1)')}</h4>",
         "<div style='font-size:12px;color:var(--ov-muted);margin-bottom:6px;'>"
-        "Ordered action overlap via Converge LCS. 1.0 = identical tool sequence "
-        "(ignoring REASON). Use pairwise Comparison for a full report on any pair."
+        + _ui("Ordered action overlap via Converge LCS. 1.0 = identical tool sequence "
+              "(ignoring REASON). Use pairwise Comparison for a full report on any pair.")
+        +
         "</div>",
         '<table class="cvg-outcome-table"><thead><tr><th></th>',
     ]
     for rid in ids:
-        parts.append(f"<th>{html.escape(str(labels.get(rid, rid)))}</th>")
+        parts.append(f"<th>{_run_label_html(labels.get(rid, rid), rid, baseline=rid == ids[0])}</th>")
     parts.append("</tr></thead><tbody>")
     for a in ids:
-        parts.append(f"<tr><th>{html.escape(str(labels.get(a, a)))}</th>")
+        parts.append(f"<tr><th>{_run_label_html(labels.get(a, a), a, baseline=a == ids[0])}</th>")
         for b in ids:
             f1 = float((matrix.get(a) or {}).get(b) or 0.0)
             style = _f1_bg(f1)
@@ -1004,18 +1057,18 @@ def _rw_badges(cell: dict, *, tone: str = "", run_i: int = 0) -> str:
         return "<span class='rg-file-empty'>—</span>"
     bits: list[str] = []
     if read > 0:
-        label = "R" if read == 1 else f"R×{read}"
+        label = _ui("R") if read == 1 else _ui("R×{count}", count=read)
         extra = " rg-badge-r"
         if tone == "shared":
             extra = " rg-badge-shared"
         elif tone == "run":
             extra = f" rg-badge-run {_run_class(run_i)}"
         bits.append(
-            f"<span class='rg-badge{extra}' title='{read} read(s)'>{label}</span>"
+            f"<span class='rg-badge{extra}' {_ui_attrs('{count} read(s)', count=read)}>{label}</span>"
         )
     if write > 0:
-        label = "W" if write == 1 else f"W×{write}"
-        bits.append(f"<span class='rg-badge rg-badge-w' title='{write} write(s)'>{label}</span>")
+        label = _ui("W") if write == 1 else _ui("W×{count}", count=write)
+        bits.append(f"<span class='rg-badge rg-badge-w' {_ui_attrs('{count} write(s)', count=write)}>{label}</span>")
     return "".join(bits)
 
 
@@ -1057,23 +1110,52 @@ def _read_mix_segments(
     return segs
 
 
-def _mix_bar_html(segments: Sequence[tuple[str, int, str]], total: int) -> str:
+def _mix_bar_html(segments: Sequence[tuple[str, int, str]], total: int, *,
+                  ids: Sequence[str] = (), labels: dict | None = None) -> str:
     if total <= 0 or not segments:
         return ""
     segs: list[str] = []
-    labels: list[str] = []
     for css, count, label in segments:
         pct = 100.0 * count / total
-        segs.append(f"<span class='rg-mix-seg {css}' style='width:{pct:.2f}%'></span>")
-        labels.append(label)
+        if css == "rg-mix-shared":
+            description = _ui_attrs("{count} files read by all runs", attribute="aria-label", count=count)
+        elif css == "rg-mix-partial":
+            description = _ui_attrs("{count} files with other read coverage", attribute="aria-label", count=count)
+        else:
+            # The run name is recorded data, not a translation key.
+            name = label.removeprefix(f"{count} ")
+            message = ("{count} files read only by {run}", {"count": count, "run": name})
+            for index, rid in enumerate(ids):
+                name = (labels or {}).get(rid, rid)
+                if css == f"rg-mix-run {_run_class(index)}" and label == f"{count} {name}":
+                    message = _run_label_message(name, rid, baseline=rid == ids[0], description="read_only", count=count)
+                    break
+            template, params = message
+            description = _ui_attrs(template, attribute="aria-label", **params)
+        segs.append(f"<span class='rg-mix-seg {css}' role='img' {description} style='width:{pct:.2f}%'></span>")
     return (
-        f"<span class='rg-mix-bar' role='img' aria-label='{html.escape(', '.join(labels))}'>"
+        f"<span class='rg-mix-bar' role='group' {_ui_attrs('File reading distribution', attribute='aria-label')}>"
         f"{''.join(segs)}</span>"
     )
 
 
-def _mix_label_html(segments: Sequence[tuple[str, int, str]]) -> str:
-    return html.escape(" · ".join(label for _css, _count, label in segments)) if segments else ""
+def _mix_label_html(segments: Sequence[tuple[str, int, str]], *,
+                    ids: Sequence[str] = (), labels: dict | None = None) -> str:
+    parts = []
+    for css, count, label in segments:
+        if css == "rg-mix-shared":
+            parts.append(_ui("{count} both", count=count))
+        elif css == "rg-mix-partial":
+            parts.append(_ui("{count} other", count=count))
+        else:
+            for index, rid in enumerate(ids):
+                name = (labels or {}).get(rid, rid)
+                if css == f"rg-mix-run {_run_class(index)}" and label == f"{count} {name}":
+                    parts.append(f"{count} " + _run_label_html(name, rid, baseline=rid == ids[0]))
+                    break
+            else:
+                parts.append(html.escape(label))
+    return " · ".join(parts)
 
 
 def _file_read_badge(
@@ -1084,14 +1166,14 @@ def _file_read_badge(
     readers: list[str],
 ) -> str:
     if n >= 2 and len(readers) == n:
-        return '<span class="rg-both-read">both read</span>'
+        return f'<span class="rg-both-read">{_ui("both read")}</span>'
     if len(readers) == 1:
         rid = readers[0]
         index = list(ids).index(rid)
         name = labels.get(rid, rid)
         return (
             f"<span class='rg-kind rg-kind-run {_run_class(index)}'>"
-            f"{html.escape(str(name))} only</span>"
+            f"{_run_label_html(name, rid, baseline=rid == ids[0])}{_ui(' only')}</span>"
         )
     return _kind_badge(str(row.get("kind") or "partial"), int(row.get("n_runs") or 0), n)
 
@@ -1176,11 +1258,11 @@ def _render_tree_node_html(
         parts.append(
             f"<span class='rg-tree-name'><span class='rg-dir-caret' aria-hidden='true'></span>"
             f"<code>{html.escape(folder)}</code>"
-            f"{_mix_bar_html(segments, len(child_files))}"
-            f"<span class='rg-dir-count'>{len(child_files)} files</span></span>"
+            f"{_mix_bar_html(segments, len(child_files), ids=ids, labels=labels)}"
+            f"<span class='rg-dir-count'>{_ui('{count} files', count=len(child_files))}</span></span>"
         )
         parts.append(_tree_run_cells_html(cells, ids))
-        parts.append(f"<span class='rg-tree-mix'>{_mix_label_html(segments)}</span>")
+        parts.append(f"<span class='rg-tree-mix'>{_mix_label_html(segments, ids=ids, labels=labels)}</span>")
         parts.append("</summary>")
         parts.append(_render_tree_node_html(child, ids, labels, n, rel=rel + [name]))
         parts.append("</details>")
@@ -1197,8 +1279,9 @@ def _kind_badge(kind: str, n_runs: int, n_total: int) -> str:
         "partial": ("partial", "rg-kind-partial"),
         "unique": ("unique", "rg-kind-unique"),
     }
-    text, cls = labels.get(kind, (kind, "rg-kind-partial"))
-    return f"<span class='rg-kind {cls}'>{html.escape(text)}</span><span class='rg-cov'>{n_runs}/{n_total}</span>"
+    caption, cls = labels.get(kind, (kind, "rg-kind-partial"))
+    shown = _ui(caption) if kind in labels else html.escape(caption)
+    return f"<span class='rg-kind {cls}'>{shown}</span><span class='rg-cov'>{n_runs}/{n_total}</span>"
 
 
 def _action_type_badge(atype: str) -> str:
@@ -1209,8 +1292,10 @@ def _action_type_badge(atype: str) -> str:
         "COMMAND": ("CMD", "rg-atype-cmd"),
         "AGENT_SPAWN": ("SPAWN", "rg-atype-spawn"),
     }.get(atype, (atype[:6], "rg-atype-other"))
-    text, cls = short
-    return f"<span class='rg-atype {cls}'>{html.escape(text)}</span>"
+    caption, cls = short
+    known = atype in {"FILE_READ", "FILE_WRITE", "SEARCH", "COMMAND", "AGENT_SPAWN"}
+    shown = _ui(caption) if known else html.escape(caption)
+    return f"<span class='rg-atype {cls}'>{shown}</span>"
 
 
 def _action_cell(cell: dict) -> str:
@@ -1218,8 +1303,8 @@ def _action_cell(cell: dict) -> str:
         return "<span class='rg-file-empty'>—</span>"
     count = int(cell.get("count") or 1)
     if count <= 1:
-        return "<span class='rg-action-hit' title='Present'>✓</span>"
-    return f"<span class='rg-action-hit' title='{count} times'>✓×{count}</span>"
+        return f"<span class='rg-action-hit' {_ui_attrs('Present')}>✓</span>"
+    return f"<span class='rg-action-hit' {_ui_attrs('{count} times', count=count)}>✓×{count}</span>"
 
 
 def _expandable_coverage_table(
@@ -1243,13 +1328,13 @@ def _expandable_coverage_table(
     parts.append(
         "<div class='rg-file-scroll'>"
         "<table class='cvg-outcome-table rg-file-table'><thead><tr>"
-        f"<th>{html.escape(first_header)}</th>"
+        f"<th>{_ui(first_header)}</th>"
     )
     for rid in ids:
         parts.append(
-            f"<th style='text-align:center;'>{html.escape(str(labels.get(rid, rid)))}</th>"
+            f"<th style='text-align:center;'>{_run_label_html(labels.get(rid, rid), rid, baseline=rid == ids[0])}</th>"
         )
-    parts.append("<th>Coverage</th></tr></thead><tbody>")
+    parts.append(f"<th>{_ui('Coverage')}</th></tr></thead><tbody>")
     for index, row in enumerate(rows):
         extra = " rg-matrix-tail" if expandable and index >= preview else ""
         parts.append(render_row(row, extra))
@@ -1258,9 +1343,9 @@ def _expandable_coverage_table(
         hidden = len(rows) - preview
         parts.append(
             f"<label for='{html.escape(toggle_id)}' class='rg-matrix-toggle-label'>"
-            f"<span class='rg-matrix-show'>Show all {len(rows)} {html.escape(noun)} "
-            f"({hidden} more)</span>"
-            f"<span class='rg-matrix-hide'>Show first {preview} {html.escape(noun)}</span>"
+            f"<span class='rg-matrix-show'>{_ui('Show all {count}', count=len(rows))} {_ui(noun)} "
+            f"{_ui('({count} more)', count=hidden)}</span>"
+            f"<span class='rg-matrix-hide'>{_ui('Show first {count}', count=preview)} {_ui(noun)}</span>"
             "</label>"
         )
     parts.append("</div>")
@@ -1273,15 +1358,15 @@ def _render_action_matrix_html(behavior: dict) -> str:
     rows = behavior.get("action_matrix") or []
     n = len(ids)
     parts = [
-        "<h4 style='margin:1em 0 0.35em;font-size:14px;'>Action coverage</h4>",
+        f"<h4 style='margin:1em 0 0.35em;font-size:14px;'>{_ui('Action coverage')}</h4>",
         "<div style='font-size:12px;color:var(--ov-muted);margin-bottom:6px;'>"
-        "Non-file canonical actions (search, command, spawn, …). "
-        "File read/write live in <b>File coverage</b> below. "
-        "<span class='rg-action-hit'>✓</span> = present; ×N = repeats in that run."
-        "</div>",
+        + _ui("Non-file canonical actions (search, command, spawn, …). ")
+        + _ui("File read/write live in File coverage below. ")
+        + "<span class='rg-action-hit'>✓</span> "
+        + _ui("= present; ×N = repeats in that run.") + "</div>",
     ]
     if not rows:
-        parts.append("<div style='font-size:12px;color:var(--ov-muted);'>No non-file actions across these runs.</div>")
+        parts.append(f"<div style='font-size:12px;color:var(--ov-muted);'>{_ui('No non-file actions across these runs.')}</div>")
         return "".join(parts)
 
     def render_row(row: dict, extra: str) -> str:
@@ -1329,23 +1414,26 @@ def _render_file_matrix_html(behavior: dict) -> str:
     labels = behavior.get("labels") or {}
     rows = behavior.get("file_matrix") or []
     n = len(ids)
-    both_label = "both" if n == 2 else "all runs"
-    legend = [_run_swatch_html(index, labels.get(rid, rid)) for index, rid in enumerate(ids)]
+    legend = [_run_swatch_html(index, labels.get(rid, rid),
+                               caption_html=_run_label_html(labels.get(rid, rid), rid, baseline=rid == ids[0]),
+                               label_message=_run_label_message(labels.get(rid, rid), rid, baseline=rid == ids[0]))
+              for index, rid in enumerate(ids)]
     legend.append(
-        f"<span class='rg-both-read'>both read</span> = read in {html.escape(both_label)}"
+        f"<span class='rg-both-read'>{_ui('both read')}</span> "
+        + _ui("= read in both" if n == 2 else "= read in all runs")
     )
     parts = [
-        "<h4 style='margin:1em 0 0.35em;font-size:14px;'>File coverage</h4>",
+        f"<h4 style='margin:1em 0 0.35em;font-size:14px;'>{_ui('File coverage')}</h4>",
         "<div style='font-size:12px;color:var(--ov-muted);margin-bottom:6px;'>"
-        "Unique reads are tinted by trajectory; mutual reads stay green. "
+        + _ui("Unique reads are tinted by trajectory; mutual reads stay green. ")
         + " · ".join(legend)
         + "</div>",
         "<div style='font-size:12px;color:var(--ov-muted);margin-bottom:6px;'>"
-        "Paths inside each recorded session working directory are compared relative to it; other paths keep their existing identity."
-        "</div>",
+        + _ui("Paths inside each recorded session working directory are compared relative to it; other paths keep their existing identity.")
+        + "</div>",
     ]
     if not rows:
-        parts.append("<div style='font-size:12px;color:var(--ov-muted);'>No file reads/writes across these runs.</div>")
+        parts.append(f"<div style='font-size:12px;color:var(--ov-muted);'>{_ui('No file reads/writes across these runs.')}</div>")
         return "".join(parts)
 
     root_label, root_full = _shared_home_label(str(row.get("path") or "") for row in rows)
@@ -1356,9 +1444,9 @@ def _render_file_matrix_html(behavior: dict) -> str:
     ]
     totals = _kind_counts(rows)
     summary = [
-        f"{len(rows)} files",
-        f"{len(both_reads)} read in {both_label}",
-        f"{int(totals.get('unique') or 0)} unique",
+        _ui("{count} files", count=len(rows)),
+        _ui("{count} read in both" if n == 2 else "{count} read in all runs", count=len(both_reads)),
+        _ui("{count} unique", count=int(totals.get("unique") or 0)),
     ]
     only_bits: list[str] = []
     for index, rid in enumerate(ids):
@@ -1369,19 +1457,23 @@ def _render_file_matrix_html(behavior: dict) -> str:
                 n_only += 1
         if n_only:
             only_bits.append(
-                _run_swatch_html(index, f"{n_only} only in {labels.get(rid, rid)}")
+                _run_swatch_html(index, f"{n_only} only in {labels.get(rid, rid)}",
+                                 caption_html=_ui("{count} only in", count=n_only) + " "
+                                 + _run_label_html(labels.get(rid, rid), rid, baseline=rid == ids[0]),
+                                 label_message=_run_label_message(labels.get(rid, rid), rid, baseline=rid == ids[0],
+                                                                  description="only_in", count=n_only))
             )
     if root_label:
         parts.append(
             "<div class='rg-file-root' title='"
             + html.escape(root_full)
-            + "'>Paths relative to <code>/"
+            + "'>" + _ui("Paths relative to") + " <code>/"
             + html.escape(root_label)
             + "</code></div>"
         )
     parts.append(
         "<div class='rg-file-summary'>"
-        + html.escape(" · ".join(summary))
+        + " · ".join(summary)
         + (" · " + " · ".join(only_bits) if only_bits else "")
         + "</div>"
     )
@@ -1389,8 +1481,7 @@ def _render_file_matrix_html(behavior: dict) -> str:
         preview = 24
         parts.append("<details class='rg-both-list'" + (" open" if len(both_reads) <= preview else "") + ">")
         parts.append(
-            f"<summary>Read in {html.escape(both_label)} "
-            f"({len(both_reads)} files)</summary>"
+            f"<summary>{_ui('Read in both ({count} files)' if n == 2 else 'Read in all runs ({count} files)', count=len(both_reads))}</summary>"
         )
         parts.append("<ul class='rg-both-paths'>")
         shown = both_reads if len(both_reads) <= preview else both_reads[:preview]
@@ -1401,14 +1492,14 @@ def _render_file_matrix_html(behavior: dict) -> str:
             )
         if len(both_reads) > preview:
             parts.append(
-                f"<li class='rg-both-more'>{len(both_reads) - preview} more in the tree below</li>"
+                f"<li class='rg-both-more'>{_ui('{count} more in the tree below', count=len(both_reads) - preview)}</li>"
             )
         parts.append("</ul></details>")
 
     parts.append(
         f"<div class='rg-tree' style='--rg-run-cols:{max(n, 1)};'>"
         "<div class='rg-tree-head'>"
-        "<span>Folder / file</span>"
+        f"<span>{_ui('Folder / file')}</span>"
     )
     for index, rid in enumerate(ids):
         parts.append(
@@ -1416,9 +1507,11 @@ def _render_file_matrix_html(behavior: dict) -> str:
                 index,
                 labels.get(rid, rid),
                 extra_class="rg-tree-cell rg-tree-runhead", compact=True,
+                caption_html=_run_label_html(labels.get(rid, rid), rid, baseline=rid == ids[0]),
+                label_message=_run_label_message(labels.get(rid, rid), rid, baseline=rid == ids[0]),
             )
         )
-    parts.append("<span>Mix</span></div>")
+    parts.append(f"<span>{_ui('Mix')}</span></div>")
     parts.append(_render_tree_node_html(tree, ids, labels, n, rel=[]))
     parts.append("</div>")
     return "".join(parts)
@@ -1441,11 +1534,11 @@ def _render_count_matrix_html(
     rows = behavior.get(matrix_key) or []
     n = len(ids)
     parts = [
-        f"<h4 style='margin:1em 0 0.35em;font-size:14px;'>{html.escape(title)}</h4>",
-        f"<div style='font-size:12px;color:var(--ov-muted);margin-bottom:6px;'>{html.escape(blurb)}</div>",
+        f"<h4 style='margin:1em 0 0.35em;font-size:14px;'>{_ui(title)}</h4>",
+        f"<div style='font-size:12px;color:var(--ov-muted);margin-bottom:6px;'>{_ui(blurb)}</div>",
     ]
     if not rows:
-        parts.append(f"<div style='font-size:12px;color:var(--ov-muted);'>{html.escape(empty)}</div>")
+        parts.append(f"<div style='font-size:12px;color:var(--ov-muted);'>{_ui(empty)}</div>")
         return "".join(parts)
 
     def render_row(row: dict, extra: str) -> str:
@@ -1490,10 +1583,10 @@ def _render_behavior_html(behavior: dict | None) -> str:
     thresh = behavior.get("consensus_threshold") or 0
     parts = [
         "<hr style='border:none;border-top:1px solid var(--ov-border);margin:1.25em 0;'>",
-        "<h3 style='margin:0 0 0.35em;font-size:15px;'>Behavioral comparison</h3>",
+        f"<h3 style='margin:0 0 0.35em;font-size:15px;'>{_ui('Behavioral comparison')}</h3>",
         f"<div style='font-size:12px;color:var(--ov-muted);margin-bottom:8px;'>"
-        f"Baseline for waste patterns: <b>{html.escape(str(base_label))}</b> "
-        f"(first loaded run). Consensus = item seen in ≥{thresh} runs."
+        f"{_ui('Baseline for waste patterns:')} <b>{_run_label_html(base_label, baseline, baseline=True)}</b> "
+        f"{_ui('(first loaded run). Consensus = item seen in ≥{count} runs.', count=thresh)}"
         f"</div>",
         _render_similarity_html(behavior),
         _render_count_matrix_html(
@@ -1524,9 +1617,9 @@ def _render_behavior_html(behavior: dict | None) -> str:
     patterns = behavior.get("patterns_vs_baseline") or {}
     parts.append(
         f"<h4 style='margin:1em 0 0.35em;font-size:14px;'>"
-        f"Waste patterns vs baseline ({html.escape(str(base_label))})</h4>"
+        f"{_ui('Waste patterns vs baseline')} ({_run_label_html(base_label, baseline, baseline=True)})</h4>"
         "<div style='font-size:12px;color:var(--ov-muted);margin-bottom:6px;'>"
-        "Divergence patterns on actions not matched to the baseline trajectory."
+        f"{_ui('Divergence patterns on actions not matched to the baseline trajectory.')}"
         "</div>"
     )
     any_pat = False
@@ -1538,17 +1631,34 @@ def _render_behavior_html(behavior: dict | None) -> str:
         if not plist:
             parts.append(
                 f"<div style='font-size:13px;margin:0.35em 0;'>"
-                f"<b>{html.escape(str(label))}</b> — no classified waste patterns"
+                f"<b>{_run_label_html(label, rid)}</b> — {_ui('no classified waste patterns')}"
                 f"</div>"
             )
             continue
         any_pat = True
-        bits = ", ".join(f"{html.escape(p['label'])} ×{p['count']}" for p in plist[:6])
-        parts.append(f"<div style='font-size:13px;margin:0.35em 0;'><b>{html.escape(str(label))}</b> — {bits}</div>")
+        bits = ", ".join(
+            f"{_ui(p['label']) if _PATTERN_LABELS.get(p.get('type')) == p['label'] else html.escape(p['label'])} ×{p['count']}"
+            for p in plist[:6]
+        )
+        parts.append(f"<div style='font-size:13px;margin:0.35em 0;'><b>{_run_label_html(label, rid)}</b> — {bits}</div>")
     if not any_pat and len(behavior.get("run_ids") or []) <= 1:
-        parts.append("<div style='font-size:12px;color:var(--ov-muted);'>No other runs.</div>")
+        parts.append(f"<div style='font-size:12px;color:var(--ov-muted);'>{_ui('No other runs.')}</div>")
 
     return "".join(parts)
+
+
+_RUN_GROUP_MESSAGES = (
+    "Load a trajectory in Overview (baseline), then upload at least one more run — or upload two or more trajectories here.",
+    "Upload at least one comparison trajectory (Overview is already included as the baseline).",
+    "Upload at least two trajectories to build a run-group scorecard.",
+    "None of the trajectories could be loaded.",
+    "Need at least two successfully loaded runs (Overview baseline + one comparison, or two uploads).",
+)
+
+
+def _run_group_message_html(value: Any) -> str:
+    message = str(value)
+    return _ui(message) if message in _RUN_GROUP_MESSAGES else html.escape(message)
 
 
 def build_run_group_scorecard_html(
@@ -1560,30 +1670,30 @@ def build_run_group_scorecard_html(
     error = result.get("error")
     rows = result.get("rows") or []
     if error and not rows:
-        return f"<div style='color:var(--ov-warn);padding:1em;text-align:center;'>{html.escape(str(error))}</div>"
+        return f"<div style='color:var(--ov-warn);padding:1em;text-align:center;'>{_run_group_message_html(error)}</div>"
     if not rows:
         return (
             "<div style='padding:1.5em;color:var(--ov-muted);text-align:center;'>"
-            "Load a trajectory in Overview (baseline), then upload at least "
-            "one comparison run — or upload two or more trajectories here.</div>"
+            + _ui("Load a trajectory in Overview (baseline), then upload at least "
+                  "one comparison run — or upload two or more trajectories here.") + "</div>"
         )
 
     flags = _best_worst_flags(rows)
     parts: list[str] = []
     if error:
-        parts.append(f"<div style='color:var(--ov-warn);margin-bottom:0.5em;'>{html.escape(str(error))}</div>")
+        parts.append(f"<div style='color:var(--ov-warn);margin-bottom:0.5em;'>{_run_group_message_html(error)}</div>")
     n_ok = sum(1 for r in rows if not r.get("error"))
     parts.append(
         f"<div style='font-size:12px;color:var(--ov-muted);margin-bottom:6px;'>"
-        f"{n_ok} of {len(rows)} run(s) loaded"
-        f" &middot; green = best, amber = worst among loaded runs"
-        f" &middot; Finished means normal stop, not task correctness"
-        f" &middot; N/A metrics lack evidence and are excluded from ranking"
+        f"{_ui('{count} of {total} run(s) loaded', count=n_ok, total=len(rows))}"
+        f" &middot; {_ui('green = best, amber = worst among loaded runs')}"
+        f" &middot; {_ui('Finished means normal stop, not task correctness')}"
+        f" &middot; {_ui('N/A metrics lack evidence and are excluded from ranking')}"
         f"</div>"
     )
     context_note = ("Context percentages may use capacity inferred from the model name or an assumed default "
                     "when the session does not report it; these percentages are estimates.")
-    parts.append(f"<div style='font-size:12px;color:var(--ov-muted);margin-bottom:6px;'>{context_note}</div>")
+    parts.append(f"<div style='font-size:12px;color:var(--ov-muted);margin-bottom:6px;'>{_ui(context_note)}</div>")
     parts.append('<table class="cvg-outcome-table"><thead><tr>')
     headers = [
         "Condition",
@@ -1598,15 +1708,16 @@ def build_run_group_scorecard_html(
         "Compacts",
     ]
     for h in headers:
-        title = f" title='{html.escape(context_note, quote=True)}'" if h == "Peak ctx" else ""
-        parts.append(f"<th{title}>{html.escape(h)}</th>")
+        title = " " + _ui_attrs(context_note) if h == "Peak ctx" else ""
+        parts.append(f"<th{title}>{_ui(h)}</th>")
     parts.append("</tr></thead><tbody>")
 
+    baseline = (result.get("behavior") or {}).get("baseline_run_id") or ""
     for row in rows:
         rid = row.get("run_id") or ""
         if row.get("error"):
             parts.append("<tr>")
-            parts.append(f"<td>{html.escape(str(row.get('label') or rid))}</td>")
+            parts.append(f"<td>{_run_label_html(row.get('label') or rid, rid, baseline=rid == baseline)}</td>")
             parts.append("<td colspan='9' style='color:var(--ov-bad);'>")
             parts.append(html.escape(str(row["error"])))
             parts.append("</td></tr>")
@@ -1628,11 +1739,11 @@ def build_run_group_scorecard_html(
             peak_txt = f"{peak:,}"
 
         success = row.get("tool_success_pct")
-        success_txt = f"{success:g}%" if _finite_number(success) else "N/A"
+        success_txt = f"{success:g}%" if _finite_number(success) else _ui("N/A")
         compactions = row.get("compactions")
-        compactions_txt = f"{compactions:g}" if _finite_number(compactions) else "N/A"
+        compactions_txt = f"{compactions:g}" if _finite_number(compactions) else _ui("N/A")
         cells = [
-            (html.escape(str(row.get("label") or rid)), ""),
+            (_run_label_html(row.get("label") or rid, rid, baseline=rid == baseline), ""),
             (html.escape(str(row.get("format") or "—")), ""),
             (finished, fin_style),
             (f"{row.get('steps') or 0}", _cell_class(rid, "steps", flags)),
@@ -1640,7 +1751,7 @@ def build_run_group_scorecard_html(
             (f"{row.get('tokens') or 0:,}", _cell_class(rid, "tokens", flags)),
             (f"{row.get('tool_calls') or 0}", ""),
             (success_txt, _cell_class(rid, "tool_success_pct", flags)),
-            (html.escape(peak_txt), _cell_class(rid, "peak_occupancy", flags)),
+            (_ui("N/A") if not _finite_number(peak) else html.escape(peak_txt), _cell_class(rid, "peak_occupancy", flags)),
             (compactions_txt, _cell_class(rid, "compactions", flags)),
         ]
         parts.append("<tr>")

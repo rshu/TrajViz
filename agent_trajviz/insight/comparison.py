@@ -10,6 +10,8 @@ HTML report.
 import html
 import logging
 
+from ..i18n import text as ui_text
+
 from agent_trajviz.insight.parser import parse_steps
 
 from agent_trajviz.converge.alignment import (
@@ -91,13 +93,13 @@ def run_comparison(
         if "_error" in ref_raw:
             empty["report_html"] = (
                 f"<div style='color:var(--ov-bad);padding:1em;'>"
-                f"Error loading reference trajectory: {html.escape(str(ref_raw['_error']))}</div>"
+                f"{ui_text('Error loading reference trajectory:')} {html.escape(str(ref_raw['_error']))}</div>"
             )
             return empty
         if "_error" in cmp_raw:
             empty["report_html"] = (
                 f"<div style='color:var(--ov-bad);padding:1em;'>"
-                f"Error loading compared trajectory: {html.escape(str(cmp_raw['_error']))}</div>"
+                f"{ui_text('Error loading compared trajectory:')} {html.escape(str(cmp_raw['_error']))}</div>"
             )
             return empty
 
@@ -156,11 +158,9 @@ def run_comparison(
             "unavailable": "transcript_alignment",
             "report_html": (
                 "<div style='color:var(--ov-warn);padding:1em;'>"
-                "<strong>Transcript alignment unavailable</strong>"
-                "<p>This capture records operations rather than a native conversation transcript. "
-                "Transcript alignment and divergence scores have not been computed.</p>"
-                "<p>Inspect observed token usage, timing and tool metrics in Overview, or compare those "
-                "measurements in Run group. Use native session logs for transcript alignment.</p></div>"
+                f"<strong>{ui_text('Transcript alignment unavailable')}</strong>"
+                f"<p>{ui_text('This capture records operations rather than a native conversation transcript. Transcript alignment and divergence scores have not been computed.')}</p>"
+                f"<p>{ui_text('Inspect observed token usage, timing and tool metrics in Overview, or compare those measurements in Run group. Use native session logs for transcript alignment.')}</p></div>"
             ),
         }
     except Exception as e:
@@ -172,8 +172,8 @@ def run_comparison(
         logger.exception("comparison failed")
         empty["report_html"] = (
             f"<div style='color:var(--ov-bad);padding:1em;'>"
-            f"<strong>Comparison failed:</strong> {html.escape(type(e).__name__)}"
+            f"<strong>{ui_text('Comparison failed:')}</strong> {html.escape(type(e).__name__)}"
             f"<div style='font-size:12px;margin-top:6px;color:var(--ov-muted);'>"
-            f"Details are in the server log.</div></div>"
+            f"{ui_text('Details are in the server log.')}</div></div>"
         )
         return empty

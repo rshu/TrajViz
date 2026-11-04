@@ -2,6 +2,7 @@
 
 import json
 from copy import deepcopy
+from html.parser import HTMLParser
 
 import pytest
 
@@ -87,11 +88,20 @@ def test_fuzzy_command_file_identity_uses_its_own_recorded_workspace():
 
 
 def test_scorecard_explains_model_inferred_context_percentage():
+    class Tooltips(HTMLParser):
+        titles = []
+
+        def handle_starttag(self, tag, attrs):
+            if title := dict(attrs).get("title"):
+                self.titles.append(title)
+
     output = build_run_group_scorecard_html({"rows": [{"run_id": "one", "peak_pct": 8.9,
                                                       "peak_occupancy": 93700}]}, include_behavior=False)
     assert "capacity inferred from the model name" in output
     assert "these percentages are estimates" in output
-    assert "title='Context percentages" in output
+    tooltips = Tooltips()
+    tooltips.feed(output)
+    assert any(title.startswith("Context percentages") for title in tooltips.titles)
 
 
 def _native_capture(directory):

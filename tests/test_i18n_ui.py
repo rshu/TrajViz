@@ -231,7 +231,11 @@ window.Plotly = {
         apply(); return Promise.resolve();
     },
     restyle(node, updates, indices) {
-        for (const index of indices) Object.assign(node.data[index], updates);
+        for (const [position, index] of indices.entries()) {
+            for (const [key, value] of Object.entries(updates)) {
+                node.data[index][key] = Array.isArray(value) ? value[position] : value;
+            }
+        }
         events.plotly_afterplot?.(); return Promise.resolve();
     }
 };
@@ -292,6 +296,54 @@ const flush = async () => { for (let index = 0; index < 8; index++) await new Pr
     window.tvSetLanguage('en'); await flush();
     assert.equal(graph.layout.title.text, 'Context Window Pressure — Input/&lt;img&gt;');
     assert.equal(JSON.stringify(graph.data), originalData);
+    // Authored list labels and hover prose translate independently of literal
+    // category IDs, even when those IDs happen to match a translation key.
+    Object.assign(window.__tvTranslations, {
+        Total: '总计', 'First Edit': '首次编辑',
+        'Compared − reference: {delta} steps': '对比 − 参考：{delta} 步',
+        '%{x}<br>Recall: %{y}%<extra>Reference</extra>': '%{x}<br>召回率：%{y}%<extra>参考</extra>',
+    });
+    const labelMetadata = {layout: {}, layout_labels: {'xaxis.ticktext': [
+        {literal: 'Reference'}, 'Total', {literal: 'Total'}
+    ]}, trace_labels: {'0': {text: ['First Edit', {literal: 'Reference'}],
+        hovertext: [{template: 'Compared − reference: {delta} steps', params: {delta: '+5'}},
+            {literal: 'Compared − reference: +5 steps'}],
+        hovertemplate: '%{x}<br>Recall: %{y}%<extra>Reference</extra>'}}};
+    const resetLabels = () => {
+        graph.layout.xaxis.tickvals = ['Reference', 'Total', 'recorded-Total'];
+        graph.layout.xaxis.ticktext = ['Reference', 'Total', 'Total'];
+        graph.data[0] = {name: 'Reference', x: ['Reference', 'Total'], y: [2, 4],
+            customdata: ['First Edit', 'Recall'], text: ['First Edit', 'Reference'],
+            hovertext: ['Compared − reference: +5 steps', 'Compared − reference: +5 steps'],
+            hovertemplate: '%{x}<br>Recall: %{y}%<extra>Reference</extra>'};
+    };
+    graph.layout.meta = {tv_i18n: labelMetadata}; resetLabels();
+    const originalCoordinates = JSON.stringify({x: graph.data[0].x, y: graph.data[0].y,
+        customdata: graph.data[0].customdata, ticks: graph.layout.xaxis.tickvals});
+    window.tvSetLanguage('zh-CN'); await flush();
+    const verifyChinese = () => {
+        assert.equal(JSON.stringify(graph.layout.xaxis.ticktext), '["Reference","总计","Total"]');
+        assert.equal(JSON.stringify(graph.data[0].text), '["首次编辑","Reference"]');
+        assert.equal(JSON.stringify(graph.data[0].hovertext),
+            '["对比 − 参考：+5 步","Compared − reference: +5 steps"]');
+        assert.equal(graph.data[0].hovertemplate, '%{x}<br>召回率：%{y}%<extra>参考</extra>');
+        assert.equal(graph.data[0].name, 'Reference', 'raw trace names are not implicitly owned');
+        assert.equal(JSON.stringify({x: graph.data[0].x, y: graph.data[0].y,
+            customdata: graph.data[0].customdata, ticks: graph.layout.xaxis.tickvals}), originalCoordinates);
+    };
+    verifyChinese();
+    const arrayCalls = calls;
+    for (let index = 0; index < 10; index++) events.plotly_afterplot();
+    await flush(); assert.equal(calls, arrayCalls, 'equal label arrays must not loop');
+    resetLabels(); events.plotly_afterplot(); await flush(); verifyChinese();
+    window.tvSetLanguage('en'); await flush();
+    assert.equal(JSON.stringify(graph.layout.xaxis.ticktext), '["Reference","Total","Total"]');
+    assert.equal(JSON.stringify(graph.data[0].text), '["First Edit","Reference"]');
+    assert.equal(graph.data[0].hovertemplate, '%{x}<br>Recall: %{y}%<extra>Reference</extra>');
+    holdNext = true; window.tvSetLanguage('zh-CN'); await flush();
+    window.tvSetLanguage('en'); release(); await flush();
+    assert.equal(JSON.stringify(graph.data[0].text), '["First Edit","Reference"]');
+    window.tvSetLanguage('zh-CN'); await flush(); verifyChinese();
     console.log('plot localization state and race checks passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
@@ -477,3 +529,112 @@ console.log('in-place owned updates translate without touching logs or looping')
 
 def test_in_place_html_text_updates_localize_without_rewriting_logs_or_code():
     _run_frontend_test(_MUTATION_TEST, "in-place owned updates translate without touching logs or looping")
+
+
+_ATTRIBUTE_MUTATION_TEST = _DOM_HARNESS + r"""
+const key = 'Load complete: {count} steps';
+const attributes = (field, count) => ({'data-tv-i18n': key, 'data-tv-i18n-args': JSON.stringify({count}),
+    'data-tv-i18n-en': `Load complete: ${count} steps`, 'data-tv-i18n-attr': field,
+    [field]: `Load complete: ${count} steps`});
+const child = new Element('span', {'data-tv-i18n': key, 'data-tv-i18n-args': '{"count":3}'},
+    [new Text('Load complete: 3 steps')]);
+const title = new Element('span', attributes('title', 3), [child]);
+const accessible = new Element('button', attributes('aria-label', 3), [new Text('raw button text')]);
+const help = new Element('span', attributes('data-help', 3), [new Text('raw help text')]);
+const raw = new Element('span', {title: 'Reference', 'aria-label': 'Reference', 'data-help': 'Reference'},
+    [new Text('Reference')]);
+const protectedMarkers = ['pre', 'code', 'textarea', 'analysis-chatbot', 'wf-preview'].map(kind => {
+    const marker = new Element('span', attributes('title', 3), [new Text('Load complete: 3 steps')]);
+    const wrapper = ['pre', 'code', 'textarea'].includes(kind)
+        ? new Element(kind, {}, [marker]) : new Element('div', {class: kind}, [marker]);
+    return {marker, wrapper};
+});
+const body = new Element('body', {}, [title, accessible, help, raw, ...protectedMarkers.map(item => item.wrapper)]);
+const document = {body, readyState: 'complete', documentElement: {lang: 'en'},
+    createElement: tag => new Element(tag), querySelector: () => null, dispatchEvent: () => {}};
+const window = {__tvTranslations: {[key]: '加载完成：{count} 个步骤', Reference: '参考'}};
+let observerCallback = null, observerOptions = null, observing = false, writes = 0;
+const pending = [];
+const originalSet = Element.prototype.setAttribute;
+Element.prototype.setAttribute = function(name, value) {
+    writes++; originalSet.call(this, name, value);
+    if (observing && observerOptions.attributeFilter.includes(name)) {
+        pending.push({type: 'attributes', target: this, attributeName: name, addedNodes: []});
+    }
+};
+vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), {
+    window, document, Element, WeakMap, Promise, JSON, console,
+    MutationObserver: class {
+        constructor(callback) { observerCallback = callback; }
+        observe(target, options) {
+            assert.equal(target, body); observerOptions = options; observing = true;
+        }
+    },
+    CustomEvent: class { constructor(name, options) { this.name = name; this.detail = options.detail; } },
+});
+assert.equal(observerOptions.attributes, true);
+assert.equal(JSON.stringify(observerOptions.attributeFilter), JSON.stringify([
+    'data-tv-i18n', 'data-tv-i18n-args', 'data-tv-i18n-en', 'data-tv-i18n-attr',
+    'title', 'aria-label', 'data-help']));
+const settle = () => {
+    for (let batch = 0; pending.length && batch < 20; batch++) observerCallback(pending.splice(0));
+    assert.equal(pending.length, 0, 'translated attributes must settle without an observer loop');
+};
+window.tvSetLanguage('zh-CN'); settle();
+assert.equal(title.getAttribute('title'), '加载完成：3 个步骤');
+assert.equal(child.textContent, '加载完成：3 个步骤');
+assert.equal(accessible.getAttribute('aria-label'), '加载完成：3 个步骤');
+assert.equal(help.getAttribute('data-help'), '加载完成：3 个步骤');
+assert.equal(accessible.textContent, 'raw button text');
+assert.equal(help.textContent, 'raw help text');
+// An outer tooltip marker and its inner text marker refresh independently.
+title.setAttribute('data-tv-i18n-args', '{"count":7}');
+title.setAttribute('data-tv-i18n-en', 'Load complete: 7 steps');
+title.setAttribute('title', 'Load complete: 7 steps');
+child.setAttribute('data-tv-i18n-args', '{"count":5}');
+child.setAttribute('data-tv-i18n-en', 'Load complete: 5 steps');
+settle();
+assert.equal(title.getAttribute('title'), '加载完成：7 个步骤');
+assert.equal(child.textContent, '加载完成：5 个步骤');
+// A renderer can restore English attributes without replacing any elements.
+accessible.setAttribute('aria-label', 'Load complete: 3 steps');
+help.setAttribute('data-help', 'Load complete: 3 steps'); settle();
+assert.equal(accessible.getAttribute('aria-label'), '加载完成：3 个步骤');
+assert.equal(help.getAttribute('data-help'), '加载完成：3 个步骤');
+child.setAttribute('data-tv-i18n', 'Reference');
+child.setAttribute('data-tv-i18n-args', '{}');
+child.setAttribute('data-tv-i18n-en', 'Reference'); settle();
+assert.equal(child.textContent, '参考');
+assert.equal(title.getAttribute('title'), '加载完成：7 个步骤');
+const stableWrites = writes;
+for (let index = 0; index < 10; index++) observerCallback([
+    {type: 'attributes', target: title, attributeName: 'title', addedNodes: []},
+    {type: 'attributes', target: help, attributeName: 'data-help', addedNodes: []}]);
+settle(); assert.equal(writes, stableWrites, 'already translated attributes must not be written again');
+// Raw attributes and explicit-looking markers inside protected regions stay literal.
+raw.setAttribute('title', 'Load complete: 9 steps');
+raw.setAttribute('aria-label', 'Reference'); raw.setAttribute('data-help', 'Reference');
+for (const {marker} of protectedMarkers) {
+    marker.setAttribute('data-tv-i18n-args', '{"count":9}');
+    marker.setAttribute('title', 'Load complete: 9 steps');
+}
+const rawWrites = writes; settle(); assert.equal(writes, rawWrites);
+assert.equal(raw.getAttribute('title'), 'Load complete: 9 steps');
+assert.equal(raw.getAttribute('aria-label'), 'Reference');
+assert.equal(raw.getAttribute('data-help'), 'Reference');
+assert.equal(raw.textContent, 'Reference');
+for (const {marker} of protectedMarkers) {
+    assert.equal(marker.getAttribute('title'), 'Load complete: 9 steps');
+    assert.equal(marker.textContent, 'Load complete: 3 steps');
+}
+window.tvSetLanguage('en'); settle();
+assert.equal(title.getAttribute('title'), 'Load complete: 7 steps');
+assert.equal(child.textContent, 'Reference');
+assert.equal(raw.getAttribute('title'), 'Load complete: 9 steps');
+console.log('owned attribute refresh preserves nested labels, raw content and protected regions');
+"""
+
+
+def test_in_place_owned_attribute_and_argument_updates_settle_without_touching_raw_content():
+    _run_frontend_test(_ATTRIBUTE_MUTATION_TEST,
+                       "owned attribute refresh preserves nested labels, raw content and protected regions")
