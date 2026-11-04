@@ -659,6 +659,8 @@ class AttributionTabTests(_RootRestoringTest):
         self.assertEqual(len(outputs), 4)
         self.assertEqual(outputs[2], GOLD_AGENT)
         self.assertEqual(outputs[3], GOLD_INST)
+        self.assertNotIn("score-dim-grid", outputs[0])
+        self.assertNotIn("Primary cause", outputs[0])
 
 
 if __name__ == "__main__":

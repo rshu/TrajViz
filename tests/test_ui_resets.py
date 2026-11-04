@@ -135,7 +135,7 @@ class SingleLoadPathTests(unittest.TestCase):
                     dependency = next(dep for dep in cfg["dependencies"] if dep["id"] == reset_id)
                     self.assertEqual(dependency["trigger_after"], load_id)
 
-    def test_attribution_clear_and_diagnosis_follow_the_single_load_in_order(self):
+    def test_optional_reference_clear_and_identity_refresh_follow_the_single_load_in_order(self):
         app, cfg = _app()
         event_ids: dict[str, list[int]] = {}
         for event_id, block in app.fns.items():

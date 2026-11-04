@@ -53,7 +53,7 @@ def layout(*, allow_server_paths: bool = True, embedded: bool = False) -> Attrib
         gr.Markdown(
             "**1. Load a trajectory** above. **2. Confirm the task and reference data** below. "
             "**3. Read the finding, evidence and next check.** "
-            "Diagnosis checks run locally on load; no model request is sent."
+            "Choose Diagnose failure to run reference checks locally; no model request is sent."
         )
         with gr.Accordion(
             "Task and reference data", open=True,
@@ -111,6 +111,7 @@ def bind(
     load_events,
     *,
     allow_server_paths: bool = True,
+    auto_diagnose: bool = True,
 ) -> None:
     @safe_callback("Attribution diagnosis")
     def on_diagnose(overview_raw, agent_override, inst_override, root_override):
@@ -169,12 +170,21 @@ def bind(
     def _clear_attribution():
         return (
             "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
-            "Diagnosing the loaded trajectory&hellip;</div>",
+            + ("Diagnosing the loaded trajectory&hellip;" if auto_diagnose
+               else "Resetting optional reference attribution&hellip;") + "</div>",
             "",
         )
 
     def on_diagnose_autoload(overview_raw, root_override):
-        html_out, status = on_diagnose(overview_raw, "", "", root_override)
+        if auto_diagnose:
+            html_out, status = on_diagnose(overview_raw, "", "", root_override)
+        else:
+            html_out = ""
+            status = (
+                "<div class='attr-banner-sub'>Optional: confirm the matching reference data, "
+                "then choose Diagnose failure to assess solution correctness.</div>"
+                if overview_raw else "<div class='attr-banner-sub'>Load a trajectory above to begin.</div>"
+            )
         _, _, agent, inst = _diagnosis_identity(overview_raw)
         return html_out, status, agent, inst
 

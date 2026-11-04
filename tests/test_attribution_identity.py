@@ -42,7 +42,7 @@ def test_parent_named_like_an_agent_is_not_treated_as_a_declared_evaluation_iden
     assert _diagnosis_identity(source)[2] == "opencode"
 
 
-def test_autoload_publishes_fresh_defaults_and_preserves_source_integrity_gate(monkeypatch):
+def test_autoload_refreshes_identity_without_running_reference_attribution(monkeypatch):
     from agent_trajviz.insight import attribution
     from agent_trajviz.insight.insight import build_ui
 
@@ -59,10 +59,15 @@ def test_autoload_publishes_fresh_defaults_and_preserves_source_integrity_gate(m
     first = raw("codex", "/tmp/gradio/hash-one/task-one.jsonl")
     first["_source_merged_count"] = 2
     assert handler(first, "/reference")[2:] == ("codex", "task-one")
-    assert calls[-1] == {"agent": "codex", "instance_id": "task-one", "source_path": first["_source_path"],
-                         "fmt": "codex", "expected_sha": "displayed-source-sha", "merged_sources": 2,
-                         "reference_root": "/reference"}
+    assert calls == []
     second = raw("opencode", "/tmp/gradio/hash-two/task-two.json")
     assert handler(second, "/reference")[2:] == ("opencode", "task-two")
-    assert calls[-1]["agent"] == "opencode" and calls[-1]["instance_id"] == "task-two"
+    assert calls == []
     assert handler({}, "/reference")[2:] == ("", "")
+    assert calls == []
+    manual = next(block.fn for block in app.fns.values()
+                  if getattr(block.fn, "__name__", "") == "on_diagnose")
+    manual(first, "", "", "/reference")
+    assert calls == [{"agent": "codex", "instance_id": "task-one", "source_path": first["_source_path"],
+                      "fmt": "codex", "expected_sha": "displayed-source-sha", "merged_sources": 2,
+                      "reference_root": "/reference"}]

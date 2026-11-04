@@ -1,4 +1,4 @@
-"""One AWE workspace retains native diagnosis and isolated saved evidence."""
+"""One AWE workspace defaults to trajectory inspection and retains optional attribution."""
 
 from __future__ import annotations
 
@@ -58,19 +58,19 @@ def app(monkeypatch):
     return insight.build_ui()
 
 
-def test_one_main_awe_tab_contains_both_existing_workflows(app):
+def test_one_main_awe_tab_defaults_to_inspection_with_optional_reference_attribution(app):
     main = _block(app, "main-tabs")
     main_tabs = [block for block in main.children if isinstance(block, gr.Tab)]
     assert sum(tab.label == "AWE" for tab in main_tabs) == 1
     assert not any(tab.label == "Attribution" for tab in main_tabs)
     workspace = _block(app, "awe-workspace")
     sources = _block(app, "awe-workspace-tabs")
-    native = _block(app, "awe-attribution-workspace")
+    native = _block(app, "awe-trajectory-workspace")
     saved = _block(app, "awe-saved-workspace")
     assert sources in set(_descendants(workspace))
     assert set(sources.children) == {native, saved}
-    assert {tab.label for tab in sources.children} == {"Attribution", "Saved runs & evaluation"}
-    assert sources.selected == "attribution"
+    assert {tab.label for tab in sources.children} == {"Trajectory", "Saved runs & evaluation"}
+    assert sources.selected == "inspection"
     native_labels = {getattr(block, "label", None) for block in _descendants(native)}
     native_values = {getattr(block, "value", None) for block in _descendants(native)
                      if isinstance(getattr(block, "value", None), str)}
@@ -79,13 +79,20 @@ def test_one_main_awe_tab_contains_both_existing_workflows(app):
                     if isinstance(getattr(block, "value", None), str)}
     assert {"Agent", "Instance id", "Reference data root"} <= native_labels
     assert "Diagnose failure" in native_values and "Import saved run" not in native_values
+    assert "Inspect trajectory" in native_values
+    optional = [block for block in _descendants(native)
+                if isinstance(block, gr.Accordion) and block.label == "Reference-based attribution (optional)"]
+    assert len(optional) == 1 and optional[0].open is False
+    reference_ids = {block._id for block in _descendants(optional[0])}
+    assert {block._id for block in _descendants(native)
+            if getattr(block, "label", None) in {"Agent", "Instance id", "Reference data root"}} <= reference_ids
     assert {"Saved AWE run (.zip / .json)", "AWE case", "Graph node", "Saved report or artifact"} <= saved_labels
     assert {"Import saved run", "Prepare run download", "Run AWE operation"} <= saved_values
     saved_tab_labels = {block.label for block in _descendants(saved) if isinstance(block, gr.Tab)}
     assert {"Case evidence", "Provenance graph", "Symptoms", "Recommendations", "Reports & discovery", "Provenance", "RSI exchange"} <= saved_tab_labels
 
 
-@pytest.mark.parametrize("mode,expected", [("attribution", [True, True, True, True]),
+@pytest.mark.parametrize("mode,expected", [("inspection", [True, True, True, True]),
                                            ("saved", [False, False, False, False])])
 def test_source_selection_only_changes_workspace_visibility(app, monkeypatch, mode, expected):
     calls = Mock(side_effect=AssertionError("Switching evidence sources must not run a model or operation"))
@@ -96,12 +103,12 @@ def test_source_selection_only_changes_workspace_visibility(app, monkeypatch, mo
     result = fn.fn(SimpleNamespace(steps=[{"index": 0}]))
     assert result[0] == mode
     assert [update["visible"] for update in result[1:]] == expected
-    assert isinstance(fn.outputs[0], gr.State) and fn.outputs[0].value == "attribution"
+    assert isinstance(fn.outputs[0], gr.State) and fn.outputs[0].value == "inspection"
     assert len(fn.inputs) == 1 and isinstance(fn.inputs[0], gr.State)
     calls.assert_not_called()
 
 
-@pytest.mark.parametrize("mode", ["attribution", "saved"])
+@pytest.mark.parametrize("mode", ["inspection", "saved"])
 def test_returning_to_awe_restores_the_selected_source(app, mode):
     result = _function(app, "on_main_tab_select", tab_label="AWE").fn(SimpleNamespace(steps=[{}]), mode)
     assert result[-1]["selected"] == mode
@@ -112,10 +119,10 @@ def test_returning_to_awe_restores_the_selected_source(app, mode):
     assert "selected" not in other[-1]
 
 
-def test_attribution_without_a_loaded_run_retains_upload_controls(app):
-    result = _function(app, "on_main_tab_select", tab_label="AWE").fn(None, "attribution")
+def test_inspection_without_a_loaded_run_retains_upload_controls(app):
+    result = _function(app, "on_main_tab_select", tab_label="AWE").fn(None, "inspection")
     assert [value["visible"] for value in result[:4]] == [True, True, False, False]
-    assert result[-1]["selected"] == "attribution"
+    assert result[-1]["selected"] == "inspection"
 
 
 def test_source_selection_is_session_state_not_a_global_mode(app):
@@ -127,8 +134,8 @@ def test_source_selection_is_session_state_not_a_global_mode(app):
         state[run_state._id] = SimpleNamespace(steps=[{}])
     asyncio.run(app.process_api(select_saved, [None], state=first, session_hash="first"))
     assert first[mode_state._id] == "saved"
-    assert second[mode_state._id] == "attribution"
-    for state, expected in ((first, "saved"), (second, "attribution")):
+    assert second[mode_state._id] == "inspection"
+    for state, expected in ((first, "saved"), (second, "inspection")):
         result = asyncio.run(app.process_api(show_awe, [None, None], state=state, session_hash=expected))
         assert result["data"][-1]["selected"] == expected
 

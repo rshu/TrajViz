@@ -7,15 +7,37 @@ dashboard requires the `app` extra. Model judging is optional and uses your
 explicitly configured connection. Use versioned documentation that matches your
 installed package.
 
-The **AWE** tab includes **Attribution** for the session loaded in
-Overview, and **Saved runs & evaluation** for complete saved analyses and operations.
+The **AWE** tab opens on **Trajectory**, which inspects the session already loaded
+in the dashboard. Inspection runs locally on load and needs no reference folder,
+saved evaluation, labels or model connection. It reports recorded tool failures,
+recovery attempts, file interactions and test activity, with links to the
+supporting Workflow steps. Missing results and incomplete recordings remain
+explicit. Proposed next checks are suggestions; inspection does not establish
+whether the task was solved or assign correctness blame.
 
-For a loaded trajectory, open **Attribution → Task and reference data**, confirm
-its agent, task ID and matching reference folder, then choose **Diagnose failure**.
-The result starts with the finding, recorded evidence, a next check when supplied,
-and assessment limits. Attribution weights are not probabilities; unassessed
-capabilities have not passed a check. A trajectory alone cannot establish whether
-the solution is correct without matching reference and test evidence.
+For reference-backed diagnosis, expand **Reference-based attribution (optional)**,
+confirm the agent, task ID and matching reference folder, then choose
+**Diagnose failure**. These checks run only on that explicit action. The result
+starts with the finding, recorded evidence, a next check when supplied, and
+assessment limits. Attribution weights are not probabilities; unassessed
+capabilities have not passed a check.
+
+**Saved runs & evaluation** remains a separate view for complete recorded
+analyses, reports and explicit evaluation operations.
+
+The same inspection is available for an already-loaded Python trajectory:
+
+```python
+from agent_trajviz import awe
+
+inspection = awe.inspect_trajectory(run)  # run = agent_trajviz.load(...)
+print(inspection["summary"])
+print(inspection["findings"])
+```
+
+The returned dictionary contains observations, recording coverage and canonical
+Workflow references. Inspection uses the loaded snapshot and does not re-read
+the original session files.
 
 ## Inspect a saved analysis
 
@@ -112,7 +134,7 @@ without configuring a model or external code location:
 agent-trajviz-awe operations
 ```
 
-Use the dashboard's **Evaluation settings and operations** section for the reference
+Use **Saved runs & evaluation → Evaluation settings and operations** for the reference
 root, optional working data/cache root, output folder, agents, benchmark profile,
 execution context, judge model, base URL and request parameters. These controls
 are separate from the sidebar AI analysis settings. Server-path controls are
@@ -149,7 +171,8 @@ tool inputs/results, exit codes, reasoning visibility and child thread identity.
 Evidence references identify TrajViz workflow rows and parts; a native record
 offset is included only when known. Parent and child fingerprints, adapter
 version and code identity bind caches to the projected evidence. Saved telemetry
-captures cannot supply the transcript/reference evidence required for AWE.
+captures cannot supply the transcript/reference evidence required for
+reference-based attribution.
 
 ## Execute explicit operations
 

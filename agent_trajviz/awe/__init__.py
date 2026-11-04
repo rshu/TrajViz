@@ -1,7 +1,7 @@
 """Import, inspect, export and execute Agent Workflow Evaluation (AWE) analyses.
 
-Saved results need only Python's standard library. Computation is optional and
-uses the bundled evaluation engine in an isolated worker process.
+Loaded-session inspection and saved results need only Python's standard library.
+Benchmark operations use the bundled engine in an isolated worker process.
 Model requests occur only through explicitly enabled network operations.
 """
 from __future__ import annotations
@@ -10,10 +10,11 @@ import html
 from pathlib import Path
 
 from .runtime import EvaluationSettings, OperationResult, available_operations, run_operation
+from .inspection import inspect_trajectory
 from .saved import SavedRun, load_run
 
 __all__ = ["EvaluationSettings", "OperationResult", "SavedRun", "available_operations",
-           "load_run", "run_operation", "write_report"]
+           "inspect_trajectory", "load_run", "run_operation", "write_report"]
 
 
 def write_report(run: SavedRun, dest: str | Path) -> Path:

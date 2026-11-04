@@ -29,7 +29,7 @@ _FIXTURE = (
 # whole feature with it and raises nothing, so the set is asserted explicitly.
 EXPECTED_MAIN_TABS = {"Overview", "Patterns", "AWE", "Comparison", "Workflow", "Raw Data"}
 EXPECTED_TABS = EXPECTED_MAIN_TABS | {
-    "Attribution", "Saved runs & evaluation",
+    "Trajectory", "Saved runs & evaluation",
     "Case evidence", "Provenance graph", "Symptoms", "Recommendations", "Reports & discovery",
     "Provenance", "RSI exchange", "Analysis", "Settings",
 }
@@ -136,7 +136,7 @@ class ServedDashboardTests(unittest.TestCase):
         source_tabs = named_layout("awe-workspace-tabs")
         self.assertIn(source_tabs["id"], {node["id"] for node in _layout_nodes(awe)})
         source_children = [components[node["id"]] for node in source_tabs.get("children", [])]
-        self.assertEqual(_tab_labels(source_children), {"Attribution", "Saved runs & evaluation"})
+        self.assertEqual(_tab_labels(source_children), {"Trajectory", "Saved runs & evaluation"})
         self.assertEqual(len(source_children), 2)
 
         sidebar = named_layout("analysis-sidebar")

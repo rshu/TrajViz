@@ -286,8 +286,9 @@ Failure attribution uses the bundled evaluation engine and canonical reference
 data; see the
 [attribution API](https://github.com/rshu/TrajViz/blob/main/agent_trajviz/attribution.py).
 
-The **AWE** tab combines **Attribution** and **Saved runs & evaluation**,
-with evidence, provenance graphs, symptoms, recommendations and reports.
+The **AWE** tab inspects the loaded trajectory directly, with evidence linked to
+Workflow steps. Reference-based attribution is optional. **Saved runs & evaluation**
+provides provenance graphs, symptoms, recommendations and reports.
 Evaluation settings configure explicit operations and optional model connections. See the
 [AWE guide](https://github.com/rshu/TrajViz/blob/main/docs/awe.md) for the Python API and CLI.
 

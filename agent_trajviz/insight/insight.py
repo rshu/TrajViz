@@ -20,6 +20,7 @@ from .ui import (
     raw_tab,
     sidebar,
     settings,
+    trajectory_inspection,
     upload,
     views_tab,
     workflow_tab,
@@ -69,7 +70,7 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
         sidebar_refs = sidebar.layout()
         settings_refs = sidebar_refs.settings
         upload_refs = upload.layout()
-        state_awe_mode = gr.State("attribution")
+        state_awe_mode = gr.State("inspection")
         # Global health strip stays above the main navigation.
         overview_kpi_html = gr.HTML(
             "",
@@ -80,11 +81,17 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
             overview = overview_tab.layout(overview_kpi_html)
             patterns = patterns_tab.layout()
             with gr.Tab("AWE", elem_id="awe-workspace"):
-                gr.Markdown("Attribute a loaded trajectory or inspect saved evaluation results.")
-                with gr.Tabs(selected="attribution", elem_id="awe-workspace-tabs") as awe_source_tabs:
-                    with gr.Tab("Attribution", id="attribution",
-                                elem_id="awe-attribution-workspace") as attribution_workspace:
-                        attribution = attribution_tab.layout(allow_server_paths=allow_server_paths, embedded=True)
+                gr.Markdown("Inspect the loaded trajectory or explore saved evaluation results.")
+                with gr.Tabs(selected="inspection", elem_id="awe-workspace-tabs") as awe_source_tabs:
+                    with gr.Tab("Trajectory", id="inspection",
+                                elem_id="awe-trajectory-workspace") as trajectory_workspace:
+                        inspection = trajectory_inspection.layout()
+                        with (
+                            inspection.optional_controls,
+                            gr.Accordion("Reference-based attribution (optional)", open=False,
+                                         elem_id="awe-reference-attribution"),
+                        ):
+                            attribution = attribution_tab.layout(allow_server_paths=allow_server_paths, embedded=True)
                     with gr.Tab("Saved runs & evaluation", id="saved",
                                 elem_id="awe-saved-workspace") as saved_workspace:
                         awe = awe_tab.layout(allow_server_paths=allow_server_paths, embedded=True)
@@ -94,14 +101,14 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
             # Only when views were registered (by the application or a plugin).
             views = views_tab.layout()
 
-        def _workspace_visibility(run, mode="attribution", is_awe=False):
+        def _workspace_visibility(run, mode="inspection", is_awe=False):
             native = not (is_awe and mode == "saved")
             loaded = bool(run is not None and run.steps)
             return (gr.update(visible=native), gr.update(visible=native),
                     gr.update(visible=native and loaded), gr.update(visible=native and loaded))
 
         def on_main_tab_select(run, awe_mode, *, tab_label):
-            mode = "saved" if awe_mode == "saved" else "attribution"
+            mode = "saved" if awe_mode == "saved" else "inspection"
             visibility = _workspace_visibility(run, mode, is_awe=tab_label == "AWE")
             selection = gr.update(selected=mode) if tab_label == "AWE" else gr.skip()
             return (*visibility, selection)
@@ -119,7 +126,7 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                 tab.select(fn=partial(on_main_tab_select, tab_label=tab.label),
                            inputs=[shared.state_run, state_awe_mode],
                            outputs=[*workspace_outputs, awe_source_tabs], api_name=False)
-        for workspace, mode in ((attribution_workspace, "attribution"), (saved_workspace, "saved")):
+        for workspace, mode in ((trajectory_workspace, "inspection"), (saved_workspace, "saved")):
             workspace.select(fn=partial(on_awe_workspace_select, mode=mode),
                              inputs=shared.state_run,
                              outputs=[state_awe_mode, *workspace_outputs], api_name=False)
@@ -137,7 +144,7 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
         )
         # One Python load path; picking a file re-clicks Load in the browser.
         # Everything chained off these events (export writer, sidebar hook,
-        # ATTRIBUTION autodiagnosis) therefore runs once per gesture.
+        # AWE trajectory inspection) therefore runs once per gesture.
         load_events = bind_load(
             file_upload=upload_refs.file_upload,
             load_btn=upload_refs.load_btn,
@@ -153,7 +160,8 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
         settings.bind(settings_refs, shared, sidebar_refs, overview, app,
                       model_events=sidebar_events + judge_events)
         attribution_tab.bind(attribution, shared, upload_refs, load_events,
-                             allow_server_paths=allow_server_paths)
+                             allow_server_paths=allow_server_paths, auto_diagnose=False)
+        trajectory_inspection.bind(inspection, shared, load_events)
         awe_tab.bind(awe, app, allow_server_paths=allow_server_paths)
         comparison_tab.bind(comparison, shared, upload_refs)
         workflow_tab.bind(workflow, shared)
