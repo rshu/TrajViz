@@ -4,6 +4,8 @@ from __future__ import annotations
 import html
 import math
 
+from ..i18n import attrs, text
+
 _CAP_LABELS = {
     "requirement_understanding": "Requirement Understanding",
     "task_planning": "Task Planning",
@@ -60,17 +62,18 @@ def attribution_summary_html(data: dict) -> str:
     chain = (fault or {}).get("evidence_chain")
     chain = chain if isinstance(chain, dict) else {}
     if data.get("resolved") is True:
-        happened = "The recorded outcome is solved."
+        happened = text("The recorded outcome is solved.")
     elif fault:
         capability = _CAP_LABELS.get(fault.get("capability"), str(fault.get("capability") or "Unknown capability"))
         error = str(fault.get("error_type") or "unspecified finding").replace("_", " ")
-        happened = f"{capability}: {error}."
+        capability_html = text(capability) if fault.get("capability") in _CAP_LABELS else html.escape(capability)
+        happened = f"{capability_html}: {html.escape(error)}."
     elif data.get("resolved") is False or data.get("blame_status"):
-        happened = "No single dominant fault is supported by the recorded findings."
+        happened = text("No single dominant fault is supported by the recorded findings.")
     elif "analysis" in data:
-        happened = "This record contains symptom observations without a fault attribution."
+        happened = text("This record contains symptom observations without a fault attribution.")
     else:
-        happened = "The outcome is unknown; no dominant fault attribution is recorded."
+        happened = text("The outcome is unknown; no dominant fault attribution is recorded.")
     observations = []
     for link in _records(chain.get("links")):
         if link.get("kind") != "observation":
@@ -84,31 +87,34 @@ def attribution_summary_html(data: dict) -> str:
             observations.append(excerpt)
     evidence = ("<ul style='margin:4px 0 0;padding-left:20px;list-style:disc;'>"
                 + "".join(f"<li style='margin:3px 0;'>{observation}</li>" for observation in observations)
-                + "</ul>" if observations else "Expand the recorded evidence below to inspect the available support.")
+                + "</ul>" if observations else text("Expand the recorded evidence below to inspect the available support."))
     counterfactual = chain.get("counterfactual")
     check = counterfactual.get("what_would_confirm") if isinstance(counterfactual, dict) else None
     if isinstance(check, str) and check.strip():
         raw_status = counterfactual.get("status")
         status = (raw_status.strip().replace("_", " ")
                   if isinstance(raw_status, str) and raw_status.strip() else "status not recorded")
-        next_check = f"Recorded check ({html.escape(status)}): {html.escape(check.strip())}"
+        next_check = (text("Recorded check ({status}): {check}", status=status, check=check.strip())
+                      if isinstance(raw_status, str) and raw_status.strip() else
+                      text("Recorded check (status not recorded): {check}", check=check.strip()))
     elif data.get("resolved") is True:
-        next_check = "Review the recorded test evidence before comparing this run with other attempts."
+        next_check = text("Review the recorded test evidence before comparing this run with other attempts.")
     else:
-        next_check = "Review the evidence and test details; no confirming check was recorded."
+        next_check = text("Review the evidence and test details; no confirming check was recorded.")
     scorecard = [score for score in _records(data.get("scorecard"))
                  if isinstance(score.get("capability"), str) and score["capability"].strip()
                  and isinstance(score.get("assessed"), bool)]
     assessed = sum(score["assessed"] is True for score in scorecard)
-    coverage = (f"{assessed} of {len(scorecard)} capabilities assessed; {len(scorecard) - assessed} unassessed. "
-                if scorecard else "Capability assessment coverage was not recorded. ")
-    limits = (coverage + "Not assessed does not mean passed. Attribution weights are not probabilities. "
-              "Proposed checks require validation before treating a remedy as effective.")
-    rows = (("What happened", html.escape(happened)), ("Evidence", evidence),
-            ("Next check", next_check), ("Limits", html.escape(limits)))
-    return ("<section class='awe-attribution-summary' aria-label='At a glance' "
+    coverage = (text("{assessed} of {total} capabilities assessed; {unassessed} unassessed.",
+                     assessed=assessed, total=len(scorecard), unassessed=len(scorecard) - assessed)
+                if scorecard else text("Capability assessment coverage was not recorded."))
+    limits = (coverage + " " + text("Not assessed does not mean passed. Attribution weights are not probabilities. "
+              "Proposed checks require validation before treating a remedy as effective."))
+    rows = (("What happened", happened), ("Evidence", evidence),
+            ("Next check", next_check), ("Limits", limits))
+    return (f"<section class='awe-attribution-summary' {attrs('At a glance', attribute='aria-label')} "
             "style='border:1px solid var(--border-color-primary,#dbe3ed);border-radius:10px;padding:14px;margin:12px 0;'>"
-            "<div style='font-size:15px;font-weight:600;'>At a glance</div>"
+            "<div style='font-size:15px;font-weight:600;'>" + text("At a glance") + "</div>"
             + "".join(f"<div class='awe-summary-row' style='margin-top:8px;overflow-wrap:anywhere;'>"
-                      f"<strong>{label}</strong><div>{body}</div></div>" for label, body in rows)
+                      f"<strong>{text(label)}</strong><div>{body}</div></div>" for label, body in rows)
             + "</section>")

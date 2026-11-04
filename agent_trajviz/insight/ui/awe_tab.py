@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 import gradio as gr
 
 from ...awe import render
+from ...i18n import normalize_language, text, translate
 
 _PREF_FIELDS = ("reference_root", "project_data", "output_root", "agents", "benchmark_name",
                 "benchmark_profile", "execution_context", "judge_model", "base_url", "temperature", "max_tokens", "timeout", "judge_min_agree")
@@ -58,6 +59,24 @@ def _operation_choices() -> list[tuple[str, str]]:
     return [(f"{row.get('group', 'AWE')} · {row['label']}", row["id"]) for row in available_operations()]
 
 
+def _agent_choices(run: Any = None, language: str = "en") -> list[tuple[str, str]]:
+    """Translate only the sentinel; recorded agent identifiers are data."""
+    agents = sorted({str(case.get("agent")) for case in render.all_cases(run) if case.get("agent")}) if run is not None else []
+    return [(translate("All agents", language), "All agents"), *((agent, agent) for agent in agents)]
+
+
+def _outcome_choices(language: str = "en") -> list[tuple[str, str]]:
+    return [(translate(value, language), value) for value in ("All outcomes", "solved", "failed", "unknown")]
+
+
+def _loaded_outcome(language: str) -> Any:
+    # Preserve the original direct-call default. A translated import also
+    # supplies labels so it is correct before a language-change callback runs.
+    if normalize_language(language) == "en":
+        return "All outcomes"
+    return gr.update(choices=_outcome_choices(language), value="All outcomes")
+
+
 def layout(*, allow_server_paths: bool = True, embedded: bool = False) -> AWERefs:
     """Build the saved-run viewer and operations, optionally in an existing workspace."""
     with (gr.Column(min_width=0) if embedded else gr.Tab("AWE")):
@@ -72,8 +91,8 @@ def layout(*, allow_server_paths: bool = True, embedded: bool = False) -> AWERef
         import_button = gr.Button("Import saved run", variant="primary", scale=0)
         status = gr.HTML(render.notice("Choose a saved run, faults.json, manifest.json or an artifact bundle."))
         with gr.Row():
-            agent = gr.Dropdown(label="AWE agent", choices=["All agents"], value="All agents", scale=1)
-            outcome = gr.Dropdown(label="Outcome", choices=["All outcomes", "solved", "failed", "unknown"],
+            agent = gr.Dropdown(label="AWE agent", choices=_agent_choices(), value="All agents", scale=1)
+            outcome = gr.Dropdown(label="Outcome", choices=_outcome_choices(),
                                   value="All outcomes", scale=1)
             query = gr.Textbox(label="Find a case", placeholder="Agent or task ID", scale=2)
         case = gr.Dropdown(label="AWE case", choices=[], value=None)
@@ -158,8 +177,8 @@ def layout(*, allow_server_paths: bool = True, embedded: bool = False) -> AWERef
                    report_html, provenance_html, rsi_html, export_button, export_file, runtime)
 
 
-def _status(text: str) -> str:
-    return "<p class='awe-status'>" + html.escape(text) + "</p>"
+def _status(message: str, **params: Any) -> str:
+    return "<p class='awe-status'>" + text(message, **params) + "</p>"
 
 
 def _case_outputs(run: Any, key: str | None, kind: str = "Attribution") -> tuple[Any, ...]:
@@ -173,19 +192,18 @@ def _case_outputs(run: Any, key: str | None, kind: str = "Attribution") -> tuple
             render.node_html(graph, selected, run=run), render.symptoms_html(run, case), render.recommendations_html(run, case))
 
 
-def _load_outputs(run: Any, message: str) -> tuple[Any, ...]:
+def _load_outputs(run: Any, message: str, *, language: str = "en", **params: Any) -> tuple[Any, ...]:
     if run is None:
-        return (None, _status(message), gr.Dropdown(choices=["All agents"], value="All agents"),
-                "All outcomes", "", gr.Dropdown(choices=[], value=None),
+        return (None, _status(message, **params), gr.Dropdown(choices=_agent_choices(language=language), value="All agents"),
+                _loaded_outcome(language), "", gr.Dropdown(choices=[], value=None),
                 *_case_outputs(None, None), gr.Dropdown(choices=[], value=None), "", "", "", None)
-    agents = sorted({str(c.get("agent")) for c in render.all_cases(run) if c.get("agent")})
     options = render.case_options(run)
     selected = options[0][1] if options else None
     reports = render.report_options(run)
     report = next((name for name in reports if name.endswith("INSIGHTS.md")),
                   next((name for name in reports if name.lower().endswith((".md", ".txt"))), None))
-    return (run, _status(message), gr.Dropdown(choices=["All agents", *agents], value="All agents"),
-            "All outcomes", "", gr.Dropdown(choices=options, value=selected), *_case_outputs(run, selected),
+    return (run, _status(message, **params), gr.Dropdown(choices=_agent_choices(run, language), value="All agents"),
+            _loaded_outcome(language), "", gr.Dropdown(choices=options, value=selected), *_case_outputs(run, selected),
             gr.Dropdown(choices=reports, value=report), render.report_html(run, report), render.provenance_html(run),
             render.rsi_html(run), None)
 
@@ -244,10 +262,10 @@ def _capabilities(settings: Any) -> str:
     from ...awe.runtime import available_operations
 
     rows = available_operations(settings)
-    body = "<table><thead><tr><th>Operation</th><th>Bundled support</th></tr></thead><tbody>"
+    body = ('<table><thead><tr><th>' + text('Operation') + '</th><th>' + text('Bundled support') + '</th></tr></thead><tbody>')
     for row in rows:
         state = "Included; input prerequisites checked when run" if row.get("available") else str(row.get("reason") or "Unavailable")
-        body += "<tr><td>" + html.escape(str(row["label"])) + "</td><td>" + html.escape(state) + "</td></tr>"
+        body += "<tr><td>" + text(str(row["label"])) + "</td><td>" + text(state) + "</td></tr>"
     return body + "</tbody></table>"
 
 
@@ -257,30 +275,32 @@ def _operation_help(settings: Any, operation: str) -> str:
     descriptor = next((item for item in available_operations(settings) if item["id"] == operation), None)
     if descriptor is None:
         return render.notice("Choose an available AWE operation.")
-    parts = ["<p><b>" + html.escape(str(descriptor["label"])) + "</b></p>"]
+    parts = ["<p><b>" + text(str(descriptor["label"])) + "</b></p>"]
     if descriptor.get("reason"):
-        parts.append("<p>" + html.escape(str(descriptor["reason"])) + "</p>")
+        parts.append("<p>" + text(str(descriptor["reason"])) + "</p>")
     if descriptor.get("options"):
         options = ", ".join(str(value) for value in descriptor["options"])
-        parts.append("<p>Supported JSON options: <code>" + html.escape(options) + "</code>.</p>")
+        parts.append("<p>" + text("Supported JSON options:") + " <code>" + html.escape(options) + "</code>.</p>")
     for requirement in descriptor.get("requirements", []):
-        parts.append("<p>Required: " + html.escape(str(requirement)) + ".</p>")
+        parts.append("<p>" + text("Required:") + " " + text(str(requirement)) + ".</p>")
     if descriptor.get("requires_execution"):
-        parts.append('<p>Executes external benchmark trials. Enable external execution and set <code>{"confirm_execution": true}</code> explicitly.</p>')
+        parts.append('<p>' + text('Executes external benchmark trials. Enable external execution and set') + ' <code>{"confirm_execution": true}</code> ' + text('explicitly.') + '</p>')
     elif descriptor.get("requires_network"):
-        parts.append('<p>Fresh model calls can incur provider charges. Use <code>{"mock": true}</code> or <code>{"dry_run": true}</code> for offline checks.</p>')
+        parts.append('<p>' + text('Fresh model calls can incur provider charges. Use') + ' <code>{"mock": true}</code> ' + text('or') + ' <code>{"dry_run": true}</code> ' + text('for offline checks.') + '</p>')
     return "".join(parts)
 
 
-def bind(refs: AWERefs, app: gr.Blocks, *, allow_server_paths: bool = True) -> None:
+def bind(refs: AWERefs, app: gr.Blocks, *, allow_server_paths: bool = True,
+         language: gr.Dropdown | None = None) -> None:
     from ...awe.saved import load_run
 
     load_outputs = [refs.run, refs.status, refs.agent, refs.outcome, refs.query, refs.case, refs.case_html,
                     refs.node, refs.graph_html, refs.node_html, refs.symptoms_html, refs.recommendations_html,
                     refs.report, refs.report_html, refs.provenance_html, refs.rsi_html, refs.export_file]
     case_outputs = [refs.case_html, refs.node, refs.graph_html, refs.node_html, refs.symptoms_html, refs.recommendations_html]
+    language_inputs = [language] if language is not None else []
 
-    def on_awe_import(file, directory):
+    def on_awe_import(file, directory, language="en"):
         try:
             if directory and not allow_server_paths:
                 raise ValueError("Server paths are disabled for this launch.")
@@ -288,16 +308,29 @@ def bind(refs: AWERefs, app: gr.Blocks, *, allow_server_paths: bool = True) -> N
             if not source:
                 raise ValueError("Choose a saved JSON/ZIP file or a local run folder.")
             run = load_run(source)
-            return _load_outputs(run, f"Imported {len(render.all_cases(run))} cases and {len(run.artifacts)} artifacts. No model request was sent.")
+            return _load_outputs(run, "Imported {cases} cases and {artifacts} artifacts. No model request was sent.",
+                                 language=language, cases=len(render.all_cases(run)), artifacts=len(run.artifacts))
         except (ValueError, OSError, TypeError) as exc:
             # Avoid returning untrusted exception text (which may contain server
             # paths or source data); structural loader messages are in its API.
             message = "Import failed. Check the run format, artifact consistency and size limits."
             if isinstance(exc, ValueError) and str(exc) == "Server paths are disabled for this launch.":
                 message = str(exc)
-            return _load_outputs(None, message)
+            return _load_outputs(None, message, language=language)
 
-    refs.import_button.click(fn=on_awe_import, inputs=[refs.file, refs.directory], outputs=load_outputs, api_name="awe_import")
+    refs.import_button.click(fn=on_awe_import, inputs=[refs.file, refs.directory, *language_inputs],
+                             outputs=load_outputs, api_name="awe_import")
+
+    if language is not None:
+        def on_awe_language_change(run, language):
+            # These are choices-only updates. Gradio retains selected canonical
+            # values, case/node selection and the imported run itself.
+            return (gr.update(choices=_agent_choices(run, language)),
+                    gr.update(choices=_outcome_choices(language)))
+
+        language.change(fn=on_awe_language_change, inputs=[refs.run, language],
+                        outputs=[refs.agent, refs.outcome], queue=False, api_name=False,
+                        show_progress="hidden")
 
     def on_awe_filter(run, agent, outcome, query, kind):
         options = render.case_options(run, agent, outcome, query) if run is not None else []
@@ -343,10 +376,11 @@ def bind(refs: AWERefs, app: gr.Blocks, *, allow_server_paths: bool = True) -> N
 
     refs.export_button.click(fn=on_awe_export, inputs=[refs.run, refs.export_state],
                              outputs=[refs.export_file, refs.export_state], api_name="awe_export")
-    _bind_runtime(refs, app, load_outputs, allow_server_paths=allow_server_paths)
+    _bind_runtime(refs, app, load_outputs, allow_server_paths=allow_server_paths, language=language)
 
 
-def _bind_runtime(refs: AWERefs, app: gr.Blocks, load_outputs: list, *, allow_server_paths: bool) -> None:
+def _bind_runtime(refs: AWERefs, app: gr.Blocks, load_outputs: list, *, allow_server_paths: bool,
+                  language: gr.Dropdown | None = None) -> None:
     from ...awe.saved import load_run
 
     controls = refs.runtime
@@ -363,7 +397,7 @@ def _bind_runtime(refs: AWERefs, app: gr.Blocks, load_outputs: list, *, allow_se
         except (ValueError, TypeError, OSError):
             raise gr.Error("AWE settings are invalid. Check the data paths and request options.") from None
         saved = {"version": 1, "values": values} if remember else {}
-        return selected, "", False, "AWE settings applied. API keys remain session-only. No operation was started.", saved, capabilities
+        return selected, "", False, text("AWE settings applied. API keys remain session-only. No operation was started."), saved, capabilities
 
     applied = controls["apply"].click(fn=on_awe_apply, inputs=[*fields, controls["api_key"], controls["clear_key"], controls["remember"], refs.settings],
                                     outputs=[refs.settings, controls["api_key"], controls["clear_key"], controls["settings_status"], controls["browser"], controls["capabilities"]],
@@ -397,13 +431,13 @@ def _bind_runtime(refs: AWERefs, app: gr.Blocks, load_outputs: list, *, allow_se
             else:
                 cleaned = {"version": 1, "values": values}
         return (None, *(values[name] for name in _PREF_FIELDS), "", False,
-                "AWE connection preferences restored. Enter a key and apply settings before running an operation.", cleaned)
+                text("AWE connection preferences restored. Enter a key and apply settings before running an operation."), cleaned)
 
     app.load(fn=on_awe_restore, inputs=[controls["browser"]],
              outputs=[refs.settings, *fields, controls["api_key"], controls["clear_key"], controls["settings_status"], controls["browser"]], api_name=False)
 
     def on_awe_reset():
-        return (None, *(_DEFAULTS[name] for name in _PREF_FIELDS), "", False, False, {}, "AWE settings cleared.", "")
+        return (None, *(_DEFAULTS[name] for name in _PREF_FIELDS), "", False, False, {}, text("AWE settings cleared."), "")
 
     controls["reset"].click(fn=on_awe_reset,
                             outputs=[refs.settings, *fields, controls["api_key"], controls["clear_key"], controls["remember"],
@@ -456,7 +490,7 @@ def _bind_runtime(refs: AWERefs, app: gr.Blocks, load_outputs: list, *, allow_se
                           outputs=[controls["result"], controls["logs"], controls["result_path"], refs.settings, controls["allow_network"],
                                    controls["project_data"], controls["reference_root"], controls["agents"], controls["benchmark_name"]], api_name="awe_run_operation")
 
-    def on_awe_import_result(path):
+    def on_awe_import_result(path, language="en"):
         if not allow_server_paths:
             raise gr.Error("Evaluation operations require a local launch.")
         try:
@@ -464,7 +498,9 @@ def _bind_runtime(refs: AWERefs, app: gr.Blocks, load_outputs: list, *, allow_se
                 raise ValueError("No completed operation output.")
             run = load_run(path)
         except (ValueError, OSError, TypeError):
-            return _load_outputs(None, "No importable run was produced. Inspect the operation result and log.")
-        return _load_outputs(run, f"Loaded operation output: {len(render.all_cases(run))} cases, {len(run.artifacts)} artifacts.")
+            return _load_outputs(None, "No importable run was produced. Inspect the operation result and log.", language=language)
+        return _load_outputs(run, "Loaded operation output: {cases} cases, {artifacts} artifacts.",
+                             language=language, cases=len(render.all_cases(run)), artifacts=len(run.artifacts))
 
-    controls["import_result"].click(fn=on_awe_import_result, inputs=controls["result_path"], outputs=load_outputs, api_name="awe_import_operation_output")
+    controls["import_result"].click(fn=on_awe_import_result, inputs=[controls["result_path"], *([language] if language is not None else [])],
+                                    outputs=load_outputs, api_name="awe_import_operation_output")

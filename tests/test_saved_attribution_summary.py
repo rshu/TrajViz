@@ -6,6 +6,8 @@ import html
 import json
 from html.parser import HTMLParser
 
+from i18n_test_helpers import unmark_html
+
 from agent_trajviz.awe import render
 
 
@@ -67,7 +69,7 @@ def _saved_case():
 def test_saved_case_leads_with_recorded_diagnosis_evidence_and_check():
     case = _saved_case()
     original = copy.deepcopy(case)
-    output = render.case_html(case)
+    output = unmark_html(render.case_html(case))
     summary = _SummaryText(output).text
     assert "Code Editing" in summary
     assert "incorrect patch" in summary.lower()
@@ -84,7 +86,7 @@ def test_saved_case_leads_with_recorded_diagnosis_evidence_and_check():
 def test_saved_summary_does_not_treat_absent_evidence_as_a_tested_remedy():
     case = _saved_case()
     del case["faults"][0]["evidence_chain"]
-    summary = _SummaryText(render.case_html(case)).text
+    summary = _SummaryText(unmark_html(render.case_html(case))).text
     assert "A gating test failed." not in summary
     assert "Rerun the gating test after the proposed change." not in summary
     assert "expect pass" not in summary.lower()
@@ -97,7 +99,7 @@ def test_saved_summary_keeps_recorded_html_inert():
     chain = case["faults"][0]["evidence_chain"]
     chain["links"][0]["statement"] = unsafe
     chain["counterfactual"]["what_would_confirm"] = unsafe
-    output = render.case_html(case)
+    output = unmark_html(render.case_html(case))
     summary = _SummaryText(output).text
     assert unsafe in summary
     assert "<script>" not in output and "<img" not in output

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import gradio as gr
 
+from ..i18n.ui import bind_language, presentation
+
 from .llm_config import load_env_files
 from .charts.activity import (
     FILE_INTERACTION_CHROME_PX,
@@ -32,12 +34,12 @@ from .ui.shared import SharedState
 # them to gr.Blocks is warned about and silently dropped), so `build_ui()` is
 # deliberately unstyled and every embedder must spread this at launch — without
 # it the page is served bare, including the light-mode pinning below.
-LAUNCH_PRESENTATION = {
+LAUNCH_PRESENTATION = presentation({
     "css": APP_CSS,
     "head": '<meta name="color-scheme" content="light">',
     # The application has its own Settings panel; avoid a second settings menu.
     "footer_links": ["gradio"],
-}
+})
 
 
 def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
@@ -162,10 +164,11 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
         attribution_tab.bind(attribution, shared, upload_refs, load_events,
                              allow_server_paths=allow_server_paths, auto_diagnose=False)
         trajectory_inspection.bind(inspection, shared, load_events)
-        awe_tab.bind(awe, app, allow_server_paths=allow_server_paths)
+        awe_tab.bind(awe, app, allow_server_paths=allow_server_paths, language=upload_refs.language)
         comparison_tab.bind(comparison, shared, upload_refs)
         workflow_tab.bind(workflow, shared)
         views_tab.bind(views, shared, load_events)
+        bind_language(app, upload_refs.language)
 
         app.load(
             fn=lambda _dark=False: False,
@@ -226,7 +229,9 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                     window.tvClickMainTab = function (label) {
                         const tabs = window.tvMainTabButtons();
                         for (let ti = 0; ti < tabs.length; ti++) {
-                            if (tabs[ti].textContent.trim() === label) {
+                            const canonical = window.tvCanonicalText?.(tabs[ti].textContent.trim())
+                                || tabs[ti].textContent.trim();
+                            if (canonical === label) {
                                 tabs[ti].click();
                                 return true;
                             }
@@ -238,7 +243,8 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                         for (let ti = 0; ti < tabs.length; ti++) {
                             if (tabs[ti].getAttribute('aria-selected') === 'true'
                                     || tabs[ti].classList.contains('selected')) {
-                                return tabs[ti].textContent.trim();
+                                return window.tvCanonicalText?.(tabs[ti].textContent.trim())
+                                    || tabs[ti].textContent.trim();
                             }
                         }
                         return '';
@@ -375,7 +381,9 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                         /* Capture phase: read the prior tab before Gradio switches. */
                         document.addEventListener('click', function (e) {
                             const tab = e.target && e.target.closest && e.target.closest('button');
-                            if (!tab || tab.textContent.trim() !== 'Workflow'
+                            const canonical = tab && (window.tvCanonicalText?.(tab.textContent.trim())
+                                || tab.textContent.trim());
+                            if (!tab || canonical !== 'Workflow'
                                     || !window.tvMainTabButtons().includes(tab)
                                     || window.__tvProgrammaticWorkflowTab) return;
                             window.tvPushTabReturnPoint(window.tvActiveMainTab());

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import plotly.graph_objects as go
 
+from ...i18n import text as ui_text
 from ..formats.common import as_text
 from ..context_usage import PRESSURE_ALL_AGENTS
 from ..formatting import (
@@ -111,7 +112,7 @@ def _build_session_detail_html(
         f"background:var(--ov-card);border:1px solid var(--ov-border);"
         f"border-radius:8px;padding:6px 10px;min-width:100px;'>"
         f"<span style='font-size:10px;color:var(--ov-muted);text-transform:uppercase;'>"
-        f"{html.escape(label)}</span>"
+        f"{ui_text(label)}</span>"
         f"<span style='font-size:13px;font-weight:500;'>"
         f"{html.escape(str(val))}</span></div>"
         for label, val in fields
@@ -119,7 +120,7 @@ def _build_session_detail_html(
     return (
         "<details class='session-detail' style='margin:0 0 10px;'>"
         "<summary style='cursor:pointer;font-size:12px;color:var(--ov-muted);"
-        "user-select:none;'>Session details</summary>"
+        f"user-select:none;'>{ui_text('Session details')}</summary>"
         f"<div style='display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;'>{chips}</div>"
         "</details>"
     )
@@ -136,6 +137,7 @@ def _kpi_breakdown_html(
     items: list[tuple[str, int, str]],
     *,
     title: str,
+    localize_names: bool = False,
 ) -> str:
     """Color-coded swatch list used by Steps (agents) and Issues (kinds)."""
     if not items:
@@ -147,7 +149,7 @@ def _kpi_breakdown_html(
             "<div class='ov-kpi-breakdown-row'>"
             f"<span class='ov-kpi-breakdown-swatch' style='background:{color};'></span>"
             f"<span class='ov-kpi-breakdown-name' style='color:{color};' "
-            f"title='{safe}'>{safe}</span>"
+            f"title='{safe}'>{ui_text(name) if localize_names else safe}</span>"
             f"<span class='ov-kpi-breakdown-count'>{count}</span>"
             "</div>"
         )
@@ -184,7 +186,7 @@ def _issues_kpi_parts(issues: list[OverviewIssue]) -> tuple[str, str, str, str, 
         status, detail = "bad", f"{issue_count} issues — review Overview Issues"
     else:
         status, detail = "warn", f"{issue_count} issue{'s' if issue_count != 1 else ''} — review Overview Issues"
-    return value, "", status, detail, _kpi_breakdown_html(items, title="Issues by kind")
+    return value, "", status, detail, _kpi_breakdown_html(items, title="Issues by kind", localize_names=True)
 
 
 def _agent_steps_breakdown(agent_summaries: list[dict] | None) -> str:
@@ -265,11 +267,11 @@ def build_overview_kpi_html(
 
     output_rate = metrics.get("output_tokens_per_sec")
     if isinstance(output_rate, (int, float)) and not isinstance(output_rate, bool):
-        throughput_sub = f"{output_rate:,} gen tok/s"
+        throughput_sub = ui_text("{rate} gen tok/s", rate=f"{output_rate:,}")
         if (metrics.get("output_throughput_tool_wait_seconds") or 0) > 0:
-            throughput_sub += " excl. tools"
+            throughput_sub += " " + ui_text("excl. tools")
     else:
-        throughput_sub = "Generation throughput: N/A"
+        throughput_sub = ui_text("Generation throughput: N/A")
     timed_steps = metrics.get("output_throughput_timed_steps")
     throughput_steps = metrics.get("output_throughput_total_steps")
     if (
@@ -277,17 +279,17 @@ def build_overview_kpi_html(
         and isinstance(throughput_steps, int)
         and throughput_steps > 0
     ):
-        throughput_sub += f" · {timed_steps}/{throughput_steps} timed"
+        throughput_sub += " · " + ui_text("{timed}/{total} timed", timed=timed_steps, total=throughput_steps)
 
     p95 = metrics.get("p95_duration")
-    p95_sub = f"P95 {p95}s" if isinstance(p95, (int, float)) else "P95 N/A"
+    p95_sub = ui_text("P95 {seconds}s", seconds=p95) if isinstance(p95, (int, float)) else "P95 N/A"
     user_steps = metrics.get("user_steps", 0)
     agent_breakdown = _agent_steps_breakdown(agent_summaries)
     cards = [
         (
             "Steps",
             f"{metrics.get('total_steps', 0):,}",
-            f"{metrics.get('assistant_steps', 0)} assistant, {user_steps} user",
+            ui_text("{assistant} assistant, {user} user", assistant=metrics.get('assistant_steps', 0), user=user_steps),
         ),
         ("Wall-Clock", wall_fmt, p95_sub),
         (
@@ -295,10 +297,10 @@ def build_overview_kpi_html(
             ("\u2248" if tokens_estimated else "")
             + ("N/A" if metrics.get('tokens', {}).get('total') is None
                else f"{metrics.get('tokens', {}).get('total', 0):,}"),
-            ("estimated · " if tokens_estimated else "") + throughput_sub,
+            (ui_text("estimated") + " · " if tokens_estimated else "") + throughput_sub,
         ),
-        ("Issues", issue_value, issue_sub),
-        ("Tool Success", _rate_text(metrics.get("tool_success_rate")), f"{metrics.get('tool_call_count', 0):,} calls"),
+        ("Issues", issue_value, ui_text(issue_sub) if issue_sub else ""),
+        ("Tool Success", _rate_text(metrics.get("tool_success_rate")), ui_text("{count} calls", count=f"{metrics.get('tool_call_count', 0):,}")),
     ]
     card_html = []
     for label, value, sub in cards:
@@ -326,12 +328,13 @@ def build_overview_kpi_html(
         help_key = _label_to_help_key.get(label, "")
         help_attr = ""
         if help_key and help_key in HELP_TEXT:
-            help_attr = f" data-help='{html.escape(HELP_TEXT[help_key])}'"
+            from ...i18n import attrs
+            help_attr = " " + attrs(HELP_TEXT[help_key], attribute="data-help")
         sparkline = ""
         if label in sparkline_data:
             sparkline = _build_sparkline_svg(sparkline_data[label])
         sub_block = (
-            f"<div class='ov-kpi-sub'>{html.escape(str(sub))}</div>" if sub else ""
+            f"<div class='ov-kpi-sub'>{sub}</div>" if sub else ""
         )
         extra_line = ""
         if label == "Steps" and agent_breakdown:
@@ -351,8 +354,8 @@ def build_overview_kpi_html(
             detail_block = f"<p>{html.escape(detail)}</p>" if detail else ""
             extra_line = (
                 "<details class='ov-kpi-methodology' style='font-size:11px;margin-top:4px;'>"
-                "<summary style='cursor:pointer;color:var(--ov-muted);'>Throughput details</summary>"
-                f"{detail_block}<p>{html.escape(methodology)}</p></details>"
+                f"<summary style='cursor:pointer;color:var(--ov-muted);'>{ui_text('Throughput details')}</summary>"
+                f"{detail_block}<p>{ui_text(methodology)}</p></details>"
             )
         elif verdict_info and label != "Issues":
             status, detail = verdict_info
@@ -363,7 +366,7 @@ def build_overview_kpi_html(
             )
         card_html.append(
             f"<div class='ov-kpi-card{extra_class}'{extra_style}{title_attr}{data_attr}{jump_attr}>"
-            f"<div class='ov-kpi-label'{help_attr}>{html.escape(str(label))}</div>"
+            f"<div class='ov-kpi-label'{help_attr}>{ui_text(str(label))}</div>"
             f"<div class='ov-kpi-value'>{html.escape(str(value))}</div>"
             f"{sub_block}"
             f"{extra_line}"
@@ -504,18 +507,18 @@ def build_diagnostics_outputs(session: LoadedSession, dark: bool = False, *, wor
     parts = []
     chain_metrics = session.chain_metrics
     if chain_metrics["total_chains"]:
-        parts.append(f"{chain_metrics['total_chains']} failure chain(s)")
+        parts.append(ui_text("{count} failure chain(s)", count=chain_metrics['total_chains']))
     if session.clusters:
-        parts.append(f"{len(session.clusters)} root cause(s)")
+        parts.append(ui_text("{count} root cause(s)", count=len(session.clusters)))
     if session.performance_bottlenecks:
-        parts.append(f"{len(session.performance_bottlenecks)} bottleneck(s)")
+        parts.append(ui_text("{count} bottleneck(s)", count=len(session.performance_bottlenecks)))
     if interactions:
         unique_files = len({i["path"] for i in interactions})
-        parts.append(f"{unique_files} file(s) touched · {len(target_files)} edited")
+        parts.append(ui_text("{files} file(s) touched · {edited} edited", files=unique_files, edited=len(target_files)))
     compaction_count = len(session.pressure_series.get("events") or [])
     if compaction_count:
-        parts.append(f"{compaction_count} compaction event(s)")
-    summary = " &middot; ".join(parts) if parts else (
+        parts.append(ui_text("{count} compaction event(s)", count=compaction_count))
+    summary = " &middot; ".join(parts) if parts else ui_text(
         "Some diagnostic checks are unavailable for this telemetry capture."
         if session.raw.get("_otel") else "No diagnostic issues detected."
     )
@@ -538,8 +541,10 @@ def load_warnings_html(session: LoadedSession) -> str:
     if session.truncated:
         extra = session.steps_total - MAX_STEPS
         lines.append(
-            f"<p style='{style}'>&#9888; Showing first {MAX_STEPS:,} of {session.steps_total:,} steps "
-            f"({extra:,} truncated).</p>"
+            f"<p style='{style}'>&#9888; "
+            + ui_text("Showing first {limit} of {total} steps ({truncated} truncated).",
+                      limit=f"{MAX_STEPS:,}", total=f"{session.steps_total:,}", truncated=f"{extra:,}")
+            + "</p>"
         )
     raw = session.raw if isinstance(session.raw, dict) else {}
     if raw.get("_otel"):
@@ -554,9 +559,10 @@ def load_warnings_html(session: LoadedSession) -> str:
             lines.append(f"<p style='{style}'>Partial or unavailable evidence: {html.escape(', '.join(missing))}.</p>")
     if tokens_are_estimates(raw) and (session.metrics.get("tokens") or {}).get("total"):
         lines.append(
-            f"<p style='{style}'>&#9888; Token counts are estimates from the logged text "
-            "(about 4 characters per token): this export does not record the tokens the "
-            "model was billed for.</p>"
+            f"<p style='{style}'>&#9888; "
+            + ui_text("Token counts are estimates from the logged text (about 4 characters per token): "
+                      "this export does not record the tokens the model was billed for.")
+            + "</p>"
         )
     for warning in raw.get("_load_warnings") or []:
         if isinstance(warning, str) and warning:

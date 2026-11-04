@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import gradio as gr
 
+from ...i18n import text
 from ..loaders import detect_format
 from .shared import SharedState, safe_callback
 from .upload import UploadRefs
@@ -47,8 +48,7 @@ def layout(*, allow_server_paths: bool = True, embedded: bool = False) -> Attrib
     with (gr.Column(min_width=0, elem_classes=["attribution-tab"]) if embedded
           else gr.TabItem("Attribution", elem_classes=["attribution-tab"])):
         gr.HTML(
-            "<div class='section-subtitle'>Explain a failed attempt using its "
-            "trajectory, reference solution and recorded test results.</div>"
+            "<div class='section-subtitle'>" + text('Explain a failed attempt using its trajectory, reference solution and recorded test results.') + '</div>'
         )
         gr.Markdown(
             "**1. Load a trajectory** above. **2. Confirm the task and reference data** below. "
@@ -90,8 +90,7 @@ def layout(*, allow_server_paths: bool = True, embedded: bool = False) -> Attrib
         with gr.Row(equal_height=True):
             attr_run_btn = gr.Button("Diagnose failure", variant="primary", size="sm", scale=1, min_width=140)
         attr_status_html = gr.HTML(
-            "<div class='attr-banner-sub'>Load a trajectory above to begin. "
-            "Uploaded files may need an agent, task ID and matching reference folder.</div>"
+            "<div class='attr-banner-sub'>" + text('Load a trajectory above to begin. Uploaded files may need an agent, task ID and matching reference folder.') + '</div>'
         )
         attr_result_html = gr.HTML("")
     return AttributionRefs(
@@ -125,7 +124,7 @@ def bind(
                 build_attribution_html(
                     {"available": False, "reason": "Load a trajectory in the Overview tab first."}
                 ),
-                "<div style='color:var(--ov-warn);padding:0.5em;font-size:13px;'>No trajectory loaded.</div>",
+                ("<div style='color:var(--ov-warn);padding:0.5em;font-size:13px;'>" + text('No trajectory loaded.') + '</div>'),
             )
 
         src, fmt, agent, inst = _diagnosis_identity(overview_raw, agent_override, inst_override)
@@ -148,15 +147,13 @@ def bind(
             reference_root=root or None,
         )
         html_out = build_attribution_html(asdict(result))
-        import html as _html
-
-        ident = _html.escape(f"{result.agent}/{result.instance_id}")
+        ident = f"{result.agent}/{result.instance_id}"
         status = (
             "<div style='color:var(--ov-success);padding:0.5em;font-size:13px;'>"
-            f"Diagnosis complete &mdash; {ident}.</div>"
+            + text("Diagnosis complete — {identity}.", identity=ident) + "</div>"
             if result.available
             else "<div style='color:var(--ov-muted);padding:0.5em;font-size:13px;'>"
-            "No gold-grounded attribution &mdash; see the note below.</div>"
+            + text("No gold-grounded attribution — see the note below.") + "</div>"
         )
         return html_out, status
 
@@ -170,8 +167,8 @@ def bind(
     def _clear_attribution():
         return (
             "<div style='padding:1em;color:var(--ov-muted);text-align:center;'>"
-            + ("Diagnosing the loaded trajectory&hellip;" if auto_diagnose
-               else "Resetting optional reference attribution&hellip;") + "</div>",
+            + (text("Diagnosing the loaded trajectory…") if auto_diagnose
+               else text("Resetting optional reference attribution…")) + "</div>",
             "",
         )
 
@@ -181,9 +178,8 @@ def bind(
         else:
             html_out = ""
             status = (
-                "<div class='attr-banner-sub'>Optional: confirm the matching reference data, "
-                "then choose Diagnose failure to assess solution correctness.</div>"
-                if overview_raw else "<div class='attr-banner-sub'>Load a trajectory above to begin.</div>"
+                ("<div class='attr-banner-sub'>" + text('Optional: confirm the matching reference data, then choose Diagnose failure to assess solution correctness.') + '</div>')
+                if overview_raw else ("<div class='attr-banner-sub'>" + text('Load a trajectory above to begin.') + '</div>')
             )
         _, _, agent, inst = _diagnosis_identity(overview_raw)
         return html_out, status, agent, inst

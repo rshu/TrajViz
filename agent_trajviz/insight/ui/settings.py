@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from html import escape
+import re
 
 import gradio as gr
 
+from ...i18n import catalog, text as ui_text
 from ..connection_test import ConnectionTestResult, check_connection
 from ..llm_config import (
     build_session_settings,
@@ -36,7 +38,7 @@ class SettingsRefs:
     test_status: gr.HTML
     apply: gr.Button
     reset: gr.Button
-    status: gr.Markdown
+    status: gr.HTML
     browser_state: gr.BrowserState
 
     def form_fields(self) -> list:
@@ -102,8 +104,8 @@ def layout() -> SettingsRefs:
         with gr.Row(elem_classes=["settings-actions"]):
             apply = gr.Button("Apply settings", variant="primary", scale=0, min_width=140, elem_classes=["settings-action"])
             reset = gr.Button("Use environment defaults", scale=0, min_width=220, elem_classes=["settings-action"])
-        status = gr.Markdown("Using environment defaults. API keys stay in the current session.",
-                             elem_classes=["settings-status"])
+        status = gr.HTML(ui_text("Using environment defaults. API keys stay in the current session."),
+                         elem_classes=["settings-status"], container=False, padding=False)
     return SettingsRefs(provider, base_url, api_key, model, temperature, max_tokens, timeout,
                         language, clear_api_key, remember, test, test_status, apply, reset, status, browser_state)
 
@@ -115,8 +117,20 @@ def _test_status_html(result: ConnectionTestResult | None = None, *, testing: bo
         kind, text = "idle", "Not tested. Sends a small model request; no trajectory data. Testing does not apply settings."
     else:
         kind, text = ("success" if result.ok else "error"), result.message
+    # Only known application explanations receive markers. Arbitrary validation
+    # or extension messages remain escaped evidence, rather than catalog keys.
+    content = ui_text(text) if text in catalog() else escape(text)
+    for template in (
+        "The API rejected the test request (HTTP {status}). Check Provider, Base URL and model compatibility.",
+        "The provider returned a service error (HTTP {status}). Retry later; the key could not be verified.",
+        "The API returned HTTP {status}. The key could not be verified.",
+    ):
+        match = re.fullmatch(re.escape(template).replace(r"\{status\}", r"(\d{3})"), text)
+        if match:
+            content = ui_text(template, status=match.group(1))
+            break
     return (f'<div class="settings-connection-result is-{kind}" role="status" aria-live="polite" '
-            f'aria-busy="{str(testing).lower()}">{escape(text)}</div>')
+            f'aria-busy="{str(testing).lower()}">{content}</div>')
 
 
 def _offline_issues(run) -> str:
@@ -181,16 +195,16 @@ def bind(refs: SettingsRefs, shared: SharedState, sidebar, overview, app, *, mod
         except ValueError as exc:
             raise gr.Error(str(exc)) from None
         remembered = {"version": 1, "values": nonsecret_settings(selected)} if remember else {}
-        status = "Settings applied for this session. "
+        status = ui_text("Settings applied for this session.") + " "
         if not selected.config.ready:
-            status += "Connection incomplete; enter the missing connection fields before requesting analysis. "
-        status += "API keys are session-only. No model request was sent."
+            status += ui_text("Connection incomplete; enter the missing connection fields before requesting analysis.") + " "
+        status += ui_text("API keys are session-only. No model request was sent.")
         return (selected, "", False, status, remembered, [], "",
                 config_status_html(config=selected.config, loaded_steps=len(steps or [])), _offline_issues(run))
 
     def on_reset_settings(steps, run):
         defaults = nonsecret_settings()
-        values = (None, "", False, "Using environment defaults. Remembered connection details cleared.",
+        values = (None, "", False, ui_text("Using environment defaults. Remembered connection details cleared."),
                   {}, [], "", config_status_html(loaded_steps=len(steps or [])), _offline_issues(run))
         return (*values, *(defaults[name] for name in _FIELDS), False)
 
@@ -227,7 +241,7 @@ def bind(refs: SettingsRefs, shared: SharedState, sidebar, overview, app, *, mod
                 defaults = nonsecret_settings(restored)
                 cleaned = {"version": 1, "values": defaults}
                 message = "Connection details restored. Enter your API key and apply settings to enable analysis."
-        return (active, *(defaults[name] for name in _FIELDS), "", False, remember, message, cleaned,
+        return (active, *(defaults[name] for name in _FIELDS), "", False, remember, ui_text(message), cleaned,
                 config_status_html(config=active.config if active is not None else None, loaded_steps=0))
 
     app.load(fn=on_restore_settings, inputs=[refs.browser_state],

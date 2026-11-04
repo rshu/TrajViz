@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
+from ..i18n import text as ui_text
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -398,14 +400,14 @@ def config_status_html(*, loaded_steps: int | None = None, config: AnalysisLLMCo
             host = None
         host = host or "(invalid endpoint)"
         bits.append(
-            f"<span class='analysis-status-ok'>Ready</span> · "
+            f"<span class='analysis-status-ok'>{ui_text('Ready')}</span> · "
             f"<code>{_escape(cfg.model)}</code> · {_escape(cfg.provider)} · "
-            f"sends to <code>{_escape(host)}</code>"
+            f"{ui_text('sends to')} <code>{_escape(host)}</code>"
         )
         if cfg.source == "session":
-            bits.append("UI settings")
+            bits.append(ui_text("UI settings"))
         elif cfg.source == "label":
-            bits.append("using LABEL_*")
+            bits.append(ui_text("using LABEL_*"))
         elif cfg.source == "mixed":
             bits.append("ANALYZE_* + LABEL_*")
         else:
@@ -414,25 +416,25 @@ def config_status_html(*, loaded_steps: int | None = None, config: AnalysisLLMCo
         missing_fields = [label for label, value in (("base URL", cfg.base_url), ("API key", cfg.api_key),
                                                      ("model", cfg.model)) if not value]
         bits.append(
-            "<span class='analysis-status-warn'>Not configured</span> · "
-            f"set {_escape(', '.join(missing_fields))} in Settings"
+            f"<span class='analysis-status-warn'>{ui_text('Not configured')}</span> · "
+            + ui_text(f"set {', '.join(missing_fields)} in Settings")
         )
     elif len(cfg.missing) >= 3:
         bits.append(
-            "<span class='analysis-status-warn'>Not configured</span> · "
-            "open Settings, or set <code>ANALYZE_*</code> (or <code>LABEL_*</code>) in the environment "
-            "or a <code>.env</code> file"
+            f"<span class='analysis-status-warn'>{ui_text('Not configured')}</span> · "
+            f"{ui_text('open Settings, or set')} <code>ANALYZE_*</code> "
+            f"({ui_text('or')} <code>LABEL_*</code>) {ui_text('in the environment or a')} <code>.env</code> {ui_text('file')}"
         )
     else:
         missing = ", ".join(cfg.missing)
         bits.append(
-            f"<span class='analysis-status-warn'>Not configured</span> · "
-            f"open Settings, or set {_escape(missing)} in <code>.env</code>"
+            f"<span class='analysis-status-warn'>{ui_text('Not configured')}</span> · "
+            f"{ui_text('open Settings, or set {fields} in', fields=missing)} <code>.env</code>"
         )
     if loaded_steps:
-        bits.append(f"{loaded_steps} steps in context")
+        bits.append(ui_text("{count} steps in context", count=loaded_steps))
     elif loaded_steps == 0:
-        bits.append("load a trajectory first")
+        bits.append(ui_text("load a trajectory first"))
     return "<div class='analysis-status'>" + " · ".join(bits) + "</div>"
 
 

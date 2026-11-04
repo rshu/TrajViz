@@ -7,6 +7,8 @@ import io
 from html.parser import HTMLParser
 from types import SimpleNamespace
 
+from i18n_test_helpers import unmark_html
+
 from agent_trajviz.awe import render
 
 
@@ -38,7 +40,7 @@ def _csv_report(headers, rows):
     writer.writerows(rows)
     original = stream.getvalue()
     run = SimpleNamespace(artifacts={"evidence.csv": original})
-    return render.report_html(run, "evidence.csv"), original
+    return unmark_html(render.report_html(run, "evidence.csv")), original
 
 
 def test_compact_identifiers_and_full_csv_precision_have_natural_nowrap_columns():

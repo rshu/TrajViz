@@ -3,6 +3,8 @@ import copy
 
 import pytest
 
+from i18n_test_helpers import unmark_html
+
 from agent_trajviz.awe.summary import attribution_summary_html, primary_fault
 from agent_trajviz.insight.rendering import build_attribution_html
 
@@ -31,8 +33,8 @@ def record():
 def test_summary_is_first_reading_guide_with_recorded_support_and_check():
     data = record()
     before = copy.deepcopy(data)
-    out = build_attribution_html(data)
-    summary = attribution_summary_html(data)
+    out = unmark_html(build_attribution_html(data))
+    summary = unmark_html(attribution_summary_html(data))
     assert "At a glance" in out
     assert "Code Editing: incorrect patch." in summary
     assert "The gating test failed." in summary and "test_report" in summary
@@ -53,7 +55,7 @@ def test_summary_retains_every_recorded_observation_including_late_test_failure(
     data["faults"][0]["evidence_chain"]["links"] = [
         {"kind": "observation", "statement": statement} for statement in statements
     ] + [{"kind": "inference", "statement": "Unproven causal claim."}]
-    summary = attribution_summary_html(data)
+    summary = unmark_html(attribution_summary_html(data))
     assert "<ul " in summary and summary.count("<li ") == len(statements)
     for statement in statements:
         assert statement in summary
@@ -61,7 +63,7 @@ def test_summary_retains_every_recorded_observation_including_late_test_failure(
 
 
 def test_raw_context_is_preserved_and_collapsed():
-    out = build_attribution_html(record())
+    out = unmark_html(build_attribution_html(record()))
     assert "Repair the reported regression." in out
     assert "<details class='attr-evidence-detail' open>" not in out
     assert "Task and reference context" in out
@@ -73,7 +75,7 @@ def test_raw_context_is_preserved_and_collapsed():
 def test_zero_or_invalid_weights_never_promote_a_primary_summary(weight):
     data = record()
     data["faults"][0]["blame_weight"] = weight
-    summary = attribution_summary_html(data)
+    summary = unmark_html(attribution_summary_html(data))
     assert primary_fault(data) is None
     assert "No single dominant fault" in summary
     assert "Code Editing: incorrect patch." not in summary
@@ -83,7 +85,7 @@ def test_zero_or_invalid_weights_never_promote_a_primary_summary(weight):
 def test_zero_weight_primary_marker_does_not_show_as_primary_in_fault_panel():
     data = record()
     data["faults"][0]["blame_weight"] = 0
-    out = build_attribution_html(data)
+    out = unmark_html(build_attribution_html(data))
     assert "Primary cause:" not in out
     assert "★ primary" not in out
     assert "No single dominant cause" in out
@@ -95,13 +97,13 @@ def test_saved_primary_marker_is_accepted_but_explicit_abstention_is_retained():
     assert primary_fault(data) == data["faults"][0]
     data["primary"] = None
     assert primary_fault(data) is None
-    assert "No single dominant fault" in attribution_summary_html(data)
+    assert "No single dominant fault" in unmark_html(attribution_summary_html(data))
 
 
 def test_solved_outcome_does_not_promote_a_stale_fault():
     data = record()
     data["resolved"] = True
-    summary = attribution_summary_html(data)
+    summary = unmark_html(attribution_summary_html(data))
     assert primary_fault(data) is None
     assert "The recorded outcome is solved." in summary
     assert "Code Editing: incorrect patch." not in summary
@@ -109,12 +111,12 @@ def test_solved_outcome_does_not_promote_a_stale_fault():
 
 
 def test_missing_primary_check_and_coverage_are_explicit():
-    out = attribution_summary_html({})
+    out = unmark_html(attribution_summary_html({}))
     assert "outcome is unknown" in out
     assert "no confirming check was recorded" in out
     assert "coverage was not recorded" in out
     assert "0 of 0" not in out
-    assert "fault attribution" in attribution_summary_html({"analysis": {"symptom": "retries"}})
+    assert "fault attribution" in unmark_html(attribution_summary_html({"analysis": {"symptom": "retries"}}))
 
 
 def test_summary_escapes_all_recorded_prose_and_identifiers():
@@ -123,14 +125,14 @@ def test_summary_escapes_all_recorded_prose_and_identifiers():
         "links": [{"kind": "observation", "statement": "<script>bad</script>", "source": "<img src=x>"}],
         "counterfactual": {"status": "<img src=y>", "what_would_confirm": "<script>check</script>"},
     }
-    out = attribution_summary_html(data)
+    out = unmark_html(attribution_summary_html(data))
     assert "<script>" not in out and "<img" not in out
     assert "&lt;script&gt;bad&lt;/script&gt;" in out
     assert "&lt;img src=x&gt;" in out and "&lt;img src=y&gt;" in out
 
 
 def test_unavailable_diagnosis_explains_next_action_without_scores():
-    out = build_attribution_html({"available": False, "reason": "Missing <reference>"})
+    out = unmark_html(build_attribution_html({"available": False, "reason": "Missing <reference>"}))
     assert "Diagnosis unavailable" in out and "Missing &lt;reference&gt;" in out
     assert "Task and reference data above" in out and "Diagnose failure" in out
     assert "Trajectory-only diagnostics remain available in Overview" in out

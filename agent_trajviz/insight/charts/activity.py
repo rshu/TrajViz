@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ...i18n import localize_figure
+
 from ._layout import _add_dummy_marker_legend, _add_legend_hint, _apply_chart_layout, _apply_dark, _empty_figure
 import plotly.graph_objects as go
 
@@ -655,6 +657,10 @@ def build_context_pressure_chart(
         fig.update_yaxes(range=[0, y_max * 1.08])
     _add_legend_hint(fig)
     _apply_dark(fig, dark)
+    if single:
+        localize_figure(fig, layout_text={
+            "title.text": ("Context Window Pressure — {agent}", {"agent": agents[0]["label"]})
+        })
     return fig
 
 

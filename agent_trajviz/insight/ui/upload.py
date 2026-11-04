@@ -13,6 +13,8 @@ from typing import Any
 
 import gradio as gr
 
+from ...i18n.ui import language_selector
+
 from ..presenters.overview import load_warnings_html
 from ..report import ReportError, write_report_file
 from ..session import LoadedSession
@@ -38,16 +40,19 @@ class UploadRefs:
     summary_banner: gr.HTML
     label_badge_html: gr.HTML
     session_selector: gr.Dropdown
+    language: gr.Dropdown
 
 
 def layout() -> UploadRefs:
-    gr.HTML(
-        "<div class='tv-header'>"
-        "<span class='tv-brand'>TrajViz</span>"
-        "<span class='tv-subtitle'>Coding Agent Trajectory Analysis Dashboard</span>"
-        "</div>",
-        elem_classes=["app-title"],
-    )
+    with gr.Row(elem_id="tv-app-header", equal_height=False):
+        gr.HTML(
+            "<div class='tv-header'>"
+            "<span class='tv-brand'>TrajViz</span>"
+            "<span class='tv-subtitle'>Coding Agent Trajectory Analysis Dashboard</span>"
+            "</div>",
+            elem_classes=["app-title"],
+        )
+        language = language_selector()
 
     with gr.Column(elem_classes=["upload-row"]) as upload_accordion, gr.Row(equal_height=False):
         format_selector = gr.Dropdown(
@@ -108,6 +113,7 @@ def layout() -> UploadRefs:
         summary_banner=summary_banner,
         label_badge_html=label_badge_html,
         session_selector=session_selector,
+        language=language,
     )
 
 

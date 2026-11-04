@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections import Counter
 
+from ...i18n import localize_figure
+
 from ._layout import _add_legend_hint, _apply_chart_layout, _apply_dark, _empty_figure, _truncate_chart_labels
 import plotly.graph_objects as go
 
@@ -169,6 +171,7 @@ def draw_token_usage(data: dict, dark: bool = False) -> go.Figure:
     )
     _add_legend_hint(fig)
     _apply_dark(fig, dark)
+    localize_figure(fig, trace_names=True)
     return fig
 
 
@@ -323,6 +326,7 @@ def draw_step_durations(data: dict, dark: bool = False) -> go.Figure:
     _add_legend_hint(fig)
 
     _apply_dark(fig, dark)
+    localize_figure(fig, trace_names=True)
     return fig
 
 
@@ -724,4 +728,5 @@ def draw_agent_tokens(data: dict, dark: bool = False) -> go.Figure:
     )
     fig.update_layout(margin=dict(t=70))
     _apply_dark(fig, dark)
+    localize_figure(fig, trace_names=True)
     return fig

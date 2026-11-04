@@ -21,6 +21,8 @@ from pathlib import Path
 import gradio as gr
 
 from ..errors import TrajVizError
+from ..i18n import text as ui_text
+from ..i18n.ui import bind_language, language_selector, presentation
 from .styles import CONVERGE_CSS
 
 logger = logging.getLogger(__name__)
@@ -28,10 +30,10 @@ logger = logging.getLogger(__name__)
 # Gradio 6 takes `css` / `theme` at launch(), not in the Blocks constructor
 # (passing them there is deprecated and warned about). Same pattern as the
 # Insight app: build_ui() is unstyled and every launcher spreads this.
-LAUNCH_PRESENTATION = {
+LAUNCH_PRESENTATION = presentation({
     "css": CONVERGE_CSS,
     "theme": gr.themes.Soft(),
-}
+})
 
 # Failures whose message describes the user's input rather than the program.
 _EXPECTED_ERRORS = (ValueError, OSError, TrajVizError)
@@ -79,18 +81,19 @@ def _public(text: str, shown: dict[str, str]) -> str:
 def _error_html(action: str, exc: BaseException, shown: dict[str, str]) -> str:
     if isinstance(exc, _EXPECTED_ERRORS):
         detail = _public(str(exc), shown)
+        detail_html = html.escape(detail)
     else:
         logger.error("%s failed", action, exc_info=exc)
-        detail = f"unexpected {type(exc).__name__}. See the server log."
+        detail_html = ui_text("unexpected {error_type}. See the server log.", error_type=type(exc).__name__)
     return (
         "<div class='cvg-report'><div class='cvg-warning'>"
-        f"<b>{html.escape(action)} failed:</b> {html.escape(detail)}"
+        f"<b>{ui_text(action + ' failed:')}</b> {detail_html}"
         "</div></div>"
     )
 
 
 def _note_html(text: str) -> str:
-    return f"<div class='cvg-report'><p>{html.escape(text)}</p></div>"
+    return f"<div class='cvg-report'><p>{ui_text(text)}</p></div>"
 
 
 def _input_errors_html(errors: list[dict], shown: dict[str, str]) -> str:
@@ -103,7 +106,7 @@ def _input_errors_html(errors: list[dict], shown: dict[str, str]) -> str:
         task = f"{side}{error.get('task_id', '(unknown task)')}"
         detail = _public(str(error.get("error") or "Comparison report is unavailable."), shown)
         rows.append(f"<li><b>{html.escape(task)}</b>: {html.escape(detail)}</li>")
-    return f"<h3>Input errors ({len(errors)})</h3><ul class='cvg-warning'>{''.join(rows)}</ul>"
+    return f"<h3>{ui_text('Input errors ({count})', count=len(errors))}</h3><ul class='cvg-warning'>{''.join(rows)}</ul>"
 
 
 def compare_uploads(ref_upload, cmp_upload, anchor_upload, rate, fuzzy) -> tuple:
@@ -182,8 +185,9 @@ def batch_report_html(manifest_upload, rate, fuzzy, *, data_root: str | os.PathL
     except Exception as exc:  # noqa: BLE001 - rendered, never raised into Gradio
         return _error_html("Batch", exc, {**_root_names(root), **_upload_names(manifest_path)})
 
-    parts = ['<div class="cvg-report">', "<h2>Batch Report</h2>"]
-    parts.append(f"<p>{aggregate.get('compared_count', 0)} of {aggregate.get('task_count', 0)} tasks compared</p>")
+    parts = ['<div class="cvg-report">', f"<h2>{ui_text('Batch Report')}</h2>"]
+    parts.append('<p>' + ui_text('{compared} of {total} tasks compared',
+                                 compared=aggregate.get('compared_count', 0), total=aggregate.get('task_count', 0)) + '</p>')
     parts.append(_input_errors_html(
         [{"task_id": result.task_id, "error": result.error} for result in results if result.report is None],
         {**_root_names(root), **_upload_names(manifest_path)},
@@ -191,9 +195,10 @@ def batch_report_html(manifest_upload, rate, fuzzy, *, data_root: str | os.PathL
 
     metrics = aggregate.get("metrics", {})
     if metrics:
-        parts.append("<h3>Aggregate Metrics</h3>")
+        parts.append(f"<h3>{ui_text('Aggregate Metrics')}</h3>")
         parts.append('<table class="cvg-outcome-table"><thead><tr>'
-                     '<th>Metric</th><th>Mean</th><th>Median</th><th>P95</th></tr></thead><tbody>')
+                     f'<th>{ui_text("Metric")}</th><th>{ui_text("Mean")}</th>'
+                     f'<th>{ui_text("Median")}</th><th>P95</th></tr></thead><tbody>')
         for name, stats in metrics.items():
             parts.append(f"<tr><td>{html.escape(name)}</td>"
                          f"<td>{stats.get('mean', 0):.4f}</td>"
@@ -202,9 +207,10 @@ def batch_report_html(manifest_upload, rate, fuzzy, *, data_root: str | os.PathL
         parts.append("</tbody></table>")
 
     if frequency:
-        parts.append("<h3>Pattern Frequency</h3>")
+        parts.append(f"<h3>{ui_text('Pattern Frequency')}</h3>")
         parts.append('<table class="cvg-outcome-table"><thead><tr>'
-                     '<th>Pattern</th><th>Tasks</th><th>Prevalence</th><th>Level</th></tr></thead><tbody>')
+                     f'<th>{ui_text("Pattern")}</th><th>{ui_text("Tasks")}</th>'
+                     f'<th>{ui_text("Prevalence")}</th><th>{ui_text("Level")}</th></tr></thead><tbody>')
         for ptype, data in sorted(frequency.items(), key=lambda x: -x[1].get("count", 0)):
             level = promoted.get(ptype, "hypothesis")
             badge = "supported_finding" if level == "supported_finding" else "hypothesis"
@@ -250,25 +256,26 @@ def before_after_report_html(before_upload, after_upload, rate, fuzzy, *, data_r
         return _error_html("Before/after comparison", exc,
                            {**_root_names(root), **_upload_names(before_path, after_path)})
 
-    parts = ['<div class="cvg-report">', "<h2>Intervention Report</h2>"]
-    parts.append(f"<p>Paired tasks: {report['paired_tasks']} · "
-                 f"Unpaired before: {report['unpaired_before']} · Unpaired after: {report['unpaired_after']}</p>")
+    parts = ['<div class="cvg-report">', f"<h2>{ui_text('Intervention Report')}</h2>"]
+    parts.append('<p>' + ui_text('Paired tasks: {paired} · Unpaired before: {before} · Unpaired after: {after}',
+                                 paired=report['paired_tasks'], before=report['unpaired_before'],
+                                 after=report['unpaired_after']) + '</p>')
     parts.append(_input_errors_html(report.get("input_errors", []),
                                    {**_root_names(root), **_upload_names(before_path, after_path)}))
 
     rec = report.get("recommendation", "")
     if rec:
-        parts.append(f'<div class="cvg-note"><b>Recommendation:</b> {html.escape(rec)}</div>')
+        parts.append(f'<div class="cvg-note"><b>{ui_text("Recommendation:")}</b> {html.escape(rec)}</div>')
 
     for g in report.get("guardrail_warnings", []):
         parts.append(f'<div class="cvg-warning">! {html.escape(g["warning"])}</div>')
 
     deltas = report.get("intervention_effect", {})
     if deltas:
-        parts.append("<h3>Metric Deltas</h3>")
+        parts.append(f"<h3>{ui_text('Metric Deltas')}</h3>")
         parts.append('<table class="cvg-outcome-table"><thead><tr>'
-                     '<th>Metric</th><th>Before</th><th>After</th>'
-                     '<th>Delta</th><th>Direction</th></tr></thead><tbody>')
+                     f'<th>{ui_text("Metric")}</th><th>{ui_text("Before")}</th><th>{ui_text("After")}</th>'
+                     f'<th>{ui_text("Delta")}</th><th>{ui_text("Direction")}</th></tr></thead><tbody>')
         for name, d in deltas.items():
             color = "#059669" if d["direction"] == "improved" else (
                 "#dc2626" if d["direction"] == "regressed" else "#6b7280")
@@ -294,7 +301,9 @@ def build_ui(*, data_root: str | os.PathLike | None = None) -> gr.Blocks:
 
     # No Gradio telemetry, as in the Insight app.
     with gr.Blocks(title="Converge", analytics_enabled=False) as app:
-        gr.Markdown("# Converge\nCross-agent trajectory comparison and alignment analysis.")
+        with gr.Row(elem_id="tv-converge-header", equal_height=False):
+            gr.Markdown("# Converge\nCross-agent trajectory comparison and alignment analysis.")
+            language = language_selector()
 
         with gr.Row():
             with gr.Column(scale=1):
@@ -364,5 +373,6 @@ def build_ui(*, data_root: str | os.PathLike | None = None) -> gr.Blocks:
             inputs=[before_file, after_file, ba_token_rate, ba_fuzzy],
             outputs=[ba_report],
         )
+        bind_language(app, language)
 
     return app

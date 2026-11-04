@@ -6,7 +6,9 @@ The issues themselves are computed by :mod:`agent_trajviz.insight.issues`.
 from __future__ import annotations
 
 import html
+import re
 
+from ...i18n import text as ui_text
 from ..issues import (  # noqa: F401  (re-exported: UI and judge import them here)
     Confidence,
     IssueJudgment,
@@ -25,9 +27,28 @@ ISSUE_KIND_COLORS: dict[IssueKind, str] = {
 }
 
 
+def _issue_title_html(title: str) -> str:
+    """Mark authored issue title templates while leaving error/file names intact."""
+    for pattern, template, names in (
+        (r"Context/cache bottleneck at #(\d+) \(([\d.]+)s\)",
+         "Context/cache bottleneck at #{step} ({seconds}s)", ("step", "seconds")),
+        (r"Inference bottleneck at #(\d+) \(([\d.]+)s\)",
+         "Inference bottleneck at #{step} ({seconds}s)", ("step", "seconds")),
+        (r"Idle/queue bottleneck before #(\d+) \(([\d.]+)s gap\)",
+         "Idle/queue bottleneck before #{step} ({seconds}s gap)", ("step", "seconds")),
+        (r"Tool bottleneck: (.+) \(([\d.]+)s\)",
+         "Tool bottleneck: {tool} ({seconds}s)", ("tool", "seconds")),
+        (r"Failure cascade \((\d+) steps\)",
+         "Failure cascade ({count} steps)", ("count",)),
+    ):
+        if match := re.fullmatch(pattern, title):
+            return ui_text(template, **dict(zip(names, match.groups(), strict=True)))
+    return html.escape(title)
+
+
 def _issue_card(issue: OverviewIssue, *, workflow_links: bool = True) -> str:
     """Compact scan row: title + steps + visible Fix; Why behind a disclosure."""
-    title = html.escape(issue.title)
+    title = _issue_title_html(issue.title)
     detail = html.escape(issue.detail)
     border = ISSUE_KIND_COLORS[issue.kind]
     steps_html = _step_link_chips(list(issue.steps), workflow_links=workflow_links)
@@ -39,13 +60,13 @@ def _issue_card(issue: OverviewIssue, *, workflow_links: bool = True) -> str:
         if j.also:
             also_html = (
                 f"<div style='font-size:11px;color:var(--ov-muted);margin-top:6px;"
-                f"line-height:1.35;'>Also: {html.escape(j.also)}</div>"
+                f"line-height:1.35;'>{ui_text('Also:')} {html.escape(j.also)}</div>"
             )
         conf = html.escape(j.confidence)
         judgment_html = (
             "<div style='margin-top:8px;font-size:12px;line-height:1.4;'>"
             "<span style='font-size:10px;font-weight:600;letter-spacing:0.04em;"
-            "text-transform:uppercase;color:var(--ov-muted);'>Change</span>"
+            f"text-transform:uppercase;color:var(--ov-muted);'>{ui_text('Change')}</span>"
             f"<div style='font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
             f"font-size:12px;color:var(--ov-text);margin-top:2px;'>"
             f"{html.escape(j.where)}</div></div>"
@@ -53,7 +74,7 @@ def _issue_card(issue: OverviewIssue, *, workflow_links: bool = True) -> str:
             "border-radius:4px;'>"
             "<div style='font-size:10px;font-weight:600;letter-spacing:0.04em;"
             "text-transform:uppercase;color:var(--ov-muted);margin-bottom:4px;'>"
-            f"Fix <span style='font-weight:500;letter-spacing:0;text-transform:none;"
+            f"{ui_text('Fix')} <span style='font-weight:500;letter-spacing:0;text-transform:none;"
             f"color:var(--ov-muted);'>({conf})</span></div>"
             f"<div style='font-size:13px;line-height:1.4;color:var(--ov-text);'>"
             f"{html.escape(j.fix)}</div>"
@@ -64,10 +85,10 @@ def _issue_card(issue: OverviewIssue, *, workflow_links: bool = True) -> str:
     if issue.why:
         why_html = (
             "<details class='overview-issue-more'>"
-            "<summary class='overview-issue-more-summary'>Why it matters</summary>"
+            f"<summary class='overview-issue-more-summary'>{ui_text('Why it matters')}</summary>"
             f"<div class='overview-issue-more-body'>"
             f"<div style='font-size:11px;color:var(--ov-muted);font-style:italic;"
-            f"margin-top:4px;'>{html.escape(issue.why)}</div>"
+            f"margin-top:4px;'>{ui_text(issue.why)}</div>"
             f"</div></details>"
         )
 
@@ -116,7 +137,7 @@ def render_overview_issues_html(
         # SMIL (not CSS) so prefers-reduced-motion / Gradio HTML swaps don't freeze it.
         progress_html = (
             "<div class='overview-issues-progress' role='status' aria-live='polite'>"
-            "<span class='overview-issues-progress-label'>Thinking…</span>"
+            f"<span class='overview-issues-progress-label'>{ui_text('Thinking…')}</span>"
             "<svg class='overview-issues-progress-spinner' width='14' height='14' "
             "viewBox='0 0 24 24' aria-hidden='true' "
             "style='flex-shrink:0;display:block'>"
@@ -141,26 +162,26 @@ def render_overview_issues_html(
         return (
             "<details class='overview-issues-panel' id='overview-issues'>"
             "<summary class='overview-issues-summary'>"
-            "<span>Issues</span>"
-            f"<span class='overview-issues-summary-meta'>{status}</span>"
+            f"<span>{ui_text('Issues')}</span>"
+            f"<span class='overview-issues-summary-meta'>{ui_text(status)}</span>"
             "</summary>"
             "<div class='overview-issues-body'>"
             f"{progress_html}"
             f"{banner_html}"
             "<div style='padding:8px 0 4px;color:var(--ov-muted);text-align:center;font-size:13px;'>"
-            f"{detail}"
+            f"{ui_text(detail)}"
             "</div></div></details>"
         )
 
     count = len(issues)
     judged = sum(1 for i in issues if i.judgment is not None)
-    count_label = f"{count} issue{'s' if count != 1 else ''}"
+    count_label = ui_text("{count} issue" if count == 1 else "{count} issues", count=count)
     if limited_evidence:
-        count_label += " · limited evidence"
+        count_label += " · " + ui_text("limited evidence")
     if progress:
-        count_label += " · suggesting fixes…"
+        count_label += " · " + ui_text("suggesting fixes…")
     elif judged:
-        count_label += f" · {judged} with LLM fix"
+        count_label += " · " + ui_text("{count} with LLM fix", count=judged)
 
     hint = (
         "LLM Change/Fix shown below — click a step to open Workflow"
@@ -176,13 +197,13 @@ def render_overview_issues_html(
     return (
         "<details class='overview-issues-panel' id='overview-issues' open>"
         "<summary class='overview-issues-summary'>"
-        "<span>Issues</span>"
-        f"<span class='overview-issues-summary-meta'>{html.escape(count_label)}</span>"
+        f"<span>{ui_text('Issues')}</span>"
+        f"<span class='overview-issues-summary-meta'>{count_label}</span>"
         "</summary>"
         "<div class='overview-issues-body'>"
         f"{progress_html}"
         f"{banner_html}"
-        f"<div style='font-size:12px;color:var(--ov-muted);margin:0 0 8px;'>{hint}</div>"
+        f"<div style='font-size:12px;color:var(--ov-muted);margin:0 0 8px;'>{ui_text(hint)}</div>"
         + _issue_cards_html(issues, workflow_links=workflow_links)
         + "</div></details>"
     )

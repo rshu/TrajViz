@@ -77,6 +77,9 @@ Open `http://127.0.0.1:7860` and upload a `.json`, `.jsonl`, `.zstd` or `.zip`
 file. **Export HTML** saves an Overview, charts and Patterns snapshot.
 `--inline-plotly` embeds the chart runtime for offline reports.
 
+Use **Language / 语言** to switch between English and Simplified Chinese. The
+browser remembers the choice; recorded content and model reply language stay unchanged.
+
 Use `--port 8080` to change ports. Set `TRAJVIZ_AUTH=user:password` before
 exposing the dashboard with `--host 0.0.0.0` or `--share`; remote visitors can
 use the configured LLM features. For localhost proxy errors, include

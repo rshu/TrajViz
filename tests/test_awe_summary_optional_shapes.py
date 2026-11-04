@@ -6,6 +6,8 @@ import copy
 
 import pytest
 
+from i18n_test_helpers import unmark_html
+
 from agent_trajviz.awe.render import case_html
 from agent_trajviz.awe.saved import load_run
 from agent_trajviz.awe.summary import attribution_summary_html, primary_fault
@@ -25,7 +27,7 @@ def _render_without_mutation(case):
     before = copy.deepcopy(case)
     run = load_run(case)
     imported = copy.deepcopy(run.cases)
-    out = case_html(run.cases[0])
+    out = unmark_html(case_html(run.cases[0]))
     assert case == before and run.cases == imported
     assert "Complete original case" in out
     return out
@@ -47,7 +49,7 @@ def test_imported_optional_links_shape_does_not_break_case_view(value):
     case = _case()
     case["faults"][0]["evidence_chain"]["links"] = value
     out = _render_without_mutation(case)
-    summary = attribution_summary_html(case)
+    summary = unmark_html(attribution_summary_html(case))
     assert "Code Editing: incorrect patch." in summary
     assert "Expand the recorded evidence below" in summary
     assert "Recorded gating test failed." not in summary
@@ -62,7 +64,7 @@ def test_malformed_fault_identity_does_not_become_a_primary_finding(field, value
     out = _render_without_mutation(case)
     assert "At a glance" in out
     assert primary_fault(case) is None
-    assert "No single dominant fault" in attribution_summary_html(case)
+    assert "No single dominant fault" in unmark_html(attribution_summary_html(case))
     case["primary"] = {"capability": case["faults"][0]["capability"], "error_type": case["faults"][0]["error_type"]}
     assert primary_fault(case) is None
 
@@ -71,7 +73,7 @@ def test_malformed_fault_identity_does_not_become_a_primary_finding(field, value
 def test_summary_helpers_accept_absent_or_unrecognized_fault_container(value):
     case = {"resolved": False, "faults": value}
     assert primary_fault(case) is None
-    assert "No single dominant fault" in attribution_summary_html(case)
+    assert "No single dominant fault" in unmark_html(attribution_summary_html(case))
 
 
 def test_valid_arrays_keep_recorded_evidence_and_coverage():
@@ -92,7 +94,7 @@ def test_unrecognized_assessment_values_do_not_invent_coverage(value):
     case["scorecard"] = [{"capability": "code_editing", "assessed": value}]
     out = _render_without_mutation(case)
     assert "Capability assessment coverage was not recorded." in out
-    assert "capabilities assessed;" not in attribution_summary_html(case)
+    assert "capabilities assessed;" not in unmark_html(attribution_summary_html(case))
 
 
 def test_partial_valid_scorecard_counts_only_boolean_assessments():
@@ -111,5 +113,5 @@ def test_boolean_weight_never_promotes_a_fault(value):
     case["faults"][0]["blame_weight"] = value
     out = _render_without_mutation(case)
     assert primary_fault(case) is None
-    assert "No single dominant fault" in attribution_summary_html(case)
+    assert "No single dominant fault" in unmark_html(attribution_summary_html(case))
     assert "Code Editing: incorrect patch." not in out

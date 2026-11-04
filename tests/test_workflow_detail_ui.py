@@ -5,6 +5,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from i18n_test_helpers import unmark_html
 
 class WorkflowDetailUiTests(unittest.TestCase):
     @staticmethod
@@ -111,7 +112,7 @@ class WorkflowDetailUiTests(unittest.TestCase):
 
         tokens = dict(self._metric_step()["tokens"])
         del tokens["reasoning"]
-        html = _format_metrics_tab(self._metric_step(tokens=tokens))
+        html = unmark_html(_format_metrics_tab(self._metric_step(tokens=tokens)))
 
         self.assertIn("<table class='dp-meta-table'>", html)
         self.assertNotIn("Metrics unavailable", html)
@@ -121,7 +122,7 @@ class WorkflowDetailUiTests(unittest.TestCase):
     def test_complete_metrics_render_the_whole_table_and_keep_real_zeroes(self):
         from agent_trajviz.insight.rendering import _format_metrics_tab
 
-        html = _format_metrics_tab(self._metric_step())
+        html = unmark_html(_format_metrics_tab(self._metric_step()))
 
         self.assertIn("<table class='dp-meta-table'>", html)
         self.assertIn("<td>Output Tokens</td><td>0</td>", html)
@@ -134,7 +135,7 @@ class WorkflowDetailUiTests(unittest.TestCase):
 
         tokens = dict(self._metric_step()["tokens"])
         del tokens["cache_write"]
-        html = _format_metrics_tab(self._metric_step(tokens=tokens))
+        html = unmark_html(_format_metrics_tab(self._metric_step(tokens=tokens)))
 
         self.assertNotIn("<table", html)
         self.assertIn("Metrics unavailable", html)
@@ -145,7 +146,7 @@ class WorkflowDetailUiTests(unittest.TestCase):
         # but no recorded duration; the table must not be hidden for it.
         from agent_trajviz.insight.rendering import _format_metrics_tab
 
-        html = _format_metrics_tab(self._metric_step(duration=None))
+        html = unmark_html(_format_metrics_tab(self._metric_step(duration=None)))
 
         self.assertIn("<table class='dp-meta-table'>", html)
         self.assertNotIn("Metrics unavailable", html)
@@ -157,7 +158,7 @@ class WorkflowDetailUiTests(unittest.TestCase):
     def test_real_zero_duration_renders_as_zero_not_missing(self):
         from agent_trajviz.insight.rendering import _format_metrics_tab
 
-        html = _format_metrics_tab(self._metric_step(duration=0.0))
+        html = unmark_html(_format_metrics_tab(self._metric_step(duration=0.0)))
 
         self.assertIn("<table class='dp-meta-table'>", html)
         self.assertNotIn("Metrics unavailable", html)
@@ -171,7 +172,7 @@ class WorkflowDetailUiTests(unittest.TestCase):
             "total": 0, "input": 0, "output": 0,
             "reasoning": 0, "cache_read": 0, "cache_write": 0,
         }
-        html = _format_metrics_tab(self._metric_step(tokens=tokens))
+        html = unmark_html(_format_metrics_tab(self._metric_step(tokens=tokens)))
 
         self.assertIn("<table class='dp-meta-table'>", html)
         self.assertIn("<td>Total Tokens</td><td>0</td>", html)
@@ -245,7 +246,7 @@ class WorkflowDetailUiTests(unittest.TestCase):
         self.assertIn(">Task</span>", toc)
         self.assertNotIn(">User</span>", toc)
 
-        detail = format_step_detail(spawn)
+        detail = unmark_html(format_step_detail(spawn))
         self.assertIn(">Task</span>", detail)
         self.assertIn("<td>Role</td>", detail)
         self.assertIn("Task", detail)
@@ -366,7 +367,7 @@ class ReasoningDetailContentTests(unittest.TestCase):
     @staticmethod
     def render(parts, has_reasoning):
         from agent_trajviz.insight.rendering import format_step_detail
-        return format_step_detail(WorkflowDetailUiTests._metric_step(parts=parts, has_reasoning=has_reasoning))
+        return unmark_html(format_step_detail(WorkflowDetailUiTests._metric_step(parts=parts, has_reasoning=has_reasoning)))
 
     def test_reasoning_record_without_text_has_an_honest_note(self):
         out = self.render([{"type": "reasoning", "text": ""}, {"type": "text", "text": "Final response."}], True)

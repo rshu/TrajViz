@@ -9,6 +9,7 @@ from pygments import highlight as _pygments_highlight
 from pygments.formatters import HtmlFormatter as _HtmlFormatter
 from pygments.lexers import get_lexer_by_name as _get_lexer, TextLexer as _TextLexer
 
+from ..i18n import text as ui_text
 from .timeline_agents import bind_timeline_agents
 from .issues import _indices_for_step_range
 from .chart_data import step_category
@@ -40,6 +41,13 @@ _ROLE_BADGE_STYLES = {
     "compaction": "background:var(--wf-border-default);color:white;",
     "tool": "background:var(--wf-border-reasoning);color:white;",
 }
+
+
+def _card_label_html(label: str) -> str:
+    owned = {value[2] for value in _ROLE_COLORS.values()} | {
+        "Tool Error", "System Error", "Final", "Tool Calls", "Reasoning",
+    }
+    return ui_text(label) if label in owned else html.escape(label)
 
 
 def workflow_role_label(step: dict) -> str:
@@ -200,7 +208,7 @@ def _render_one_agent_card(a: dict, agent_hex: str, *, workflow_links: bool = Tr
         )
         spawn_html = (
             f"<div class='agent-card-spawn'><span {spawn_attrs}>"
-            f"Spawned at step #{sidx}</span></div>"
+            f"{ui_text('Spawned at step #{step}', step=sidx)}</span></div>"
         )
 
     _cache_display = (
@@ -227,16 +235,16 @@ def _render_one_agent_card(a: dict, agent_hex: str, *, workflow_links: bool = Tr
         f" style='border-left:4px solid {agent_hex};'>"
         f"<div class='agent-card-header'>"
         f"<span class='agent-card-label' style='color:{agent_hex};'>{label}</span>"
-        f"<span class='agent-card-steps'>{steps_text}</span>"
+        f"<span class='agent-card-steps'>{ui_text('{count} assistant step' if step_count == 1 else '{count} assistant steps', count=step_count)}</span>"
         f"</div>"
         f"{spawn_html}"
         f"<div class='agent-card-grid'>"
-        f"<div><span class='agent-kpi-val'>{total_tokens}</span><span class='agent-kpi-label'>Tokens</span></div>"
-        f"<div><span class='agent-kpi-val'>{duration}</span><span class='agent-kpi-label'>Duration</span></div>"
-        f"<div><span class='agent-kpi-val'>{a['tool_call_count']}</span><span class='agent-kpi-label'>Tool Calls</span></div>"
-        f"<div><span class='agent-kpi-val'>{errors}</span><span class='agent-kpi-label'>Errors</span></div>"
-        f"<div><span class='agent-kpi-val'>{_cache_display}</span><span class='agent-kpi-label'>Cache %</span></div>"
-        f"<div title='{gen_rate_title}'><span class='agent-kpi-val'>{gen_rate_text}</span><span class='agent-kpi-label'>Gen tok/s</span></div>"
+        f"<div><span class='agent-kpi-val'>{total_tokens}</span><span class='agent-kpi-label'>{ui_text('Tokens')}</span></div>"
+        f"<div><span class='agent-kpi-val'>{duration}</span><span class='agent-kpi-label'>{ui_text('Duration')}</span></div>"
+        f"<div><span class='agent-kpi-val'>{a['tool_call_count']}</span><span class='agent-kpi-label'>{ui_text('Tool Calls')}</span></div>"
+        f"<div><span class='agent-kpi-val'>{errors}</span><span class='agent-kpi-label'>{ui_text('Errors')}</span></div>"
+        f"<div><span class='agent-kpi-val'>{_cache_display}</span><span class='agent-kpi-label'>{ui_text('Cache %')}</span></div>"
+        f"<div title='{gen_rate_title}'><span class='agent-kpi-val'>{gen_rate_text}</span><span class='agent-kpi-label'>{ui_text('Gen tok/s')}</span></div>"
         f"</div>"
         f"</div>"
     )
@@ -252,7 +260,7 @@ def render_agent_summary_cards(agent_summaries: list[dict], *, workflow_links: b
     if not agent_summaries:
         return (
             "<div style='padding:2em;color:var(--ov-muted);text-align:center;font-size:14px;'>"
-            "No agent activity recorded.</div>"
+            f"{ui_text('No agent activity recorded.')}</div>"
         )
 
     cards = [
@@ -298,7 +306,7 @@ def render_filter_chips(
         if is_active:
             classes.append("chip-active")
         escaped_filter = html.escape(data_filter, quote=True)
-        escaped_label = html.escape(label)
+        escaped_label = ui_text(label) if group != "agent" or data_filter == AGENT_ALL_FILTER else html.escape(label)
         style_attr = f" style='{html.escape(style, quote=True)}'" if style else ""
         pressed = "true" if is_active else "false"
         return (
@@ -311,8 +319,8 @@ def render_filter_chips(
     def _group(key: str, title: str, hint: str, chips_html: str) -> str:
         return (
             f"<div class='filter-group' data-filter-group-container='{key}'>"
-            f"<div class='filter-group-label'>{html.escape(title)}"
-            f"<span>{html.escape(hint)}</span></div>"
+            f"<div class='filter-group-label'>{ui_text(title)}"
+            f"<span>{ui_text(hint)}</span></div>"
             f"<div class='filter-options'>{chips_html}</div>"
             "</div>"
         )
@@ -367,7 +375,7 @@ def render_filter_chips(
         f"<span id='wf-filter-query'>{summary}</span>"
         "<button type='button' class='reset-filters' data-wf-action='reset-filters'"
         f" title='{html.escape(reset_title, quote=True)}'>"
-        "Reset filters</button>"
+        f"{ui_text('Reset filters')}</button>"
         "</div>"
     )
 
@@ -397,14 +405,14 @@ def render_toc_sidebar(steps: list[dict], collapsed: bool = False) -> str:
         items.append(
             f"<div class='toc-entry' onclick=\"{onclick}\" data-step-idx='{idx}' style='{toc_indent}'>"
             f"<span class='toc-num'>#{idx}</span>"
-            f"<span class='wf-badge' style='{role_style};font-size:11px;padding:2px 6px;'>"
-            f"{html.escape(workflow_role_label(step))}</span>"
+            f"<span class='wf-badge' data-wf-role='{html.escape(role, quote=True)}' style='{role_style};font-size:11px;padding:2px 6px;'>"
+            f"{ui_text(workflow_role_label(step)) if role in _ROLE_COLORS else html.escape(workflow_role_label(step))}</span>"
             f"</div>"
         )
     nav_class = "wf-toc-sidebar toc-hidden" if collapsed else "wf-toc-sidebar"
     return (
         f"<nav class='{nav_class}' id='wf-toc-sidebar'>"
-        "<div class='toc-title'>Steps</div>"
+        f"<div class='toc-title'>{ui_text('Steps')}</div>"
         + "".join(items)
         + "</nav>"
     )
@@ -425,7 +433,7 @@ def _model_error_text(step: dict) -> str:
 def render_workflow_html(steps: list[dict]) -> str:
     """Render vertical card flow as self-contained HTML with scroll container."""
     if not steps:
-        return "<div style='padding:2em;color:var(--ov-muted);text-align:center;'>No steps to display.</div>"
+        return f"<div style='padding:2em;color:var(--ov-muted);text-align:center;'>{ui_text('No steps to display.')}</div>"
 
     css = WORKFLOW_CSS
     color_map, labels, agent_id_of = bind_timeline_agents(steps)
@@ -440,7 +448,7 @@ def render_workflow_html(steps: list[dict]) -> str:
         model_error = _model_error_text(step)
         error_html = (
             f"<div class='wf-model-error' style='color:var(--wf-border-system-error);'>"
-            f"Model request failed: {html.escape(model_error[:320])}</div>"
+            f"{ui_text('Model request failed:')} {html.escape(model_error[:320])}</div>"
             if model_error else ""
         )
 
@@ -453,17 +461,17 @@ def render_workflow_html(steps: list[dict]) -> str:
                 part_icons.append("tool")
             elif t == "text":
                 part_icons.append("text")
-        icon_str = " \u00b7 ".join(sorted(set(part_icons))) if part_icons else ""
+        icon_str = " \u00b7 ".join(ui_text(icon) for icon in sorted(set(part_icons))) if part_icons else ""
 
-        tc_info = f'<span>{step["tool_call_count"]} tool(s)</span>' if step["tool_call_count"] else ''
+        tc_info = f'<span>{ui_text("{count} tool(s)", count=step["tool_call_count"])}</span>' if step["tool_call_count"] else ''
         if err_kind == "tool":
             err_info = (
                 f'<span style="color:var(--wf-border-error)">'
-                f'{step["error_count"]} tool err</span>'
+                f'{ui_text("{count} tool err", count=step["error_count"])}</span>'
             )
         elif err_kind == "system":
             err_info = (
-                '<span style="color:var(--wf-border-system-error)">system err</span>'
+                f'<span style="color:var(--wf-border-system-error)">{ui_text("system err")}</span>'
             )
         else:
             err_info = ''
@@ -492,7 +500,7 @@ def render_workflow_html(steps: list[dict]) -> str:
         sub_agent_badge = ""
         sub_indent = ""
         if step.get("is_sub_agent"):
-            sub_agent_badge = '<span class="wf-badge" style="background:var(--wf-border-reasoning);color:white;font-size:10px;">sub-agent</span>'
+            sub_agent_badge = f'<span class="wf-badge" style="background:var(--wf-border-reasoning);color:white;font-size:10px;">{ui_text("sub-agent")}</span>'
             sub_indent = "margin-left:24px;"
 
         card = f"""
@@ -500,8 +508,8 @@ def render_workflow_html(steps: list[dict]) -> str:
              style="background:{bg};border-color:{border};{agent_left_border}{sub_indent}">
             <div class="wf-header">
                 <span class="wf-badge" style="background:{border};color:white;">#{orig_idx}</span>
-                <span class="wf-badge" style="{role_style}">{html.escape(role_label)}</span>
-                {"" if label == role_label else f'<span class="wf-badge" style="background:transparent;color:{border};border:1px solid {border};">{html.escape(label)}</span>'}
+                <span class="wf-badge" data-wf-role="{html.escape(role, quote=True)}" style="{role_style}">{ui_text(role_label) if role in _ROLE_COLORS else html.escape(role_label)}</span>
+                {"" if label == role_label else f'<span class="wf-badge" style="background:transparent;color:{border};border:1px solid {border};">{_card_label_html(label)}</span>'}
                 {sub_agent_badge}
                 {agent_badge}
                 <span class="wf-icons">{icon_str}</span>
@@ -588,8 +596,8 @@ def _format_step_header(step: dict) -> str:
     banner = (
         f"<div class='dp-header' style='background:{border};'>"
         f"<span class='dp-badge'>#{step['index']}</span>"
-        f"<span class='dp-badge' style='{role_style}'>{html.escape(workflow_role_label(step))}</span>"
-        f"Step {step['index']} &mdash; {html.escape(label)}"
+        f"<span class='dp-badge' style='{role_style}'>{_card_label_html(workflow_role_label(step))}</span>"
+        f"{ui_text('Step {step}', step=step['index'])} &mdash; {_card_label_html(label)}"
         f"</div>"
     )
 
@@ -598,10 +606,14 @@ def _format_step_header(step: dict) -> str:
     for field, value in rows:
         str_value = str(value)
         escaped_val = html.escape(str_value)
+        if field == "Role" and role in _ROLE_COLORS:
+            escaped_val = ui_text(str_value)
+        elif field == "Sub-agent":
+            escaped_val = ui_text("Yes")
         # Wrap code-like values
         if isinstance(value, str) and any(c in value for c in ("/", ".", "-")) and len(value) > 8:
             escaped_val = f"<code>{escaped_val}</code>"
-        tr_parts.append(f"<tr><td>{html.escape(field)}</td><td>{escaped_val}</td></tr>")
+        tr_parts.append(f"<tr><td>{ui_text(field)}</td><td>{escaped_val}</td></tr>")
 
     table = f"<table class='dp-meta-table'>{''.join(tr_parts)}</table>"
     return banner + table
@@ -676,14 +688,14 @@ def _format_tool_call_detail(p: dict) -> str:
 
     # Input/Output details
     inp_detail = (
-        f"<details class='dp-details'><summary>Input</summary>"
+        f"<details class='dp-details'><summary>{ui_text('Input')}</summary>"
         f"<div class='dp-details-body'><pre>{html.escape(inp_str)}</pre></div>"
         f"</details>"
     )
     out_detail = ""
     if out:
         out_detail = (
-            f"<details class='dp-details'><summary>Output</summary>"
+            f"<details class='dp-details'><summary>{ui_text('Output')}</summary>"
             f"<div class='dp-details-body'><pre>{html.escape(str(out))}</pre></div>"
             f"</details>"
         )
@@ -693,14 +705,14 @@ def _format_tool_call_detail(p: dict) -> str:
     if tc_error:
         err_str = tc_error if isinstance(tc_error, str) else json.dumps(tc_error, indent=2, ensure_ascii=False)
         error_detail = (
-            f"<details class='dp-details' open><summary>Error</summary>"
+            f"<details class='dp-details' open><summary>{ui_text('Error')}</summary>"
             f"<div class='dp-details-body'><pre>{html.escape(err_str)}</pre></div>"
             f"</details>"
         )
 
     return (
         f"<div class='{section_cls}'>"
-        f"<div class='dp-section-title'>Tool</div>"
+        f"<div class='dp-section-title'>{ui_text('Tool')}</div>"
         f"<div class='dp-tool-header'><code>{tool_name}</code> &mdash; "
         f"<code>{status}</code>{tc_dur}</div>"
         f"<div style='font-weight:600;margin-bottom:4px;color:var(--ov-text);'>{title}</div>"
@@ -723,7 +735,7 @@ def _format_text_section(p: dict, section_type: str) -> str:
     rendered = _md_to_html_preview(text)
     return (
         f"<div class='dp-section {cls}'>"
-        f"<div class='dp-section-title'>{label}</div>"
+        f"<div class='dp-section-title'>{ui_text(label)}</div>"
         f"<div class='dp-content'>{rendered}</div>"
         f"</div>"
     )
@@ -778,7 +790,7 @@ def _format_patch_section(p: dict) -> str:
     files_html = ""
     if patch_files:
         items = "".join(f"<li><code>{html.escape(f)}</code></li>" for f in patch_files)
-        files_html = f"<div style='margin-top:4px;font-size:12px;'><strong>Files:</strong><ul style='margin:2px 0 0 16px;'>{items}</ul></div>"
+        files_html = f"<div style='margin-top:4px;font-size:12px;'><strong>{ui_text('Files:')}</strong><ul style='margin:2px 0 0 16px;'>{items}</ul></div>"
 
     diff_html = ""
     if diff_content:
@@ -794,14 +806,14 @@ def _format_patch_section(p: dict) -> str:
             )
         diff_html = (
             f"<details class='dp-diff-toggle'>"
-            f"<summary>Show diff</summary>"
+            f"<summary>{ui_text('Show diff')}</summary>"
             f"<div class='dp-diff-content'>{''.join(diff_sections)}</div>"
             f"</details>"
         )
 
     return (
         f"<div class='dp-section dp-section-patch'>"
-        f"<div class='dp-section-title'>Patch</div>"
+        f"<div class='dp-section-title'>{ui_text('Patch')}</div>"
         f"{meta_line}{files_html}{diff_html}"
         f"</div>"
     )
@@ -838,14 +850,14 @@ def _unavailable_metric_fields(step: dict) -> list[str]:
 
 def _format_metrics_unavailable(missing: list[str]) -> str:
     description = "The trajectory does not provide complete per-step metrics."
-    missing_text = ", ".join(html.escape(field) for field in missing)
+    missing_text = ", ".join(ui_text(field) for field in missing)
     return (
         "<div class='dp-metrics-unavailable' role='status'>"
         "<div class='dp-metrics-unavailable-icon' aria-hidden='true'>i</div>"
         "<div>"
-        "<div class='dp-metrics-unavailable-title'>Metrics unavailable</div>"
-        f"<div class='dp-metrics-unavailable-description'>{description}</div>"
-        f"<div class='dp-metrics-unavailable-fields'>Missing or unavailable: "
+        f"<div class='dp-metrics-unavailable-title'>{ui_text('Metrics unavailable')}</div>"
+        f"<div class='dp-metrics-unavailable-description'>{ui_text(description)}</div>"
+        f"<div class='dp-metrics-unavailable-fields'>{ui_text('Missing or unavailable:')} "
         f"{missing_text}</div>"
         "</div></div>"
     )
@@ -899,7 +911,7 @@ def _format_metrics_tab(step: dict) -> str:
     ]
 
     tr_parts = "".join(
-        f"<tr><td>{html.escape(k)}</td><td>{html.escape(v)}</td></tr>"
+        f"<tr><td>{ui_text(k)}</td><td>{html.escape(v)}</td></tr>"
         for k, v in rows
     )
     return f"<table class='dp-meta-table'>{tr_parts}</table>"
@@ -941,8 +953,8 @@ def format_step_detail(step: dict) -> str:
     # Breadcrumb
     breadcrumb = (
         f"<div class='dp-breadcrumb'>"
-        f"<span onclick=\"{_JS_GOTO_WORKFLOW}\">Workflow</span>"
-        f" › Step {idx}"
+        f"<span onclick=\"{_JS_GOTO_WORKFLOW}\">{ui_text('Workflow')}</span>"
+        f" › {ui_text('Step {step}', step=idx)}"
         f"</div>"
     )
 
@@ -953,7 +965,7 @@ def format_step_detail(step: dict) -> str:
     if model_error := _model_error_text(step):
         content_parts.append(
             "<div class='dp-section' style='border-color:var(--wf-border-system-error);'>"
-            "<div class='dp-section-title'>Model request failed</div>"
+            f"<div class='dp-section-title'>{ui_text('Model request failed')}</div>"
             f"<pre>{html.escape(model_error)}</pre></div>"
         )
     readable_reasoning = any(
@@ -963,8 +975,8 @@ def format_step_detail(step: dict) -> str:
     if step.get("has_reasoning") and not readable_reasoning:
         content_parts.append(
             "<div class='dp-section dp-section-reasoning'>"
-            "<div class='dp-section-title'>Reasoning text unavailable</div>"
-            "<div class='dp-content'><em>No readable reasoning text was included in this export.</em></div></div>"
+            f"<div class='dp-section-title'>{ui_text('Reasoning text unavailable')}</div>"
+            f"<div class='dp-content'><em>{ui_text('No readable reasoning text was included in this export.')}</em></div></div>"
         )
     for p in step["parts"]:
         ptype = p.get("type", "unknown")
@@ -979,8 +991,8 @@ def format_step_detail(step: dict) -> str:
         elif ptype == "snapshot":
             content_parts.append(
                 "<div class='dp-section dp-section-snapshot'>"
-                "<div class='dp-section-title'>Snapshot</div>"
-                "<em>data omitted</em></div>"
+                f"<div class='dp-section-title'>{ui_text('Snapshot')}</div>"
+                f"<em>{ui_text('data omitted')}</em></div>"
             )
         elif ptype == "patch":
             content_parts.append(_format_patch_section(p))
@@ -991,7 +1003,7 @@ def format_step_detail(step: dict) -> str:
                 f"</div>"
             )
 
-    content_html = "\n".join(part for part in content_parts if part) or "<em>No content</em>"
+    content_html = "\n".join(part for part in content_parts if part) or f"<em>{ui_text('No content')}</em>"
     metrics_html = _format_metrics_tab(step)
     raw_html = _format_raw_tab(step)
 
@@ -1000,9 +1012,9 @@ def format_step_detail(step: dict) -> str:
         f"{breadcrumb}"
         f"{header}"
         f"<div class='dp-tabs'>"
-        f"<div class='dp-tab dp-tab-active' data-tab='content'>Content</div>"
-        f"<div class='dp-tab' data-tab='metrics'>Metrics</div>"
-        f"<div class='dp-tab' data-tab='raw'>Raw</div>"
+        f"<div class='dp-tab dp-tab-active' data-tab='content'>{ui_text('Content')}</div>"
+        f"<div class='dp-tab' data-tab='metrics'>{ui_text('Metrics')}</div>"
+        f"<div class='dp-tab' data-tab='raw'>{ui_text('Raw')}</div>"
         f"</div>"
         f"<div class='dp-tab-content dp-tab-visible' data-tab-content='content'>{content_html}</div>"
         f"<div class='dp-tab-content' data-tab-content='metrics'>{metrics_html}</div>"
@@ -1427,7 +1439,7 @@ def _antipattern_card(
         f"</div>"
         f"{steps_html}"
         f"<div style='font-size:11px;color:var(--ov-muted);font-style:italic;margin-top:3px;'>"
-        f"Why it matters: {why}</div>"
+        f"{ui_text('Why it matters:')} {why}</div>"
         f"</div>"
     )
 
@@ -1515,11 +1527,11 @@ def build_antipattern_summary_html(
         ))
 
     if not cards:
-        return "<div style='padding:12px;color:var(--ov-muted);text-align:center;font-size:13px;'>No anti-patterns detected</div>"
+        return f"<div style='padding:12px;color:var(--ov-muted);text-align:center;font-size:13px;'>{ui_text('No anti-patterns detected')}</div>"
 
     return (
         "<div class='antipattern-summary'>"
-        "<div style='font-size:13px;font-weight:600;margin:4px 0 8px;'>Anti-pattern summary</div>"
+        f"<div style='font-size:13px;font-weight:600;margin:4px 0 8px;'>{ui_text('Anti-pattern summary')}</div>"
         + "".join(cards)
         + "</div>"
     )

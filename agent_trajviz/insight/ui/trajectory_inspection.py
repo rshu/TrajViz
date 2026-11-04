@@ -7,16 +7,14 @@ from dataclasses import dataclass
 
 import gradio as gr
 
+from ...i18n import text
 from ..session import MAX_STEPS
 from .shared import SharedState
 
 logger = logging.getLogger(__name__)
 
 _EMPTY = (
-    "<div class='attr-banner' role='status'>"
-    "<div class='attr-banner-head'>Inspect a loaded trajectory</div>"
-    "<div class='attr-banner-sub'>Load a session above to review its recorded actions, "
-    "tool failures, recovery attempts, files and tests.</div></div>"
+    "<div class='attr-banner' role='status'><div class='attr-banner-head'>" + text('Inspect a loaded trajectory') + "</div><div class='attr-banner-sub'>" + text('Load a session above to review its recorded actions, tool failures, recovery attempts, files and tests.') + '</div></div>'
 )
 
 
@@ -37,7 +35,7 @@ def layout() -> InspectionRefs:
     )
     run_btn = gr.Button("Inspect trajectory", variant="primary", size="sm", scale=0,
                         elem_id="awe-inspect-trajectory")
-    status = gr.HTML("<div class='attr-banner-sub'>No trajectory loaded.</div>")
+    status = gr.HTML("<div class='attr-banner-sub'>" + text('No trajectory loaded.') + '</div>')
     with gr.Column(min_width=0) as optional_controls:
         pass
     result_html = gr.HTML(_EMPTY, elem_id="awe-inspection-result")
@@ -49,7 +47,7 @@ def bind(refs: InspectionRefs, shared: SharedState, load_events) -> None:
     """Inspect after each load and clear old evidence when loading fails."""
     def on_inspect_trajectory(run):
         if run is None or not getattr(run, "steps", None):
-            return _EMPTY, "<div class='attr-banner-sub'>No trajectory loaded.</div>", None
+            return _EMPTY, ("<div class='attr-banner-sub'>" + text('No trajectory loaded.') + '</div>'), None
         try:
             from ...awe import inspect_trajectory
             from ...awe.inspection_render import inspection_html
@@ -66,13 +64,12 @@ def bind(refs: InspectionRefs, shared: SharedState, load_events) -> None:
         except Exception:  # noqa: BLE001 -- clear stale evidence even on malformed plugin data
             logger.exception("Trajectory inspection failed")
             return (
-                "<div class='attr-banner' role='status'>Inspection could not be completed. "
-                "Reload the session and try again; details are in the server log.</div>",
-                "<div class='attr-banner-sub'>Inspection unavailable.</div>", None,
+                ("<div class='attr-banner' role='status'>" + text('Inspection could not be completed. Reload the session and try again; details are in the server log.') + '</div>'),
+                ("<div class='attr-banner-sub'>" + text('Inspection unavailable.') + '</div>'), None,
             )
         status = (
             "<div class='attr-banner-sub' role='status'>"
-            f"Inspection complete &mdash; {len(run.steps):,} recorded steps.</div>"
+            + text("Inspection complete — {count} recorded steps.", count=f"{len(run.steps):,}") + "</div>"
         )
         return rendered, status, result
 

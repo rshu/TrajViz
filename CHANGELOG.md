@@ -7,6 +7,11 @@ change the public API (the names exported from `agent_trajviz`).
 
 ## [Unreleased]
 
+### Added
+
+- Switch the dashboards between English and Simplified Chinese, remembering
+  the browser's choice while preserving loaded trajectories and session settings.
+
 ## [0.4.2] - 2026-11-04
 
 ### Added

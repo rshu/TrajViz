@@ -6,6 +6,7 @@ import copy
 import json
 from types import SimpleNamespace
 
+from i18n_test_helpers import unmark_html
 from agent_trajviz.insight.labels import aggregate_labels
 from agent_trajviz.insight.presenters.label_ui import build_label_ui_payload
 
@@ -44,7 +45,7 @@ def test_run1_sized_coverage_explains_unknown_user_defaults_and_assistant_charts
     before = path.read_bytes()
     run = SimpleNamespace(steps=[{"index": r["index"], "role": r["role"]} for r in steps])
     output = build_label_ui_payload(str(path), run=run)
-    badge = output["badge_html"]
+    badge = unmark_html(output["badge_html"])
     assert "Labels loaded — 203/204 steps labeled; 1 unknown" in badge
     assert "assistant: 201/202 classified" in badge
     assert "user records: 2 (2 default labels)" in badge
@@ -61,7 +62,7 @@ def test_run1_sized_coverage_explains_unknown_user_defaults_and_assistant_charts
 def test_run2_sized_complete_coverage_does_not_count_users_as_assistant_classifications(tmp_path):
     steps = [_record(index, "user" if index in (0, 51) else "assistant") for index in range(104)]
     path, _ = _write(tmp_path, steps)
-    badge = build_label_ui_payload(str(path))["badge_html"]
+    badge = unmark_html(build_label_ui_payload(str(path))["badge_html"])
     assert "104/104 steps labeled; 0 unknown" in badge
     assert "assistant: 102/102 classified" in badge
     assert "Phase/action charts: 102 classified assistant steps" in badge
@@ -71,7 +72,7 @@ def test_run2_sized_complete_coverage_does_not_count_users_as_assistant_classifi
 def test_sparse_sidecar_separates_missing_records_from_unknown_labels(tmp_path):
     path, _ = _write(tmp_path, [_record(1), _record(3, unknown=True)])
     run = SimpleNamespace(steps=[{"index": index, "role": "assistant"} for index in range(5)])
-    badge = build_label_ui_payload(str(path), run=run)["badge_html"]
+    badge = unmark_html(build_label_ui_payload(str(path), run=run)["badge_html"])
     assert "1/5 steps labeled; 1 unknown; 3 without label records" in badge
     assert "assistant: 1/2 classified" in badge
     assert "Timeline: 1 steps" in badge
@@ -79,7 +80,7 @@ def test_sparse_sidecar_separates_missing_records_from_unknown_labels(tmp_path):
 
 def test_other_role_unknown_is_not_counted_as_an_assistant_failure(tmp_path):
     path, _ = _write(tmp_path, [_record(0, "user"), _record(1), _record(2, "system", unknown=True)])
-    badge = build_label_ui_payload(str(path))["badge_html"]
+    badge = unmark_html(build_label_ui_payload(str(path))["badge_html"])
     assert "2/3 steps labeled; 1 unknown" in badge
     assert "assistant: 1/1 classified" in badge and "other roles: 1" in badge
 
@@ -88,7 +89,7 @@ def test_legacy_roleless_records_and_empty_sidecars_keep_honest_denominators(tmp
     record = _record(0)
     record.pop("role")
     path, _ = _write(tmp_path, [record])
-    badge = build_label_ui_payload(str(path))["badge_html"]
+    badge = unmark_html(build_label_ui_payload(str(path))["badge_html"])
     assert "1/1 steps labeled; 0 unknown" in badge and "assistant: 1/1 classified" in badge
     path, _ = _write(tmp_path, [])
     assert "0/0 steps labeled; 0 unknown" in build_label_ui_payload(str(path))["badge_html"]

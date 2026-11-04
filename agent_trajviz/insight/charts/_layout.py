@@ -15,6 +15,7 @@ except ImportError:
 import plotly.graph_objects as go
 
 from ..palette import PLOTLY_DARK_TEMPLATE
+from ...i18n import localize_figure
 
 _TPL = "plotly_white"
 
@@ -23,7 +24,7 @@ def _apply_dark(fig: go.Figure, dark: bool) -> go.Figure:
     """Apply dark-mode layout overrides when *dark* is True."""
     if dark:
         fig.update_layout(**PLOTLY_DARK_TEMPLATE)
-    return fig
+    return localize_figure(fig)
 
 
 def _empty_figure(height: int = 380, message: str | None = None) -> go.Figure:
@@ -35,7 +36,7 @@ def _empty_figure(height: int = 380, message: str | None = None) -> go.Figure:
                            font=dict(size=13, color="#64748b"), align="center")
     fig.update_layout(template=_TPL, height=height, margin=dict(l=24, r=24, t=24, b=24),
                       xaxis=dict(visible=False), yaxis=dict(visible=False), hovermode=False, dragmode=False)
-    return fig
+    return localize_figure(fig, annotations=True)
 
 
 def _apply_chart_layout(
@@ -66,6 +67,7 @@ def _apply_chart_layout(
         layout["yaxis_title"] = yaxis
     layout.update(kwargs)
     fig.update_layout(**layout)
+    localize_figure(fig)
 
 
 def _add_legend_hint(fig: go.Figure) -> None:
@@ -83,6 +85,7 @@ def _add_legend_hint(fig: go.Figure) -> None:
         font=dict(size=9, color="#64748b"),
         xanchor="right",
     )
+    localize_figure(fig, annotations=True)
 
 
 def _truncate_chart_label(name: str, limit: int = 30) -> str:

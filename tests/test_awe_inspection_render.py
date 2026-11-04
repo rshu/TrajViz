@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import copy
+import re
 from html.parser import HTMLParser
 
 import pytest
+
+from i18n_test_helpers import unmark_html
 
 from agent_trajviz.awe.inspection_render import inspection_html
 
@@ -51,7 +54,7 @@ def _result():
 def test_reading_guide_preserves_evidence_then_collapses_full_records():
     data = _result()
     before = copy.deepcopy(data)
-    out = inspection_html(data)
+    out = unmark_html(inspection_html(data))
     assert out.index("At a glance") < out.index("Recorded findings") < out.index("Recorded file targets")
     assert "The recorded test process exited with code 1." in out
     assert "Review the assertion failure." in out and "1 failed, 12 passed" in out
@@ -70,7 +73,7 @@ def test_only_allowlisted_canonical_indices_produce_workflow_buttons():
     data = _result()
     data["findings"][0]["step_indices"] = [0, 4, 800, -1, True, "9", "4);alert(1)"]
     data["workflow_indices"] = [0, 4, -1, True, "9"]
-    out = inspection_html(data)
+    out = unmark_html(inspection_html(data))
     parser = _Buttons()
     parser.feed(out)
     assert parser.buttons
@@ -89,8 +92,8 @@ def test_large_citation_sets_are_compact_without_losing_any_mapped_steps():
     data = _result()
     data["workflow_indices"] = list(range(12))
     data["findings"][0]["step_indices"] = list(range(12))
-    out = inspection_html(data)
-    glance = out.split("aria-label='At a glance'>", 1)[1].split("</section>", 1)[0]
+    out = unmark_html(inspection_html(data))
+    glance = re.search(r"<section[^>]*aria-label=[\"']At a glance[\"'][^>]*>(.*?)</section>", out, re.DOTALL).group(1)
     assert glance.count("<button") == 4
     assert "+8 more" in glance
     article = out.split("<article", 1)[1].split("</article>", 1)[0]
@@ -106,7 +109,7 @@ def test_large_citation_sets_are_compact_without_losing_any_mapped_steps():
 
 
 def test_exported_inspection_retains_step_labels_without_live_navigation():
-    out = inspection_html(_result(), workflow_links=False)
+    out = unmark_html(inspection_html(_result(), workflow_links=False))
     assert "Step 4" in out and "Step 9" in out
     assert "onclick=" not in out and "<button" not in out
 
@@ -114,10 +117,10 @@ def test_exported_inspection_retains_step_labels_without_live_navigation():
 def test_test_result_links_preserve_the_separate_observed_result_step():
     data = _result()
     data["tests"][0]["result_workflow_index"] = 9
-    out = inspection_html(data)
-    assert "Result: <button type='button' class='ai-step' aria-label='Open Workflow step 9'" in out
+    out = unmark_html(inspection_html(data))
+    assert re.search(r"Result: <button[^>]*aria-label=[\"']Open Workflow step 9[\"']", out)
     data["workflow_indices"] = [4]
-    out = inspection_html(data)
+    out = unmark_html(inspection_html(data))
     assert "Result: <span class='ai-step'>Step 9</span>" in out
     assert "window.tvGotoWorkflowStep(9)" not in out
 
@@ -125,7 +128,7 @@ def test_test_result_links_preserve_the_separate_observed_result_step():
 def test_missing_link_allowlist_never_guesses_workflow_targets():
     data = _result()
     del data["workflow_indices"]
-    out = inspection_html(data)
+    out = unmark_html(inspection_html(data))
     assert "Step 4" in out
     assert "onclick=" not in out
 
@@ -134,7 +137,7 @@ def test_unknown_test_counts_explain_why_the_summary_is_not_assessed():
     data = _result()
     data["tests"][0].update(status="unknown", exit_code=0, summary_status="unknown", counts=None,
                              reason="compound_command")
-    out = inspection_html(data)
+    out = unmark_html(inspection_html(data))
     assert "Reason: compound command" in out
     assert "Recorded process result" in out and "Observed test result" in out
     assert "<td>Exit code 0</td>" in out
@@ -148,7 +151,7 @@ def test_output_summary_text_is_separate_from_verified_command_counts():
                              summary_status="unknown", counts=None, reason="compound_command",
                              output_summary={"status": "reported", "runner": "pytest", "counts": {"passed": 24},
                                              "basis": "unattributed_output_text"})
-    out = inspection_html(data)
+    out = unmark_html(inspection_html(data))
     assert "<td>Output text only</td>" in out
     assert "<td>Exit code 0</td>" in out
     assert "Reason: compound command" in out
@@ -169,7 +172,7 @@ def test_all_recorded_strings_are_escaped_in_prose_tables_details_and_sources():
     data["tests"][0].update(command=hostile, output_excerpt=hostile, reason=hostile)
     data["ledger"] = {hostile: hostile, "step_id": hostile}
     data["limitations"] = [hostile]
-    out = inspection_html(data)
+    out = unmark_html(inspection_html(data))
     assert "<img" not in out and "</script>" not in out
     assert "&lt;img src=x onerror=alert(1)&gt;" in out
     assert "&#x27;" in out and "&quot;" in out
@@ -185,7 +188,7 @@ def test_optional_container_shapes_do_not_crash_or_invent_findings(value):
             "findings": value, "files": value, "tests": value, "failures": value,
             "recovery": value, "timing": value, "coverage": value, "limitations": value,
             "workflow_indices": value}
-    out = inspection_html(data)
+    out = unmark_html(inspection_html(data))
     assert "At a glance" in out
     assert "No ranked findings are available" in out
     assert "Independent task or evaluator evidence has not been supplied." in out
@@ -194,19 +197,19 @@ def test_optional_container_shapes_do_not_crash_or_invent_findings(value):
 
 @pytest.mark.parametrize("count", [None, -1, True, "0", {}, []])
 def test_unknown_counts_are_not_displayed_as_zero_successes(count):
-    out = inspection_html({"available": True, "summary": {"failed_calls": count}})
+    out = unmark_html(inspection_html({"available": True, "summary": {"failed_calls": count}}))
     assert "<strong>—</strong><span>Recorded failures</span>" in out
     body = out.split("</style>", 1)[1]
     assert "error-free" not in body and "100%" not in body
 
 
 def test_no_loaded_session_is_a_compact_next_action():
-    out = inspection_html({"available": False})
+    out = unmark_html(inspection_html({"available": False}))
     assert "Load a trajectory above" in out
     assert "Recorded findings" not in out and "<table>" not in out
     assert "reference" not in out.lower()
 
 
 def test_unavailable_reason_is_recorded_as_text():
-    out = inspection_html({"available": False, "reason": "<script>unavailable</script>"})
+    out = unmark_html(inspection_html({"available": False, "reason": "<script>unavailable</script>"}))
     assert "<script>" not in out and "&lt;script&gt;unavailable&lt;/script&gt;" in out

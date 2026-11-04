@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 
+from ..i18n import text as ui_text
 from .milestones import MILESTONE_LABELS
 from .styles import CONVERGE_CSS
 
@@ -23,7 +24,7 @@ def build_anchor_analysis_html(anchor_analysis: dict) -> str:
     """
     parts: list[str] = []
     parts.append('<div class="cvg-anchor-section">')
-    parts.append("<h2>Anchor Analysis</h2>")
+    parts.append(f"<h2>{ui_text('Anchor Analysis')}</h2>")
 
     total_anchor = anchor_analysis.get("total_anchor_files", 0)
 
@@ -32,15 +33,18 @@ def build_anchor_analysis_html(anchor_analysis: dict) -> str:
     if file_classes:
         sorted_classes = sorted(file_classes.items(), key=lambda x: x[1], reverse=True)
         total = sum(v for _, v in sorted_classes)
-        summary = ", ".join(f"{count} {_esc(name)}" for name, count in sorted_classes)
-        parts.append(f'<p class="cvg-anchor-metric">File classes: {summary} ({total} total)</p>')
+        summary = ", ".join(f"{count} {name}" for name, count in sorted_classes)
+        parts.append('<p class="cvg-anchor-metric">'
+                     + ui_text("File classes: {summary} ({total} total)", summary=summary, total=total)
+                     + '</p>')
 
     # Side-by-side metrics table
     ref_data = anchor_analysis.get("reference", {})
     cmp_data = anchor_analysis.get("compared", {})
 
     parts.append('<table class="cvg-anchor-table">')
-    parts.append("<thead><tr><th>Metric</th><th>Reference</th><th>Compared</th></tr></thead>")
+    parts.append(f"<thead><tr><th>{ui_text('Metric')}</th><th>{ui_text('Reference')}</th>"
+                 f"<th>{ui_text('Compared')}</th></tr></thead>")
     parts.append("<tbody>")
 
     # Write precision
@@ -50,41 +54,41 @@ def build_anchor_analysis_html(anchor_analysis: dict) -> str:
     ref_tw = ref_data.get("files_written", 0)
     cmp_aw = cmp_data.get("anchor_files_written", 0)
     cmp_tw = cmp_data.get("files_written", 0)
-    parts.append(f"<tr><td>Write Precision</td>"
+    parts.append(f"<tr><td>{ui_text('Write Precision')}</td>"
                  f"<td>{ref_wp * 100:.1f}% ({ref_aw}/{ref_tw})</td>"
                  f"<td>{cmp_wp * 100:.1f}% ({cmp_aw}/{cmp_tw})</td></tr>")
 
     # Write recall
     ref_wr = ref_data.get("write_recall") or 0
     cmp_wr = cmp_data.get("write_recall") or 0
-    parts.append(f"<tr><td>Write Recall</td>"
+    parts.append(f"<tr><td>{ui_text('Write Recall')}</td>"
                  f"<td>{ref_wr * 100:.1f}% ({ref_aw}/{total_anchor})</td>"
                  f"<td>{cmp_wr * 100:.1f}% ({cmp_aw}/{total_anchor})</td></tr>")
 
     # Off-patch ratio
     ref_opr = ref_data.get("off_patch_write_ratio") or 0
     cmp_opr = cmp_data.get("off_patch_write_ratio") or 0
-    parts.append(f"<tr><td>Off-Patch Ratio</td>"
+    parts.append(f"<tr><td>{ui_text('Off-Patch Ratio')}</td>"
                  f"<td>{ref_opr * 100:.1f}%</td>"
                  f"<td>{cmp_opr * 100:.1f}%</td></tr>")
 
     # First anchor read
     ref_fr = ref_data.get("time_to_first_anchor_read")
     cmp_fr = cmp_data.get("time_to_first_anchor_read")
-    ref_fr_str = f"Step {ref_fr}" if ref_fr is not None else "N/A"
-    cmp_fr_str = f"Step {cmp_fr}" if cmp_fr is not None else "N/A"
-    parts.append(f"<tr><td>First Anchor Read</td>"
-                 f"<td>{_esc(ref_fr_str)}</td>"
-                 f"<td>{_esc(cmp_fr_str)}</td></tr>")
+    ref_fr_str = ui_text("Step {index}", index=ref_fr) if ref_fr is not None else ui_text("N/A")
+    cmp_fr_str = ui_text("Step {index}", index=cmp_fr) if cmp_fr is not None else ui_text("N/A")
+    parts.append(f"<tr><td>{ui_text('First Anchor Read')}</td>"
+                 f"<td>{ref_fr_str}</td>"
+                 f"<td>{cmp_fr_str}</td></tr>")
 
     # First anchor write
     ref_fw = ref_data.get("time_to_first_anchor_write")
     cmp_fw = cmp_data.get("time_to_first_anchor_write")
-    ref_fw_str = f"Step {ref_fw}" if ref_fw is not None else "N/A"
-    cmp_fw_str = f"Step {cmp_fw}" if cmp_fw is not None else "N/A"
-    parts.append(f"<tr><td>First Anchor Write</td>"
-                 f"<td>{_esc(ref_fw_str)}</td>"
-                 f"<td>{_esc(cmp_fw_str)}</td></tr>")
+    ref_fw_str = ui_text("Step {index}", index=ref_fw) if ref_fw is not None else ui_text("N/A")
+    cmp_fw_str = ui_text("Step {index}", index=cmp_fw) if cmp_fw is not None else ui_text("N/A")
+    parts.append(f"<tr><td>{ui_text('First Anchor Write')}</td>"
+                 f"<td>{ref_fw_str}</td>"
+                 f"<td>{cmp_fw_str}</td></tr>")
 
     parts.append("</tbody></table>")
 
@@ -93,10 +97,10 @@ def build_anchor_analysis_html(anchor_analysis: dict) -> str:
     cmp_by_class = cmp_data.get("write_recall_by_class", {})
     all_classes = sorted(set(ref_by_class.keys()) | set(cmp_by_class.keys()) | set(file_classes.keys()))
     if all_classes:
-        parts.append("<h3>Per-Class Anchor Write Recall</h3>")
+        parts.append(f"<h3>{ui_text('Per-Class Anchor Write Recall')}</h3>")
         parts.append('<table class="cvg-anchor-table">')
-        parts.append("<thead><tr><th>File Class</th><th>Anchor Files</th>"
-                     "<th>Reference Recall</th><th>Compared Recall</th></tr></thead>")
+        parts.append(f"<thead><tr><th>{ui_text('File Class')}</th><th>{ui_text('Anchor Files')}</th>"
+                     f"<th>{ui_text('Reference Recall')}</th><th>{ui_text('Compared Recall')}</th></tr></thead>")
         parts.append("<tbody>")
         for cls_name in all_classes:
             anchor_count = file_classes.get(cls_name, 0)
@@ -131,13 +135,13 @@ def build_comparison_report_html(report: dict) -> str:
     parts.append('<div class="cvg-report">')
 
     # Title
-    title = "Converge Comparison Report"
+    title = ui_text("Converge Comparison Report")
     if task_id:
         title += f" &mdash; {task_id}"
     parts.append(f"<h2>{title}</h2>")
 
     # ── Outcome table ────────────────────────────────────────
-    parts.append("<h2>Outcome</h2>")
+    parts.append(f"<h2>{ui_text('Outcome')}</h2>")
     parts.append('<table class="cvg-outcome-table">')
 
     def _fmt_duration(secs):
@@ -157,23 +161,23 @@ def build_comparison_report_html(report: dict) -> str:
 
     ref_filename = outcome.get("reference_filename") or ref_agent
     cmp_filename = outcome.get("compared_filename") or cmp_agent
-    parts.append("<thead><tr><th>Metric</th>"
+    parts.append(f"<thead><tr><th>{ui_text('Metric')}</th>"
                  f"<th>{_esc(ref_filename)}</th>"
                  f"<th>{_esc(cmp_filename)}</th></tr></thead>")
     parts.append("<tbody>")
-    parts.append(f"<tr><td>Format</td>"
+    parts.append(f"<tr><td>{ui_text('Format')}</td>"
                  f"<td>{_esc(outcome.get('reference_format', '—'))}</td>"
                  f"<td>{_esc(outcome.get('compared_format', '—'))}</td></tr>")
-    parts.append(f"<tr><td>Steps</td>"
+    parts.append(f"<tr><td>{ui_text('Steps')}</td>"
                  f"<td>{_esc(outcome.get('reference_steps', 0))}</td>"
                  f"<td>{_esc(outcome.get('compared_steps', 0))}</td></tr>")
-    parts.append(f"<tr><td>Total Tokens</td>"
+    parts.append(f"<tr><td>{ui_text('Total Tokens')}</td>"
                  f"<td>{outcome.get('reference_tokens', 0):,}</td>"
                  f"<td>{outcome.get('compared_tokens', 0):,}</td></tr>")
-    parts.append(f"<tr><td>Total Tool Calls</td>"
+    parts.append(f"<tr><td>{ui_text('Total Tool Calls')}</td>"
                  f"<td>{_esc(outcome.get('reference_tool_calls', 0))}</td>"
                  f"<td>{_esc(outcome.get('compared_tool_calls', 0))}</td></tr>")
-    parts.append(f"<tr><td>Duration</td>"
+    parts.append(f"<tr><td>{ui_text('Duration')}</td>"
                  f"<td>{_esc(_fmt_duration(outcome.get('reference_duration_s')))}</td>"
                  f"<td>{_esc(_fmt_duration(outcome.get('compared_duration_s')))}</td></tr>")
     parts.append("</tbody></table>")
@@ -192,22 +196,23 @@ def build_comparison_report_html(report: dict) -> str:
         def _fmt_step(v):
             return f"#{int(v)}" if isinstance(v, (int, float)) else "N/A"
 
-        parts.append("<h2>Milestones</h2>")
+        parts.append(f"<h2>{ui_text('Milestones')}</h2>")
         parts.append('<table class="cvg-milestone-table">')
-        parts.append("<thead><tr><th>Milestone</th>"
+        parts.append(f"<thead><tr><th>{ui_text('Milestone')}</th>"
                      f"<th>{_esc(ref_filename)}</th>"
                      f"<th>{_esc(cmp_filename)}</th></tr></thead>")
         parts.append("<tbody>")
         for name in ordered_keys:
             label = MILESTONE_LABELS.get(name, name.replace("_", " ").title())
-            parts.append(f"<tr><td>{_esc(label)}</td>"
+            shown_label = ui_text(label) if name in MILESTONE_LABELS else _esc(label)
+            parts.append(f"<tr><td>{shown_label}</td>"
                          f"<td>{_esc(_fmt_step(ref_ms.get(name)))}</td>"
                          f"<td>{_esc(_fmt_step(cmp_ms.get(name)))}</td></tr>")
         parts.append("</tbody></table>")
 
     # ── Top divergence patterns ──────────────────────────────
     if patterns:
-        parts.append("<h2>Divergence Patterns</h2>")
+        parts.append(f"<h2>{ui_text('Divergence Patterns')}</h2>")
         _PATTERN_GLOSSARY = [
             ("dead_end_branch",
              "Agent started a line of work and later abandoned it without any surviving effect."),
@@ -228,13 +233,13 @@ def build_comparison_report_html(report: dict) -> str:
         ]
         parts.append(
             '<p style="font-size:12px;color:var(--ov-muted,#6b7280);margin:4px 0 10px;">'
-            'Each row is a cluster of unmatched compared-agent actions attributed to one pattern. '
-            'Pattern meanings:</p>'
+            + ui_text('Each row is a cluster of unmatched compared-agent actions attributed to one pattern. '
+                      'Pattern meanings:') + '</p>'
         )
         parts.append('<ul style="font-size:12px;color:var(--ov-muted,#6b7280);margin:0 0 12px 18px;padding:0;">')
         for name, desc in _PATTERN_GLOSSARY:
             parts.append(
-                f'<li style="margin:2px 0;"><code>{_esc(name)}</code> &mdash; {_esc(desc)}</li>'
+                f'<li style="margin:2px 0;"><code>{_esc(name)}</code> &mdash; {ui_text(desc)}</li>'
             )
         parts.append('</ul>')
         # Sort by token cost descending
@@ -244,8 +249,8 @@ def build_comparison_report_html(report: dict) -> str:
             reverse=True,
         )
         parts.append('<table class="cvg-outcome-table">')
-        parts.append("<thead><tr><th>Pattern</th><th>Steps</th>"
-                     "<th>Extra Tokens</th><th>Evidence</th></tr></thead>")
+        parts.append(f"<thead><tr><th>{ui_text('Pattern')}</th><th>{ui_text('Steps')}</th>"
+                     f"<th>{ui_text('Extra Tokens')}</th><th>{ui_text('Evidence')}</th></tr></thead>")
         parts.append("<tbody>")
         for p in sorted_patterns:
             ptype = _esc(p.get("type", "unknown"))

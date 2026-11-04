@@ -1,6 +1,7 @@
 """Focused regressions for follow-up findings from the Insight review."""
 
 import unittest
+from i18n_test_helpers import unmark_html
 
 from agent_trajviz.insight import patterns
 from agent_trajviz.insight.shell_cmd import primary_shell_command
@@ -172,6 +173,7 @@ class OutputThroughputTests(unittest.TestCase):
                     {"metric": "Tool Success", "status": "warn", "detail": "Existing tool verdict"}]
         original = copy.deepcopy((metrics, verdicts))
         output = build_overview_kpi_html(metrics, "10s", verdicts=verdicts, tokens_estimated=True)
+        output = unmark_html(output)
         visible = re.sub(r"<[^>]+>", "", re.sub(r"<details\b.*?</details>", "", output, flags=re.DOTALL))
         self.assertIn("estimated · 25.0 gen tok/s excl. tools · 2/3 timed", visible)
         self.assertIn("Existing tool verdict", visible)
@@ -192,11 +194,13 @@ class OutputThroughputTests(unittest.TestCase):
         full = build_overview_kpi_html({"output_tokens_per_sec": 20.0,
                                        "output_throughput_timed_steps": 2,
                                        "output_throughput_total_steps": 2}, "10s")
+        full = unmark_html(full)
         self.assertIn("20.0 gen tok/s · 2/2 timed", full)
         unavailable = build_overview_kpi_html({"tokens": {"total": None},
                                               "output_tokens_per_sec": None,
                                               "output_throughput_timed_steps": 0,
                                               "output_throughput_total_steps": 2}, "N/A")
+        unavailable = unmark_html(unavailable)
         self.assertIn("Generation throughput: N/A · 0/2 timed", unavailable)
         self.assertIn("Throughput details</summary>", unavailable)
         self.assertNotIn("0.0 gen tok/s", unavailable)
@@ -417,7 +421,7 @@ class ReasoningTokensNaTests(unittest.TestCase):
         self.assertFalse(metrics["reasoning_tokens_reported"])
         self.assertEqual(metrics["tokens"]["reasoning"], 0)
 
-        html = format_performance_md(metrics, "1s")
+        html = unmark_html(format_performance_md(metrics, "1s"))
         self.assertRegex(
             html,
             r"Reasoning</span><span[^>]*>N/A</span>",
@@ -429,7 +433,7 @@ class ReasoningTokensNaTests(unittest.TestCase):
         step = _assistant_step(0, output_tokens=50, duration=1.0)
         metrics = compute_metrics([step], {})
         self.assertTrue(metrics["reasoning_tokens_reported"])
-        html = format_performance_md(metrics, "1s")
+        html = unmark_html(format_performance_md(metrics, "1s"))
         self.assertRegex(
             html,
             r"Reasoning</span><span[^>]*>0</span>",

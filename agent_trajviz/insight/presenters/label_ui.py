@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 
+from ...i18n import text as ui_text
 from ..charts import (
     build_label_action_count_chart,
     build_label_action_duration_chart,
@@ -45,7 +46,7 @@ def _label_provenance_html(data: dict) -> str:
     rows = [("Model", data.get("model")), ("Taxonomy", data.get("taxonomy_version")),
             ("Source note", data.get("source_note") or metadata.get("source_note"))]
     entries = "".join(
-        f"<dt style='font-weight:600;'>{label}</dt>"
+        f"<dt style='font-weight:600;'>{ui_text(label)}</dt>"
         f"<dd style='margin:0;overflow-wrap:anywhere;'>{html.escape(str(value))}</dd>"
         for label, value in rows if value is not None and str(value).strip()
     )
@@ -53,13 +54,13 @@ def _label_provenance_html(data: dict) -> str:
         return ""
     return (
         "<details class='label-provenance' open style='font-size:12px;margin:6px 0;color:var(--ov-muted);'>"
-        "<summary style='cursor:pointer;'>Label provenance</summary>"
+        f"<summary style='cursor:pointer;'>{ui_text('Label provenance')}</summary>"
         "<dl style='display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;margin:6px 0;'>"
         f"{entries}</dl></details>"
     )
 
 
-def _label_coverage(data: dict, agg: dict, run=None) -> tuple[str, str]:
+def _label_coverage(data: dict, agg: dict, run=None, *, marked: bool = False) -> tuple[str, str]:
     """Separate sidecar coverage, assistant classification and timeline rows."""
     records = data.get("steps", [])
 
@@ -92,6 +93,24 @@ def _label_coverage(data: dict, agg: dict, run=None) -> tuple[str, str]:
         f"Timeline: {len(timeline)} steps, including {timeline_users} user prompts. "
         "Unknown assistant labels remain in the sidecar and are excluded from these charts."
     )
+    if marked:
+        summary = ui_text("Labels loaded — {labeled}/{total} steps labeled; {unknown} unknown",
+                          labeled=labeled, total=total, unknown=unknown)
+        if missing > 0:
+            summary += ui_text("; {missing} without label records", missing=missing)
+        details = ui_text(
+            "Sidecar — assistant: {classified}/{assistants} classified; user records: {users}",
+            classified=sum(classified(record) for record in assistants), assistants=len(assistants), users=len(users),
+        )
+        if defaults:
+            details += ui_text(" ({count} default labels)", count=defaults)
+        details += ui_text(
+            "; other roles: {other}. Phase/action charts: {charted} classified assistant steps across {phases} phases. "
+            "Timeline: {timeline} steps, including {user_prompts} user prompts. "
+            "Unknown assistant labels remain in the sidecar and are excluded from these charts.",
+            other=other, charted=charted, phases=len(agg.get('phase_counts', {})),
+            timeline=len(timeline), user_prompts=timeline_users,
+        )
     return summary, details
 
 
@@ -106,7 +125,7 @@ def build_label_ui_payload(file_path: str, dark: bool = False, *, run=None) -> d
     ad_fig = build_label_action_duration_chart(agg["action_durations"], agg["action_to_phase"], dark=dark)
     tl_fig = build_label_timeline_chart(agg["steps"], dark=dark)
 
-    coverage, coverage_details = _label_coverage(data, agg, run)
+    coverage, coverage_details = _label_coverage(data, agg, run, marked=True)
     phase_counts = agg.get("phase_counts", {})
 
     bar_segments = "".join(
@@ -137,16 +156,17 @@ def build_label_ui_payload(file_path: str, dark: bool = False, *, run=None) -> d
         "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;'>"
         "<span style='background:#059669;color:white;"
         "padding:4px 12px;border-radius:12px;font-size:13px;'>"
-        f"Labels loaded — {coverage}</span>"
-        "<a href='#' onclick=\"var t=document.querySelectorAll('button[role=tab]');"
+        f"{coverage}</span>"
+        "<a href='#' onclick=\"if(window.tvClickMainTab){window.tvClickMainTab('Overview');}else{var t=document.querySelectorAll('button[role=tab]');"
         "for(var i=0;i<t.length;i++){if(t[i].textContent.trim()==='Overview'){t[i].click();break;}}"
+        "}"
         "var r=document.querySelector(&quot;.overview-section-radio input[value='Labels']&quot;);"
         "if(r){r.click();r.scrollIntoView({behavior:'smooth',block:'center'});}"
         "return false;\" style='font-size:12px;color:#059669;text-decoration:underline;cursor:pointer;'>"
-        "Jump to Labels</a>"
+        f"{ui_text('Jump to Labels')}</a>"
         "</div>"
         "<div class='label-coverage' style='font-size:11px;line-height:1.45;color:var(--ov-muted);max-width:64rem;'>"
-        f"{html.escape(coverage_details)}</div>"
+        f"{coverage_details}</div>"
         f"<div style='display:flex;gap:4px;flex-wrap:wrap;'>{phase_chips}</div>"
         f"{phase_bar}"
         "</div>"

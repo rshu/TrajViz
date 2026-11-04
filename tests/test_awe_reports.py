@@ -7,11 +7,13 @@ import json
 import re
 from types import SimpleNamespace
 
+from i18n_test_helpers import unmark_html
+
 from agent_trajviz.awe import render
 
 
 def _report(name, value):
-    return render.report_html(SimpleNamespace(artifacts={name: value}), name)
+    return unmark_html(render.report_html(SimpleNamespace(artifacts={name: value}), name))
 
 
 class Tags(HTMLParser):
@@ -142,7 +144,7 @@ def test_offline_graph_sources_resolve_and_reused_node_ids_have_unique_anchors(t
     (directory / "faults.json").write_text(json.dumps(cases), encoding="utf-8")
     (directory / "attribution_graphs.json").write_text(json.dumps({"graphs": graphs}), encoding="utf-8")
     run = awe.load_run(directory)
-    output = awe.write_report(run, tmp_path / "report.html").read_text(encoding="utf-8")
+    output = unmark_html(awe.write_report(run, tmp_path / "report.html").read_text(encoding="utf-8"))
 
     class Anchors(HTMLParser):
         def __init__(self):

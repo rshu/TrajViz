@@ -55,18 +55,21 @@ WORKFLOW_JS = """
                                 if (!root) return;
                                 var roles = Array.from(root.querySelectorAll(
                                     '[data-filter-group="role"].chip-active'
-                                )).map(function(c) { return c.textContent; });
+                                )).map(function(c) {
+                                    return window.tvTranslate?.(c.dataset.filter) || c.dataset.filter;
+                                });
                                 var features = Array.from(root.querySelectorAll(
                                     '[data-filter-group="feature"].chip-active'
-                                )).map(function(c) { return c.textContent; });
+                                )).map(function(c) { return c.dataset.filter; });
                                 var query = root.querySelector('#wf-filter-query');
                                 if (!query) return;
+                                var tr = window.tvTranslate || function(value) { return value; };
                                 var featureText = features.indexOf('All') >= 0
-                                    ? 'All'
-                                    : features.join(' or ');
+                                    ? tr('All')
+                                    : features.map(function(value) { return tr(value); }).join(tr(' or '));
                                 var parts = [
-                                    'Role: ' + roles.join(' or '),
-                                    'Step feature: ' + featureText
+                                    tr('Role') + ': ' + roles.join(tr(' or ')),
+                                    tr('Step feature') + ': ' + featureText
                                 ];
                                 var agents = Array.from(root.querySelectorAll(
                                     '[data-filter-group="agent"].chip-active'
@@ -76,12 +79,24 @@ WORKFLOW_JS = """
                                         return c.dataset.filter === 'agent:All';
                                     });
                                     var agentText = agentAll
-                                        ? 'All'
-                                        : agents.map(function(c) { return c.textContent; }).join(' or ');
-                                    parts.push('Agent: ' + agentText);
+                                        ? tr('All')
+                                        : agents.map(function(c) { return c.textContent; }).join(tr(' or '));
+                                    parts.push(tr('Agent') + ': ' + agentText);
                                 }
                                 query.textContent = parts.join(' · ');
                             };
+                            if (!window.__tvWorkflowLanguageBound) {
+                                window.__tvWorkflowLanguageBound = true;
+                                document.addEventListener('trajviz:language', function() {
+                                    document.querySelectorAll('#wf-filter-bar').forEach(function(root) {
+                                        window.__updateWorkflowFilterQuery(root.parentElement || root);
+                                    });
+                                });
+                            }
+                            var initialFilterBar = document.getElementById('wf-filter-bar');
+                            if (initialFilterBar) {
+                                window.__updateWorkflowFilterQuery(initialFilterBar.parentElement || initialFilterBar);
+                            }
                             /* Pure chip state machine, unit-tested in
                                tests/test_workflow_filtering.py by executing this
                                exact source in Node. Keep it DOM-free. */
@@ -312,8 +327,8 @@ WORKFLOW_JS = """
                                         "<div data-wf-hidden-msg='1'" +
                                         " style='padding:2em 1em;text-align:center;color:var(--ov-muted);'>" +
                                         "<p style='font-size:15px;margin-bottom:0.5em;'>" +
-                                        "Selected step is hidden by the current filters</p>" +
-                                        "<p style='font-size:12px;'>Adjust the filters to show it again.</p>" +
+                                        "<span data-tv-i18n='Selected step is hidden by the current filters'>Selected step is hidden by the current filters</span></p>" +
+                                        "<p style='font-size:12px;'><span data-tv-i18n='Adjust the filters to show it again.'>Adjust the filters to show it again.</span></p>" +
                                         "</div>";
                                 };
                                 new MutationObserver(function() {
@@ -329,7 +344,7 @@ WORKFLOW_JS = """
                                 for (var i = 0; i < cards.length; i++) {
                                     var badges = cards[i].querySelectorAll('.wf-badge');
                                     for (var j = 0; j < badges.length; j++) {
-                                        if (badges[j].textContent.trim() === 'Assistant') {
+                                        if (badges[j].dataset.wfRole === 'assistant') {
                                             selectCard(cards[i], { pushHistory: false });
                                             return;
                                         }

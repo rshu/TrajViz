@@ -194,7 +194,7 @@ def layout(overview_kpi_html: gr.HTML) -> OverviewRefs:
 
                 with gr.Column(visible=False) as tools_section:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_tools'])}</div>")
-                    behavior_md = gr.Markdown("")
+                    behavior_md = gr.Markdown("", elem_classes=["tv-owned-markdown"])
                     with gr.Row(equal_height=True):
                         tool_chart = gr.Plot(show_label=False, label="Tool Call Frequency")
                         tool_duration_chart = gr.Plot(
@@ -239,7 +239,7 @@ def layout(overview_kpi_html: gr.HTML) -> OverviewRefs:
 
                 with gr.Column(visible=False) as deep_dive_section:
                     gr.HTML(f"<div class='section-subtitle'>{html.escape(HELP_TEXT['section_deep_dive'])}</div>")
-                    metrics_md = gr.Markdown("")
+                    metrics_md = gr.Markdown("", elem_classes=["tv-owned-markdown"])
                     hotspots_md = gr.Markdown("", elem_classes=["diagnostics-data-table"])
                     per_message_md = gr.Markdown("", elem_classes=["diagnostics-data-table"])
 

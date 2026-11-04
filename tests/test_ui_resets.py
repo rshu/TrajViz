@@ -276,8 +276,10 @@ class LaunchPresentationTests(unittest.TestCase):
         from agent_trajviz.insight.styles import APP_CSS
 
         presentation = insight_mod.LAUNCH_PRESENTATION
-        self.assertIs(presentation["css"], APP_CSS)
+        self.assertTrue(presentation["css"].startswith(APP_CSS))
+        self.assertIn("#tv-language-selector", presentation["css"])
         self.assertIn("color-scheme", presentation["head"])
+        self.assertIn("tvSetLanguage", presentation["head"])
 
 
 class BindJumpsContractTests(unittest.TestCase):

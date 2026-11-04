@@ -13,6 +13,7 @@ import textwrap
 
 import plotly.graph_objects as go
 
+from ..i18n import localize_figure
 from .milestones import MILESTONE_LABELS, MILESTONE_NAMES
 
 
@@ -52,7 +53,7 @@ def _empty_figure(height: int = 380, message: str | None = None) -> go.Figure:
             x=0.5, y=0.5, showarrow=False, font_size=16,
         )
     fig.update_layout(template=_TPL, height=height)
-    return fig
+    return localize_figure(fig, trace_names=True, annotations=True)
 
 
 def _apply_chart_layout(
@@ -145,7 +146,7 @@ def build_milestone_timeline_chart(
         yaxis_ticktext=["<br>".join(textwrap.wrap(_MILESTONE_LABELS.get(name, name), width=18)) for name in names],
         yaxis_tickfont=dict(size=10), yaxis_showticklabels=True, yaxis_zeroline=False,
     )
-    return fig
+    return localize_figure(fig, trace_names=True, annotations=True)
 
 
 # -- Segment cost chart -------------------------------------------------------
@@ -209,7 +210,7 @@ def build_segment_cost_chart(
 
     fig.update_layout(height=500, margin=dict(b=180),
                       xaxis=dict(title=None, tickangle=-45, automargin=True, tickfont=dict(size=10)))
-    return fig
+    return localize_figure(fig, trace_names=True, annotations=True)
 
 
 # -- Divergence waterfall chart ------------------------------------------------
@@ -264,7 +265,7 @@ def build_divergence_waterfall_chart(patterns: list[dict]) -> go.Figure:
         xaxis="Pattern", yaxis="Extra Tokens",
         yaxis_range=[low - padding if low < 0 else 0, high + padding],
     )
-    return fig
+    return localize_figure(fig, trace_names=True, annotations=True)
 
 
 # -- Anchor class recall chart ------------------------------------------------
@@ -323,4 +324,4 @@ def build_anchor_class_chart(anchor_analysis: dict | None) -> go.Figure:
         barmode="group", yaxis_range=[0, max(100, *ref_recalls, *cmp_recalls) * 1.14],
         uniformtext=dict(minsize=11, mode="show"),
     )
-    return fig
+    return localize_figure(fig, trace_names=True, annotations=True)
