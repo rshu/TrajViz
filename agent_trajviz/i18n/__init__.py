@@ -55,7 +55,9 @@ def _marker(template: str, params: dict[str, Any]) -> str:
 def text(template: str, **params: Any) -> str:
     """Mark app-authored HTML text, escaping every interpolated data value."""
     visible = template.format(**params) if params else template
-    return f'<span {_marker(template, params)}>{html.escape(visible)}</span>'
+    # Gradio's prose reset explicitly colors every descendant. The wrapper
+    # must inherit its parent's semantic badge/status color in either locale.
+    return f'<span {_marker(template, params)} style="color:inherit">{html.escape(visible)}</span>'
 
 
 def attrs(template: str, *, attribute: str = "title", **params: Any) -> str:

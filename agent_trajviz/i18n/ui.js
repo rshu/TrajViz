@@ -136,6 +136,7 @@
                     if (!key) continue;
                     const span = document.createElement("span");
                     span.setAttribute("data-tv-i18n", key);
+                    span.setAttribute("style", "color:inherit");
                     span.textContent = key;
                     child.replaceWith(span);
                 }
@@ -155,6 +156,7 @@
                 if (!Object.prototype.hasOwnProperty.call(translations, key)) continue;
                 const span = document.createElement("span");
                 span.setAttribute("data-tv-i18n", key);
+                span.setAttribute("style", "color:inherit");
                 span.textContent = key;
                 child.replaceWith(span);
             }

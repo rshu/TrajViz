@@ -16,6 +16,7 @@ change the public API (the names exported from `agent_trajviz`).
 
 - Translate comparison scorecards, coverage tables, explanations and chart
   labels consistently, including results refreshed after switching languages.
+- Preserve readable badge and status colors when switching dashboard languages.
 
 ## [0.4.2] - 2026-11-04
 

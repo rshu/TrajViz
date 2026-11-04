@@ -61,6 +61,13 @@ _LIGHT_TOKENS = """
     --wf-border-reasoning: #7c3aed;
     --wf-bg-default: #f3f4f6;
     --wf-border-default: #6b7280;
+    /* Foregrounds follow the badge fill, independently of its border hue. */
+    --wf-badge-accent-ink: #ffffff;
+    --wf-badge-warm-ink: #0f172a;
+    --wf-label-error: #b91c1c;
+    --wf-label-warm: #92400e;
+    --wf-label-final: #065f46;
+    --wf-label-default: #4b5563;
     --wf-card-border: #e5e7eb;
     --wf-meta-color: #6b7280;
     --wf-preview-color: #374151;
@@ -129,6 +136,12 @@ _DARK_TOKENS = """
         --wf-border-reasoning: #a78bfa;
         --wf-bg-default: rgba(107,114,128,0.1);
         --wf-border-default: #6b7280;
+        --wf-badge-accent-ink: #0f172a;
+        --wf-badge-warm-ink: #0f172a;
+        --wf-label-error: #f87171;
+        --wf-label-warm: #fbbf24;
+        --wf-label-final: #34d399;
+        --wf-label-default: #cbd5e1;
         --wf-card-border: #2d2f45;
         --wf-meta-color: #94a3b8;
         --wf-preview-color: #cbd5e1;
@@ -156,7 +169,7 @@ _DARK_COMPONENTS = """
         color: #fca5a5;
     }
     %(s)s.diag-rc-primary:hover { background: rgba(220,38,38,0.15); }
-    /* Detail panel header stays light text on colored bg — no override needed */
+    /* Workflow headers choose their foreground from the active fill tokens. */
     %(s)s.dp-diff-pre { background: #0d1117; }
     %(s)s.filter-chip { background: var(--ov-card); color: var(--ov-muted); }
     %(s)s.filter-chip:hover { background: var(--ov-link-hover-bg); }
@@ -498,7 +511,7 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     border-radius: 6px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    background: rgba(255,255,255,0.25);
+    background: transparent;
 }
 .dp-meta-table {
     width: 100%;

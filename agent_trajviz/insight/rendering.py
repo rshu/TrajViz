@@ -33,13 +33,33 @@ _ROLE_COLORS = {
     "compaction": ("var(--wf-bg-default)", "var(--wf-border-default)", "Compaction"),
 }
 
+
+def _filled_badge_ink(border: str) -> str:
+    if border == "var(--wf-border-default)":
+        return "#ffffff"
+    if border in {"var(--wf-border-tool)", "var(--wf-border-system-error)", "var(--wf-border-final)"}:
+        return "var(--wf-badge-warm-ink)"
+    return "var(--wf-badge-accent-ink)"
+
+
+def _filled_badge_style(border: str) -> str:
+    return f"background:{border};color:{_filled_badge_ink(border)};"
+
+
+def _card_label_ink(border: str) -> str:
+    return {
+        "var(--wf-border-error)": "var(--wf-label-error)",
+        "var(--wf-border-system-error)": "var(--wf-label-warm)",
+        "var(--wf-border-tool)": "var(--wf-label-warm)",
+        "var(--wf-border-final)": "var(--wf-label-final)",
+        "var(--wf-border-default)": "var(--wf-label-default)",
+    }.get(border, border)
+
+
 _ROLE_BADGE_STYLES = {
-    "user": "background:var(--wf-border-user);color:white;",
-    "assistant": "background:var(--wf-border-assistant);color:white;",
-    "task": "background:var(--wf-border-reasoning);color:white;",
-    "system": "background:var(--wf-border-default);color:white;",
-    "compaction": "background:var(--wf-border-default);color:white;",
-    "tool": "background:var(--wf-border-reasoning);color:white;",
+    role: _filled_badge_style(f"var(--wf-border-{palette})")
+    for role, palette in (("user", "user"), ("assistant", "assistant"), ("task", "reasoning"),
+                          ("system", "default"), ("compaction", "default"), ("tool", "reasoning"))
 }
 
 
@@ -392,7 +412,7 @@ def render_toc_sidebar(steps: list[dict], collapsed: bool = False) -> str:
     for step in steps:
         idx = _step_index(step.get("index", 0))
         role = workflow_role(step)
-        role_style = _ROLE_BADGE_STYLES.get(role, "background:var(--wf-border-default);color:white;")
+        role_style = _ROLE_BADGE_STYLES.get(role, _filled_badge_style("var(--wf-border-default)"))
         onclick = (
             f"(function(){{"
             f"var c=document.getElementById('wf-card-{idx}');"
@@ -447,7 +467,7 @@ def render_workflow_html(steps: list[dict]) -> str:
         preview = _md_to_html_preview(step["text_preview"]) if step["text_preview"] else "\u2014"
         model_error = _model_error_text(step)
         error_html = (
-            f"<div class='wf-model-error' style='color:var(--wf-border-system-error);'>"
+            f"<div class='wf-model-error' style='color:var(--wf-label-warm);'>"
             f"{ui_text('Model request failed:')} {html.escape(model_error[:320])}</div>"
             if model_error else ""
         )
@@ -466,12 +486,12 @@ def render_workflow_html(steps: list[dict]) -> str:
         tc_info = f'<span>{ui_text("{count} tool(s)", count=step["tool_call_count"])}</span>' if step["tool_call_count"] else ''
         if err_kind == "tool":
             err_info = (
-                f'<span style="color:var(--wf-border-error)">'
+                f'<span style="color:var(--wf-label-error)">'
                 f'{ui_text("{count} tool err", count=step["error_count"])}</span>'
             )
         elif err_kind == "system":
             err_info = (
-                f'<span style="color:var(--wf-border-system-error)">{ui_text("system err")}</span>'
+                f'<span style="color:var(--wf-label-warm)">{ui_text("system err")}</span>'
             )
         else:
             err_info = ''
@@ -492,7 +512,7 @@ def render_workflow_html(steps: list[dict]) -> str:
             )
 
         role = workflow_role(step)
-        role_style = _ROLE_BADGE_STYLES.get(role, "background:var(--wf-border-default);color:white;")
+        role_style = _ROLE_BADGE_STYLES.get(role, _filled_badge_style("var(--wf-border-default)"))
         role_label = workflow_role_label(step)
 
         orig_idx = _step_index(step.get("index", i))
@@ -500,16 +520,16 @@ def render_workflow_html(steps: list[dict]) -> str:
         sub_agent_badge = ""
         sub_indent = ""
         if step.get("is_sub_agent"):
-            sub_agent_badge = f'<span class="wf-badge" style="background:var(--wf-border-reasoning);color:white;font-size:10px;">{ui_text("sub-agent")}</span>'
+            sub_agent_badge = f'<span class="wf-badge" style="{_filled_badge_style("var(--wf-border-reasoning)")}font-size:10px;">{ui_text("sub-agent")}</span>'
             sub_indent = "margin-left:24px;"
 
         card = f"""
         <div class="wf-card" id="wf-card-{orig_idx}" data-step-idx="{orig_idx}"
              style="background:{bg};border-color:{border};{agent_left_border}{sub_indent}">
             <div class="wf-header">
-                <span class="wf-badge" style="background:{border};color:white;">#{orig_idx}</span>
+                <span class="wf-badge" style="{_filled_badge_style(border)}">#{orig_idx}</span>
                 <span class="wf-badge" data-wf-role="{html.escape(role, quote=True)}" style="{role_style}">{ui_text(role_label) if role in _ROLE_COLORS else html.escape(role_label)}</span>
-                {"" if label == role_label else f'<span class="wf-badge" style="background:transparent;color:{border};border:1px solid {border};">{_card_label_html(label)}</span>'}
+                {"" if label == role_label else f'<span class="wf-badge" style="background:transparent;color:{_card_label_ink(border)};border:1px solid {border};">{_card_label_html(label)}</span>'}
                 {sub_agent_badge}
                 {agent_badge}
                 <span class="wf-icons">{icon_str}</span>
@@ -546,7 +566,7 @@ def _format_step_header(step: dict) -> str:
     """Build the styled HTML header banner and metadata table for a step detail panel."""
     bg, border, label, _err_kind = _card_style(step)
     role = workflow_role(step)
-    role_style = _ROLE_BADGE_STYLES.get(role, "background:var(--wf-border-default);color:white;")
+    role_style = _ROLE_BADGE_STYLES.get(role, _filled_badge_style("var(--wf-border-default)"))
 
     rows: list[tuple[str, str]] = [("Role", workflow_role_label(step))]
     _optional = [
@@ -594,8 +614,8 @@ def _format_step_header(step: dict) -> str:
 
     # Banner
     banner = (
-        f"<div class='dp-header' style='background:{border};'>"
-        f"<span class='dp-badge'>#{step['index']}</span>"
+        f"<div class='dp-header' style='{_filled_badge_style(border)}'>"
+        f"<span class='dp-badge' style='color:inherit;'>#{step['index']}</span>"
         f"<span class='dp-badge' style='{role_style}'>{_card_label_html(workflow_role_label(step))}</span>"
         f"{ui_text('Step {step}', step=step['index'])} &mdash; {_card_label_html(label)}"
         f"</div>"
