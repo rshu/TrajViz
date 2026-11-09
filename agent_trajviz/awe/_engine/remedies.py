@@ -10,6 +10,7 @@ import math
 
 from .countermeasures import countermeasures_for
 from .remedy_verification import verification_scope
+from .catalog_notes import HISTORICAL_CALIBRATION_PROVENANCE
 
 REFUTATIONS = {"demoted_to_conjunctive", "refuted_reassigned", "unattributed_after_refute"}
 
@@ -103,6 +104,7 @@ def entry_payload(entry):
         "expected_effect": entry.expected_effect,
         "contract": entry.contract,
         "calibration": entry.calibration,
+        "calibration_provenance": dict(HISTORICAL_CALIBRATION_PROVENANCE) if entry.calibration else None,
         "catalog_role": entry.catalog_role,
         "references": entry.references,
         "artifact_maturity": entry.artifact_maturity,

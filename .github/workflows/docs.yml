@@ -9,6 +9,10 @@ on:
     types: [published]
   workflow_dispatch:
     inputs:
+      release_version:
+        description: Published version to refresh (blank selects latest)
+        type: string
+        default: ""
       rebuild_stable:
         description: Rebuild the stable documentation snapshot from current guides
         type: boolean
@@ -26,6 +30,23 @@ env:
   UV_PYTHON: "3.13"
 
 jobs:
+  release_refresh:
+    if: github.event_name == 'release' && !github.event.release.prerelease && !github.event.release.draft
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+    steps:
+      # Release-triggered Pages deployments can reuse old content despite success:
+      # https://github.com/actions/deploy-pages/issues/383
+      - name: Dispatch documentation refresh on main
+        run: >-
+          gh workflow run docs.yml --repo "$GITHUB_REPOSITORY" --ref main
+          --raw-field "release_version=${RELEASE_TAG#v}"
+
   build:
     if: >-
       (github.event_name == 'workflow_run' &&
@@ -33,7 +54,6 @@ jobs:
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main' &&
        github.event.workflow_run.head_sha == github.sha) ||
-      (github.event_name == 'release' && !github.event.release.prerelease && !github.event.release.draft) ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
@@ -43,6 +63,9 @@ jobs:
       version: ${{ steps.archives.outputs.latest_version }}
       publish: ${{ steps.freshness.outputs.current }}
       source_sha: ${{ steps.freshness.outputs.source_sha }}
+      docs_source: ${{ steps.expected.outputs.docs_source }}
+      source_mode: ${{ steps.expected.outputs.source_mode }}
+      index_sha256: ${{ steps.expected.outputs.index_sha256 }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -67,11 +90,11 @@ jobs:
         id: archives
         env:
           REBUILD_STABLE: ${{ inputs.rebuild_stable || false }}
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
+          RELEASE_VERSION: ${{ inputs.release_version || '' }}
         run: |
           args=(--reconcile-from 0.3.1)
           if [ "$REBUILD_STABLE" = "true" ]; then args+=(--rebuild-stable); fi
-          if [ -n "$RELEASE_TAG" ]; then args+=(--release-version "${RELEASE_TAG#v}"); fi
+          if [ -n "$RELEASE_VERSION" ]; then args+=(--release-version "$RELEASE_VERSION"); fi
           uv run --locked python .github/scripts/docs_archive.py download \
             --repository "$GITHUB_REPOSITORY" --directory "$DOCS_TEMP/archives" \
             --metadata "$DOCS_TEMP/releases.json" "${args[@]}"
@@ -123,6 +146,13 @@ jobs:
             --dev-site "$DOCS_TEMP/dev" --version "$RELEASE_VERSION" \
             --archives "$DOCS_TEMP/archives" --output site
           uv run --locked --with pdoc==16.0.0 python .github/scripts/build_docs.py --check site
+      - name: Record expected release content and provenance
+        id: expected
+        env:
+          RELEASE_VERSION: ${{ steps.archives.outputs.latest_version }}
+        run: >-
+          python .github/scripts/check_docs_deployment.py expected
+          --site site --version "$RELEASE_VERSION"
       - name: Check this build still matches main
         id: freshness
         run: |
@@ -166,6 +196,10 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.build.outputs.source_sha }}
+          persist-credentials: false
       - name: Recheck main before deployment
         id: freshness
         run: |
@@ -180,3 +214,16 @@ jobs:
         if: steps.freshness.outputs.current == 'true'
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+      - name: Verify live release content and provenance
+        if: steps.freshness.outputs.current == 'true'
+        env:
+          PAGES_URL: ${{ steps.deployment.outputs.page_url }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          DOCS_SOURCE: ${{ needs.build.outputs.docs_source }}
+          SOURCE_MODE: ${{ needs.build.outputs.source_mode }}
+          INDEX_SHA256: ${{ needs.build.outputs.index_sha256 }}
+        run: >-
+          python .github/scripts/check_docs_deployment.py verify
+          --url "$PAGES_URL" --version "$RELEASE_VERSION"
+          --docs-source "$DOCS_SOURCE" --source-mode "$SOURCE_MODE"
+          --index-sha256 "$INDEX_SHA256" --timeout 720 --interval 15

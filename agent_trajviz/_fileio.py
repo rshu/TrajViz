@@ -12,7 +12,16 @@ import os
 import tempfile
 from pathlib import Path
 from typing import Any
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+
+
+def input_sources(source: str | Path | None, raw: Mapping[str, Any]) -> list[str]:
+    """Primary source and exact local files recorded by the loader as consumed."""
+    paths = [str(source)] if source else []
+    inputs = raw.get("_input_files")
+    if isinstance(inputs, (list, tuple)):
+        paths.extend(path for path in inputs if isinstance(path, str) and path)
+    return list(dict.fromkeys(paths))
 
 
 def ensure_output_does_not_overwrite(
@@ -68,6 +77,28 @@ def write_json_atomic(output_path: str | Path, data: Any) -> None:
             temporary_name = handle.name
             json.dump(data, handle, indent=2, ensure_ascii=False)
             handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, path)
+        temporary_name = None
+    finally:
+        if temporary_name is not None:
+            try:
+                Path(temporary_name).unlink()
+            except OSError:
+                pass
+
+
+def write_text_atomic(output_path: str | Path, text: str) -> None:
+    """Replace a text export only after its complete UTF-8 content is durable."""
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="\n", dir=path.parent,
+                                         prefix=f".{path.name}.", suffix=".tmp", delete=False) as handle:
+            temporary_name = handle.name
+            handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary_name, path)

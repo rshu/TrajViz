@@ -22,6 +22,7 @@ Layout of one run folder:
       faults.csv
       <agent>.md           per-agent dossiers
       reports/<agent>.md   per-agent scorecards
+      reports/<agent>.json exact score/CI/coverage records used by Markdown
 """
 
 from __future__ import annotations
@@ -180,9 +181,10 @@ def snapshot(
     if reports_dir.is_dir():
         rdest = dest / "reports"
         rdest.mkdir()
-        for src in sorted(reports_dir.glob("*.md")):
-            shutil.copy2(src, rdest / src.name)
-            copied += 1
+        for src in sorted(reports_dir.iterdir()):
+            if src.is_file() and src.suffix in (".md", ".json"):
+                shutil.copy2(src, rdest / src.name)
+                copied += 1
     if not copied:
         dest.rmdir()
         raise FileNotFoundError(

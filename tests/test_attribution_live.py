@@ -621,10 +621,11 @@ class AttributionTabTests(_RootRestoringTest):
         self.assertIn("Primary cause", html)
         self.assertIn(f"{GOLD_AGENT}/{GOLD_INST}", status)
 
-    def test_gold_free_upload_degrades_without_fabricating(self):
-        """An upload lands under a Gradio cache dir, so the agent cannot be
-        derived. The tab must say so and render NO scorecard — a fabricated
-        capability verdict is worse than an empty one."""
+    def test_uploaded_native_format_derives_agent_without_cache_folder_identity(self):
+        """A cache folder is incidental; recognized session content supplies the agent.
+
+        A matching canonical source and test evidence still gate the diagnosis.
+        """
         handler = self._handler("on_diagnose")
         upload_dir = self.tmp / "0123456789abcdef"
         upload_dir.mkdir()
@@ -632,12 +633,13 @@ class AttributionTabTests(_RootRestoringTest):
         shutil.copyfile(_canonical(GOLD_AGENT, GOLD_INST), upload)
 
         raw = self._session_raw(upload)
-        html, _ = handler(raw, "", "", "")
-        self.assertNotIn("score-dim-grid", html)
-        self.assertNotIn("Primary cause", html)
-        self.assertIn("could not determine the agent", html)
+        html, status = handler(raw, "", "", "")
+        self.assertIn("score-dim-grid", html)
+        self.assertIn("Primary cause", html)
+        self.assertIn(f"{GOLD_AGENT}/{GOLD_INST}", status)
+        self.assertNotIn(upload_dir.name, status)
 
-        # ...and the documented recovery (typing the overrides) must work.
+        # Explicit reference identities remain supported.
         html_ok, status_ok = handler(raw, GOLD_AGENT, GOLD_INST, "")
         self.assertIn("score-dim-grid", html_ok)
         self.assertIn(f"{GOLD_AGENT}/{GOLD_INST}", status_ok)
@@ -648,15 +650,17 @@ class AttributionTabTests(_RootRestoringTest):
         self.assertIn("Load a trajectory", html)
         self.assertIn("No trajectory loaded", status)
 
-    def test_autoload_clears_stale_agent_and_instance_overrides(self):
+    def test_autoload_replaces_stale_overrides_with_current_session_identity(self):
         """The overrides name a CASE; carrying them across a new load would
         attribute the newly loaded trajectory to the previous case."""
         handler = self._handler("on_diagnose_autoload")
         raw = self._session_raw(_canonical(GOLD_AGENT, GOLD_INST))
         outputs = handler(raw, "")
         self.assertEqual(len(outputs), 4)
-        self.assertEqual(outputs[2], "")
-        self.assertEqual(outputs[3], "")
+        self.assertEqual(outputs[2], GOLD_AGENT)
+        self.assertEqual(outputs[3], GOLD_INST)
+        self.assertNotIn("score-dim-grid", outputs[0])
+        self.assertNotIn("Primary cause", outputs[0])
 
 
 if __name__ == "__main__":

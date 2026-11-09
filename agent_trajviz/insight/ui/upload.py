@@ -13,6 +13,8 @@ from typing import Any
 
 import gradio as gr
 
+from ...i18n.ui import language_selector
+
 from ..presenters.overview import load_warnings_html
 from ..report import ReportError, write_report_file
 from ..session import LoadedSession
@@ -38,16 +40,19 @@ class UploadRefs:
     summary_banner: gr.HTML
     label_badge_html: gr.HTML
     session_selector: gr.Dropdown
+    language: gr.Radio
 
 
 def layout() -> UploadRefs:
-    gr.HTML(
-        "<div class='tv-header'>"
-        "<span class='tv-brand'>TrajViz</span>"
-        "<span class='tv-subtitle'>Coding Agent Trajectory Analysis Dashboard</span>"
-        "</div>",
-        elem_classes=["app-title"],
-    )
+    with gr.Row(elem_id="tv-app-header", equal_height=False):
+        gr.HTML(
+            "<div class='tv-header'>"
+            "<span class='tv-brand'>TrajViz</span>"
+            "<span class='tv-subtitle'>Coding Agent Trajectory Analysis Dashboard</span>"
+            "</div>",
+            elem_classes=["app-title"],
+        )
+        language = language_selector()
 
     with gr.Column(elem_classes=["upload-row"]) as upload_accordion, gr.Row(equal_height=False):
         format_selector = gr.Dropdown(
@@ -62,11 +67,10 @@ def layout() -> UploadRefs:
             file_upload = gr.File(
                 label="Trajectory (.json / .jsonl / .zstd / .zip)",
                 file_types=[".json", ".jsonl", ".zstd", ".zip"],
-                height=110,
+                height=96,
             )
             gr.Markdown(
-                "Subagents: upload a Claude Code ZIP or a consolidated session export. "
-                "OTLP captures: upload traces or a manifest bundle with companion logs.",
+                "For subagents, include the session and its logs in one ZIP.",
             )
             session_selector = gr.Dropdown(label="Captured session", choices=[], value=None,
                                            visible=False, interactive=True)
@@ -89,7 +93,7 @@ def layout() -> UploadRefs:
             label_file_upload = gr.File(
                 label="Labels (optional)",
                 file_types=[".json"],
-                height=110,
+                height=96,
             )
             label_load_btn = gr.Button("Load Labels", variant="secondary", size="sm", min_width=120, scale=0)
 
@@ -97,7 +101,7 @@ def layout() -> UploadRefs:
         summary_banner = gr.HTML("", container=False, padding=False)
         # Hidden until Load Labels fills it — an empty gr.HTML still paints a
         # padded block (~20px) between the upload row and the KPI strip.
-        label_badge_html = gr.HTML("", visible=False)
+        label_badge_html = gr.HTML("", visible=False, elem_classes=["label-status-badge"])
 
     return UploadRefs(
         upload_accordion=upload_accordion,
@@ -111,6 +115,7 @@ def layout() -> UploadRefs:
         summary_banner=summary_banner,
         label_badge_html=label_badge_html,
         session_selector=session_selector,
+        language=language,
     )
 
 

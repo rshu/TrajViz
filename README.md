@@ -77,6 +77,11 @@ Open `http://127.0.0.1:7860` and upload a `.json`, `.jsonl`, `.zstd` or `.zip`
 file. **Export HTML** saves an Overview, charts and Patterns snapshot.
 `--inline-plotly` embeds the chart runtime for offline reports.
 
+Use **EN | 中** in the header to switch between English and Simplified Chinese. The
+browser remembers the choice and sets the default AI reply language. In
+**AI Trajectory Analysis → Settings**, choose **English** or **简体中文** under
+**Reply language** for the next analysis, answer or suggested fix.
+
 Use `--port 8080` to change ports. Set `TRAJVIZ_AUTH=user:password` before
 exposing the dashboard with `--host 0.0.0.0` or `--share`; remote visitors can
 use the configured LLM features. For localhost proxy errors, include
@@ -265,15 +270,16 @@ usage analyses.
 ## Optional LLM features
 
 The **AI Trajectory Analysis** sidebar starts closed; open it from the labeled
-control on the right edge. It runs an automatic analysis when a trajectory
-loads (and the panel is open), then answers follow-up questions. It uses the
-same dashboard statistics (health verdicts, bottlenecks, failures, fruitless
+control on the right edge. It answers follow-up questions using the same
+dashboard statistics (health verdicts, bottlenecks, failures, fruitless
 streaks). Each Overview issue also has **AI 深入分析**, which opens this
 sidebar and asks a focused follow-up about that issue. It does not re-upload
 the raw file.
 
-Open **Settings** in the dashboard to configure the provider, API key, base URL,
-model and request options. Connection details can be remembered in this browser;
+Open **AI Trajectory Analysis → Settings** to configure the provider, API key,
+base URL, model and request options. Use **Analyze trajectory** on the Analysis
+tab to start analysis. **Test API key** checks the entered connection with a small
+model request before you apply settings. Connection details can be remembered in this browser;
 API keys stay in the current session. You can also set `ANALYZE_BASE_URL`,
 `ANALYZE_API_KEY` and `ANALYZE_MODEL` in `.env`. See
 [.env.example](https://github.com/rshu/TrajViz/blob/main/.env.example) for provider,
@@ -293,9 +299,10 @@ Failure attribution uses the bundled evaluation engine and canonical reference
 data; see the
 [attribution API](https://github.com/rshu/TrajViz/blob/main/agent_trajviz/attribution.py).
 
-The **AWE** tab provides built-in workflow evaluation, full evidence, provenance
-graphs, symptoms, recommendations and saved-run reports. AWE Settings configure
-explicit operations and optional model connections. See the
+The **AWE** tab inspects the loaded trajectory directly, with evidence linked to
+Workflow steps. Reference-based attribution is optional. **Saved runs & evaluation**
+provides provenance graphs, symptoms, recommendations and reports.
+Evaluation settings configure explicit operations and optional model connections. See the
 [AWE guide](https://github.com/rshu/TrajViz/blob/main/docs/awe.md) for the Python API and CLI.
 
 ## Development

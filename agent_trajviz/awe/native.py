@@ -77,18 +77,45 @@ def _native_candidate(path: Path):
     return run
 
 
-def project_native(run, agent: str, instance_id: str):
-    """Project recorded TrajViz rows into AWE's canonical evidence ontology."""
+def _execution_tool(name: str) -> bool:
+    return name.rsplit(".", 1)[-1].lower() in {
+        "bash", "bashcommand", "shell", "exec_command", "write_stdin",
+        "execute", "execute_command", "run_command", "run_shell_command", "shell_command", "terminal",
+    }
+
+
+def _recorded_tool_failure(part: dict) -> bool:
+    from agent_trajviz.insight.tool_failure import tool_call_failed
+
+    return tool_call_failed(part)
+
+
+def project_native(run, agent: str, instance_id: str, *, verify_source: bool = True):
+    """Project recorded TrajViz rows into AWE's canonical evidence ontology.
+
+    ``verify_source=False`` consumes the loaded snapshot, retaining canonical
+    status/metadata and original output without reparsing output text as an exit
+    envelope. It also skips disk fingerprints and code/source verification.
+    """
     from agent_trajviz.awe._engine import adapters as ad
     from agent_trajviz.awe._engine import trajectory as t
 
     result = t.NormalizedTrajectory(agent, instance_id)
-    source_path = Path(run.source) if run.source else None
-    source_files = _fingerprints(source_path) if source_path and source_path.is_file() else []
-    result.source = {"path": str(source_path.resolve()) if source_path else None,
-                     "sha256": run.sha256, "adapter": ADAPTER_VERSION,
-                     "native_format": run.format, "files": source_files, "adapter_sha256": adapter_code_hash(),
-                     "record_index": "TrajViz workflow row and part; native result offsets may be unknown"}
+    if verify_source:
+        source_path = Path(run.source) if run.source else None
+        source_files = _fingerprints(source_path) if source_path and source_path.is_file() else []
+        result.source = {"path": str(source_path.resolve()) if source_path else None,
+                         "sha256": run.sha256, "adapter": ADAPTER_VERSION,
+                         "native_format": run.format, "files": source_files, "adapter_sha256": adapter_code_hash(),
+                         "record_index": "TrajViz workflow row and part; native result offsets may be unknown"}
+    else:
+        # Inspection consumes the already-loaded snapshot, including sources that
+        # have moved or disappeared. It never rereads source/reference files or
+        # upgrades a stored source hash into a fresh integrity verification.
+        result.source = {"path": str(run.source) if run.source else None,
+                         "sha256": run.sha256, "adapter": ADAPTER_VERSION,
+                         "native_format": run.format, "files": [], "identity_basis": "loaded_snapshot",
+                         "record_index": "TrajViz workflow row and part; native result offsets may be unknown"}
     names = {"read": t.READ, "read_file": t.READ, "readfile": t.READ,
              "edit": t.EDIT, "edit_file": t.EDIT, "replace_string": t.EDIT,
              "multiedit": t.EDIT, "notebookedit": t.EDIT,
@@ -134,7 +161,11 @@ def project_native(run, agent: str, instance_id: str):
             command = inp.get("command") or inp.get("cmd")
             action = names.get(name, t.OTHER)
             if isinstance(command, str) and command:
-                action = t.classify_command(command)
+                # Native adapters may retain the original shell command beside
+                # an explicit Read/Write/Edit semantic tool. The command is
+                # evidence, not a reason to discard that recorded file action.
+                if name not in names:
+                    action = t.classify_command(command)
                 args["command"] = command
                 builder = ad._Builder(agent, instance_id)
                 workdir = inp.get("workdir") or inp.get("cwd") or ""
@@ -187,8 +218,8 @@ def project_native(run, agent: str, instance_id: str):
                 continue
             output = output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)
             result_args = ad._recorded_verification_state(metadata, part)
-            exit_code = metadata.get("exit_code", metadata.get("exitCode"))
-            if run.format == "codex":
+            exit_code = metadata.get("exit_code", metadata.get("exitCode", metadata.get("exit")))
+            if verify_source and _execution_tool(native) and run.format == "codex":
                 try:
                     wrapper = json.loads(output)
                 except (ValueError, TypeError):
@@ -201,13 +232,14 @@ def project_native(run, agent: str, instance_id: str):
                         output = wrapper["output"]
                 if type(exit_code) is not int:
                     exit_code, _session_id, output = t.codex_result_header(output)
-            if type(exit_code) is not int:
+            if (verify_source and _execution_tool(native) and run.format == "claude_code"
+                    and _recorded_tool_failure(part) and type(exit_code) is not int):
                 exit_code = t.claude_code_exit_code(output)
             if type(exit_code) is int:
                 result_args["exit_code"] = exit_code
             add(step, part_index, actor="tool", type="tool_result", native_tool=native,
                 call_id=call_id, output_excerpt=output, args=result_args,
-                tool_error=bool(part.get("error") or status in {"error", "failed"}), status=status)
+                tool_error=_recorded_tool_failure(part), status=status)
     return result
 
 

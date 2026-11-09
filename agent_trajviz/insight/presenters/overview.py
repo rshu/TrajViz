@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import plotly.graph_objects as go
 
+from ...i18n import text as ui_text
 from ..formats.common import as_text
 from ..context_usage import PRESSURE_ALL_AGENTS, _explicit_compaction_events
 from ..formatting import (
@@ -138,7 +139,7 @@ def _build_session_detail_html(
         f"background:var(--ov-card);border:1px solid var(--ov-border);"
         f"border-radius:8px;padding:6px 10px;min-width:100px;'>"
         f"<span style='font-size:10px;color:var(--ov-muted);text-transform:uppercase;'>"
-        f"{html.escape(label)}</span>"
+        f"{ui_text(label)}</span>"
         f"<span style='font-size:13px;font-weight:500;'>"
         f"{html.escape(str(val))}</span></div>"
         for label, val in fields
@@ -146,7 +147,7 @@ def _build_session_detail_html(
     return (
         "<details class='session-detail' style='margin:0 0 10px;'>"
         "<summary style='cursor:pointer;font-size:12px;color:var(--ov-muted);"
-        "user-select:none;'>Session details</summary>"
+        f"user-select:none;'>{ui_text('Session details')}</summary>"
         f"<div style='display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;'>{chips}</div>"
         "</details>"
     )
@@ -164,6 +165,7 @@ def _kpi_breakdown_html(
     items: list[tuple[str, int, str]],
     *,
     title: str,
+    localize_names: bool = False,
 ) -> str:
     """Color-coded swatch list used by Steps (agents) and Issues (kinds)."""
     if not items:
@@ -175,7 +177,7 @@ def _kpi_breakdown_html(
             "<div class='ov-kpi-breakdown-row'>"
             f"<span class='ov-kpi-breakdown-swatch' style='background:{color};'></span>"
             f"<span class='ov-kpi-breakdown-name' style='color:{color};' "
-            f"title='{safe}'>{safe}</span>"
+            f"title='{safe}'>{ui_text(name) if localize_names else safe}</span>"
             f"<span class='ov-kpi-breakdown-count'>{count}</span>"
             "</div>"
         )
@@ -212,7 +214,7 @@ def _issues_kpi_parts(issues: list[OverviewIssue]) -> tuple[str, str, str, str, 
         status, detail = "bad", f"{issue_count} issues — review Overview Issues"
     else:
         status, detail = "warn", f"{issue_count} issue{'s' if issue_count != 1 else ''} — review Overview Issues"
-    return value, "", status, detail, _kpi_breakdown_html(items, title="Issues by kind")
+    return value, "", status, detail, _kpi_breakdown_html(items, title="Issues by kind", localize_names=True)
 
 
 def _agent_steps_breakdown(agent_summaries: list[dict] | None) -> str:
@@ -293,20 +295,19 @@ def build_overview_kpi_html(
 
     output_rate = metrics.get("output_tokens_per_sec")
     if isinstance(output_rate, (int, float)) and not isinstance(output_rate, bool):
-        throughput_sub = f"{output_rate:,} gen tok/s"
+        throughput_sub = ui_text("{rate} gen tok/s", rate=f"{output_rate:,}")
         if (metrics.get("output_throughput_tool_wait_seconds") or 0) > 0:
-            throughput_sub += " excl. tools"
+            throughput_sub += " " + ui_text("excl. tools")
     else:
-        throughput_sub = "Generation throughput: N/A"
+        throughput_sub = ui_text("Generation throughput: N/A")
     timed_steps = metrics.get("output_throughput_timed_steps")
     throughput_steps = metrics.get("output_throughput_total_steps")
     if (
-        metrics.get("output_throughput_incomplete")
-        and isinstance(timed_steps, int)
+        isinstance(timed_steps, int)
         and isinstance(throughput_steps, int)
         and throughput_steps > 0
     ):
-        throughput_sub += f" · {timed_steps}/{throughput_steps} timed"
+        throughput_sub += " · " + ui_text("{timed}/{total} timed", timed=timed_steps, total=throughput_steps)
 
     p95 = metrics.get("p95_duration")
     p95_sub = (
@@ -320,7 +321,7 @@ def build_overview_kpi_html(
         (
             "Steps",
             f"{metrics.get('total_steps', 0):,}",
-            f"{metrics.get('assistant_steps', 0)} assistant, {user_steps} user",
+            ui_text("{assistant} assistant, {user} user", assistant=metrics.get('assistant_steps', 0), user=user_steps),
         ),
         ("Wall-Clock", wall_fmt, p95_sub),
         (
@@ -328,10 +329,10 @@ def build_overview_kpi_html(
             ("\u2248" if tokens_estimated else "")
             + ("N/A" if metrics.get('tokens', {}).get('total') is None
                else f"{metrics.get('tokens', {}).get('total', 0):,}"),
-            ("estimated · " if tokens_estimated else "") + throughput_sub,
+            (ui_text("estimated") + " · " if tokens_estimated else "") + throughput_sub,
         ),
-        ("Issues", issue_value, issue_sub),
-        ("Tool Success", _rate_text(metrics.get("tool_success_rate")), f"{metrics.get('tool_call_count', 0):,} calls"),
+        ("Issues", issue_value, ui_text(issue_sub) if issue_sub else ""),
+        ("Tool Success", _rate_text(metrics.get("tool_success_rate")), ui_text("{count} calls", count=f"{metrics.get('tool_call_count', 0):,}")),
     ]
     card_html = []
     for label, value, sub in cards:
@@ -359,18 +360,35 @@ def build_overview_kpi_html(
         help_key = _label_to_help_key.get(label, "")
         help_attr = ""
         if help_key and help_key in HELP_TEXT:
-            help_attr = f" data-help='{html.escape(HELP_TEXT[help_key])}'"
+            from ...i18n import attrs
+            help_attr = " " + attrs(HELP_TEXT[help_key], attribute="data-help")
         sparkline = ""
         if label in sparkline_data:
             sparkline = _build_sparkline_svg(sparkline_data[label])
         sub_block = (
-            f"<div class='ov-kpi-sub'>{html.escape(str(sub))}</div>" if sub else ""
+            f"<div class='ov-kpi-sub'>{sub}</div>" if sub else ""
         )
         extra_line = ""
         if label == "Steps" and agent_breakdown:
             extra_line = agent_breakdown
         elif label == "Issues" and issue_breakdown:
             extra_line = issue_breakdown
+        elif label == "Tokens":
+            # The rate and timing coverage stay visible. Keep the denominator
+            # caveats accessible without making every KPI as tall as this one.
+            detail = verdict_info[1] if verdict_info else ""
+            methodology = (
+                "Output tokens and generation time come from the same timed assistant steps. "
+                "Timed tool and subagent waits are excluded from generation time; waits without "
+                "timing remain in the denominator. Untimed output is excluded from both tokens "
+                "and time, so missing timing cannot inflate the reported rate."
+            )
+            detail_block = f"<p>{html.escape(detail)}</p>" if detail else ""
+            extra_line = (
+                "<details class='ov-kpi-methodology' style='font-size:11px;margin-top:4px;'>"
+                f"<summary style='cursor:pointer;color:var(--ov-muted);'>{ui_text('Throughput details')}</summary>"
+                f"{detail_block}<p>{ui_text(methodology)}</p></details>"
+            )
         elif verdict_info and label != "Issues":
             status, detail = verdict_info
             vcolor = _status_colors.get(status, "#6b7280")
@@ -380,7 +398,7 @@ def build_overview_kpi_html(
             )
         card_html.append(
             f"<div class='ov-kpi-card{extra_class}'{extra_style}{title_attr}{data_attr}{jump_attr}>"
-            f"<div class='ov-kpi-label'{help_attr}>{html.escape(str(label))}</div>"
+            f"<div class='ov-kpi-label'{help_attr}>{ui_text(str(label))}</div>"
             f"<div class='ov-kpi-value'>{html.escape(str(value))}</div>"
             f"{sub_block}"
             f"{extra_line}"
@@ -460,7 +478,7 @@ def build_token_summary_html(session: LoadedSession) -> str:
     )
 
 
-def build_overview_outputs(session: LoadedSession, *, ai_pending: bool = False) -> dict:
+def build_overview_outputs(session: LoadedSession, *, ai_pending: bool = False, workflow_links: bool = True) -> dict:
     """Compute overview-related outputs: banner, KPI, metadata, and metrics markdown."""
     steps = session.steps
     raw = session.raw
@@ -480,7 +498,9 @@ def build_overview_outputs(session: LoadedSession, *, ai_pending: bool = False) 
         agent_summaries=session.agent_summaries,
         tokens_estimated=tokens_are_estimates(session.raw),
     )
-    issues_html = build_overview_issues_html(session, issues=ranked_issues, ai_pending=ai_pending)
+    issues_html = build_overview_issues_html(
+        session, issues=ranked_issues, ai_pending=ai_pending, workflow_links=workflow_links,
+    )
     issues_payload = overview_issues_payload(ranked_issues)
     metrics_text = format_performance_md(metrics, wfmt)
 
@@ -544,24 +564,24 @@ CHART_VIEWS = {
 }
 
 
-def build_chart_outputs(session: LoadedSession, dark: bool = False) -> dict:
+def build_chart_outputs(session: LoadedSession, dark: bool = False, *, workflow_links: bool = True) -> dict:
     """Build Overview chart figures, each from the session's public view."""
     charts = {slot: view_figure(session, view_id, dark=dark) for slot, view_id in CHART_VIEWS.items()}
     return {
         **charts,
         "gantt_fig": build_execution_gantt_chart(session.steps, dark=dark) or empty_plotly_fig(),
-        "agent_cards_html": render_agent_summary_cards(session.agent_summaries),
+        "agent_cards_html": render_agent_summary_cards(session.agent_summaries, workflow_links=workflow_links),
     }
 
 
-def build_diagnostics_outputs(session: LoadedSession, dark: bool = False) -> dict:
+def build_diagnostics_outputs(session: LoadedSession, dark: bool = False, *, workflow_links: bool = True) -> dict:
     """Build diagnostics outputs from precomputed session domain data."""
     empty_fig = empty_plotly_fig()
     interactions = session.file_interactions
     target_files = session.target_files
     file_chart = view_figure(session, "file_interactions", dark=dark) if interactions else empty_fig
 
-    rootcause_html = build_root_cause_html(session.clusters) if session.show_root_cause else ""
+    rootcause_html = build_root_cause_html(session.clusters, workflow_links=workflow_links) if session.show_root_cause else ""
 
     pressure_fig = view_figure(session, "context_pressure", dark=dark)
     pressure_html = format_context_pressure_html(
@@ -580,18 +600,18 @@ def build_diagnostics_outputs(session: LoadedSession, dark: bool = False) -> dic
     parts = []
     chain_metrics = session.chain_metrics
     if chain_metrics["total_chains"]:
-        parts.append(f"{chain_metrics['total_chains']} failure chain(s)")
+        parts.append(ui_text("{count} failure chain(s)", count=chain_metrics['total_chains']))
     if session.clusters:
-        parts.append(f"{len(session.clusters)} root cause(s)")
+        parts.append(ui_text("{count} root cause(s)", count=len(session.clusters)))
     if session.performance_bottlenecks:
-        parts.append(f"{len(session.performance_bottlenecks)} bottleneck(s)")
+        parts.append(ui_text("{count} bottleneck(s)", count=len(session.performance_bottlenecks)))
     if interactions:
         unique_files = len({i["path"] for i in interactions})
-        parts.append(f"{unique_files} file(s) touched · {len(target_files)} edited")
+        parts.append(ui_text("{files} file(s) touched · {edited} edited", files=unique_files, edited=len(target_files)))
     compaction_count = len(session.pressure_series.get("events") or [])
     if compaction_count:
-        parts.append(f"{compaction_count} compaction event(s)")
-    summary = " &middot; ".join(parts) if parts else (
+        parts.append(ui_text("{count} compaction event(s)", count=compaction_count))
+    summary = " &middot; ".join(parts) if parts else ui_text(
         "Some diagnostic checks are unavailable for this telemetry capture."
         if session.raw.get("_otel") else "No diagnostic issues detected."
     )
@@ -614,8 +634,10 @@ def load_warnings_html(session: LoadedSession) -> str:
     if session.truncated:
         extra = session.steps_total - MAX_STEPS
         lines.append(
-            f"<p style='{style}'>&#9888; Showing first {MAX_STEPS:,} of {session.steps_total:,} steps "
-            f"({extra:,} truncated).</p>"
+            f"<p style='{style}'>&#9888; "
+            + ui_text("Showing first {limit} of {total} steps ({truncated} truncated).",
+                      limit=f"{MAX_STEPS:,}", total=f"{session.steps_total:,}", truncated=f"{extra:,}")
+            + "</p>"
         )
     raw = session.raw if isinstance(session.raw, dict) else {}
     if raw.get("_otel"):
@@ -630,9 +652,10 @@ def load_warnings_html(session: LoadedSession) -> str:
             lines.append(f"<p style='{style}'>Partial or unavailable evidence: {html.escape(', '.join(missing))}.</p>")
     if tokens_are_estimates(raw) and (session.metrics.get("tokens") or {}).get("total"):
         lines.append(
-            f"<p style='{style}'>&#9888; Token counts are estimates from the logged text "
-            "(about 4 characters per token): this export does not record the tokens the "
-            "model was billed for.</p>"
+            f"<p style='{style}'>&#9888; "
+            + ui_text("Token counts are estimates from the logged text (about 4 characters per token): "
+                      "this export does not record the tokens the model was billed for.")
+            + "</p>"
         )
     for warning in raw.get("_load_warnings") or []:
         if isinstance(warning, str) and warning:

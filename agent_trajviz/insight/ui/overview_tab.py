@@ -41,7 +41,7 @@ from ..presenters.overview import (
 )
 from ..token_explain import build_token_step_panel_html
 from ..issue_judge import JUDGE_ISSUE_CAP, iter_judge_overview_issues
-from ..llm_config import resolve_analysis_config, resolve_session_settings
+from ..llm_config import request_reply_language, resolve_analysis_config, resolve_session_settings
 from ..session import LoadedSession, session_from_run
 from .shared import SharedState, is_latest_run, safe_callback
 from .upload import (
@@ -234,7 +234,7 @@ def layout(overview_kpi_html: gr.HTML) -> OverviewRefs:
                         )
                         diag_window_limit = gr.Number(
                             label="Window limit (tokens)",
-                            info=f"Empty = detected, else an assumed {DEFAULT_CONTEXT_WINDOW_LIMIT:,}",
+                            info=f"Optional override. Empty uses detected capacity or a disclosed {DEFAULT_CONTEXT_WINDOW_LIMIT:,}-token assumption.",
                             value=None,
                             precision=0,
                             minimum=1,
@@ -250,7 +250,7 @@ def layout(overview_kpi_html: gr.HTML) -> OverviewRefs:
 
                 with gr.Column(visible=False) as tools_section:
                     gr.HTML(render_section_guide("tools_section"))
-                    behavior_md = gr.Markdown("")
+                    behavior_md = gr.Markdown("", elem_classes=["tv-owned-markdown"])
                     with gr.Row(equal_height=True):
                         tool_chart = gr.Plot(show_label=False, label="Tool Call Frequency")
                         tool_duration_chart = gr.Plot(
@@ -295,9 +295,9 @@ def layout(overview_kpi_html: gr.HTML) -> OverviewRefs:
 
                 with gr.Column(visible=False) as deep_dive_section:
                     gr.HTML(render_section_guide("deep_dive_section"))
-                    metrics_md = gr.Markdown("")
-                    hotspots_md = gr.Markdown("")
-                    per_message_md = gr.Markdown("")
+                    metrics_md = gr.Markdown("", elem_classes=["tv-owned-markdown"])
+                    hotspots_md = gr.Markdown("", elem_classes=["diagnostics-data-table"])
+                    per_message_md = gr.Markdown("", elem_classes=["diagnostics-data-table"])
 
                 with gr.Column(visible=False) as labels_section:
                     gr.HTML(render_section_guide("labels_section"))
@@ -485,15 +485,10 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
             value=dg["diag_pressure_dropdown"]["value"],
             visible=dg["diag_pressure_dropdown"]["visible"],
         ),
-        # Pre-fill only a window that was detected. Programmatic updates fire
-        # `.change`, which re-applies the field as a USER override — so a
-        # pre-filled 128k fallback would silently become "user-set", lose its
-        # "assumed" label, and bring back a percentage the export disproves.
-        "diag_window_limit": (
-            session.pressure_series.get("window_limit")
-            if session.pressure_series.get("window_source") in ("declared", "model")
-            else None
-        ),
+        # A detected value belongs in the context readout, not the override
+        # input: Gradio's programmatic .change would turn it into a user value
+        # and erase its reported/model-inferred basis on the next redraw.
+        "diag_window_limit": None,
         "diag_usage_snapshot": _snapshot_dropdown_update(session.steps),
         "diag_pressure_chart": dg["diag_pressure_chart"],
         "diag_file_chart": dg["diag_file_chart"],
@@ -545,7 +540,7 @@ def prepare_issues_agent_download(run, issues_rows, request: gr.Request | None =
         return _export_off()
 
 
-def on_suggest_fixes(run, settings=None, request: gr.Request | None = None):
+def on_suggest_fixes(run, settings=None, ui_language=None, reply_language=None, request: gr.Request | None = None):
     """Run the LLM run summary + Issues judge after load (or on button click); stream progress into the panel.
 
     The stream paints the Issues panel across many yields while the run it
@@ -598,7 +593,10 @@ def on_suggest_fixes(run, settings=None, request: gr.Request | None = None):
     if _superseded():
         return
     try:
-        ai_summary = judge_run_summary(session, config=cfg, language=active.language)
+        ai_summary = judge_run_summary(
+            session, config=cfg,
+            language=request_reply_language(active.language, ui_language, reply_language),
+        )
     except Exception as exc:  # noqa: BLE001 — rows stay hidden; banner explains
         summary_error = _judge_error_text(exc)
 
@@ -614,7 +612,8 @@ def on_suggest_fixes(run, settings=None, request: gr.Request | None = None):
     judged = ranked
     errors: list[str] = []
     for progress in iter_judge_overview_issues(
-        session, ranked, config=cfg, limit=JUDGE_ISSUE_CAP, language=active.language,
+        session, ranked, config=cfg, limit=JUDGE_ISSUE_CAP,
+        language=request_reply_language(active.language, ui_language, reply_language),
     ):
         judged = progress.issues
         errors = progress.errors
@@ -666,6 +665,9 @@ def bind(
     shared: SharedState,
     upload: UploadRefs,
     load_events: tuple = (),  # kept for the uniform tab-bind signature
+    *,
+    language: gr.Radio | None = None,
+    reply_language: gr.Dropdown | None = None,
 ) -> tuple:
     overview_section_names = OVERVIEW_SECTION_NAMES
     overview_sections = _resolve_overview_sections(refs)
@@ -698,12 +700,17 @@ def bind(
         outputs=[refs.gantt_chart],
     )
 
-    settings_inputs = (
-        [shared.state_settings] if shared.state_settings is not None else []
-    )
+    judge_settings_inputs = [shared.state_settings] if shared.state_settings is not None else []
+    if (language is not None or reply_language is not None) and not judge_settings_inputs:
+        judge_settings_inputs = [gr.State(None)]
+    judge_language_inputs = [language] if language is not None else []
+    if reply_language is not None:
+        if language is None:
+            judge_language_inputs = [gr.State(None)]
+        judge_language_inputs.append(reply_language)
     judge_event = dict(
         fn=on_suggest_fixes,
-        inputs=[shared.state_run, *settings_inputs],
+        inputs=[shared.state_run, *judge_settings_inputs, *judge_language_inputs],
         outputs=[refs.issues_html, shared.state_overview_issues],
         show_progress="minimal",
         concurrency_id="issues_judge",

@@ -69,7 +69,8 @@ measurement as zero.
 
 [`export_json`](api/agent_trajviz.html#export_json) writes each selected view,
 `index.json`, and a reloadable `trajectory.json`. Existing files with those
-names are replaced; unrelated files are preserved.
+names are replaced; unrelated files are preserved. Exports refuse to overwrite
+consumed source files, including child logs, even through filesystem aliases.
 
 <!-- trajviz:run -->
 ```python
@@ -100,8 +101,12 @@ report_path = tv.write_report(run, "report.html", inline_plotly=True)
 
 With the `app` extra installed through pip, or with Homebrew, run
 `agent-trajviz` and open the local URL it prints. Load the same session there.
-Use **Settings** to configure the model
-connection, request options and reply language. Connection details can be
+Open **AI Trajectory Analysis → Settings** to configure the model
+connection and request options. The **Reply language** dropdown selects English
+or Simplified Chinese for the next response; **EN | 中** updates its default.
+Use **Analyze trajectory** on
+the Analysis tab when you are ready. **Test API key** checks the entered connection
+with a small model request without applying settings or sending trajectory data. Connection details can be
 remembered in the browser; entered API keys remain in that session. Applying
 settings sends no model request.
 

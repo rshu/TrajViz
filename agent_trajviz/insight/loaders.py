@@ -8,6 +8,7 @@ import.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from .formats.claude_code import convert_claude_code_events
@@ -81,6 +82,8 @@ def _convert_codex_events(payload: list, *, source_path: str | None = None) -> d
         payload, source_path=source_path or "", child_event_lists=bundle.children, child_warnings=bundle.warnings,
     )
     result["_codex_child_hashes"] = bundle.child_hashes
+    result["_input_files"] = [source_path, *(child["source_path"] for child in bundle.children.values()
+                                            if isinstance(child, dict) and child.get("source_path"))]
     return result
 
 
@@ -105,6 +108,8 @@ def _convert_claude_events(payload: list, *, source_path: str | None = None) -> 
         payload, source_path=source_path, child_event_lists=bundle.children, child_warnings=bundle.warnings,
     )
     result["_claude_code_child_hashes"] = bundle.child_hashes
+    result["_input_files"] = [source_path, *(child["source_path"] for child in bundle.children.values()
+                                            if isinstance(child, dict) and child.get("source_path"))]
     return result
 
 
@@ -137,6 +142,9 @@ def detect_format(raw: Any) -> str:
     if isinstance(raw, list):
         return _detect_event_stream_format(raw)
     if isinstance(raw, dict):
+        resolved = raw.get("_source_format")
+        if isinstance(resolved, str) and resolved in FORMAT_LABELS:
+            return resolved
         return _detect_object_format(raw)
     return "unknown"
 
@@ -282,6 +290,7 @@ def _load_zip_trajectory(file_path: str, format_hint: str | None, source_sha: st
             child_event_lists=claude.children, child_warnings=claude.warnings,
         )
         result["_source_path"] = file_path
+        result["_input_files"] = [str(Path(file_path).resolve())]
         result["_source_sha256"] = source_sha
         return result
     if not isinstance(parsed, DshZipContents):
@@ -308,6 +317,7 @@ def _load_zip_trajectory(file_path: str, format_hint: str | None, source_sha: st
     if "_error" in result:
         return result
     result["_source_path"] = file_path
+    result["_input_files"] = [str(Path(file_path).resolve())]
     result["_source_sha256"] = source_sha
     return result
 
@@ -434,7 +444,15 @@ def _load_trajectory_unguarded(file_path: str, format_hint: str | None = None) -
     codex_children = result.pop("_codex_child_hashes", None)
     if "_error" in result:
         return result
+    # The resolved selection is authoritative even when the input lacked the
+    # normal identifying markers and the caller selected its converter.
+    result["_source_format"] = fmt
     result["_source_path"] = file_path
+    if not (isinstance(payload, list) and fmt in {"claude_code", "codex"}) and fmt != "otlp":
+        result["_input_files"] = [str(Path(file_path).resolve())]
+    if merged_sources:
+        result["_input_files"].extend(path for _, path in merged_sources)
+    result["_input_files"] = [str(Path(path).resolve()) for path in result.get("_input_files", []) if path]
     if fmt == "otlp":
         # The OTLP reader hashes the exact bytes it consumed and stamps the
         # selected session/profile identity; retain it on fallback detection.

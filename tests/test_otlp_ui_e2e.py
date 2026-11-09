@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from i18n_test_helpers import unmark_html
 
 import agent_trajviz as tv
 from agent_trajviz.insight.issues import OverviewIssue
@@ -44,8 +45,8 @@ def test_observed_issues_remain_visible_with_limited_coverage(tmp_path):
     directory, _ = _bundle(tmp_path, partial=True)
     session = session_from_run(tv.load(directory, session_id="demo-session"))
     issue = OverviewIssue("error", "Observed command failed", "The captured result reports an error", steps=(2,))
-    panel = build_overview_issues_html(session, issues=[issue], progress="Reviewing captured error")
-    assert "1 个问题 · 证据有限" in panel
+    panel = unmark_html(build_overview_issues_html(session, issues=[issue], progress="Reviewing captured error"))
+    assert "1 issue · limited evidence" in panel
     assert "Observed command failed" in panel
     assert "Reviewing captured error" in panel
     assert "未检测到问题" not in panel
@@ -100,7 +101,8 @@ def test_observed_partial_invalid_native_ui_transition_has_no_stale_state(tmp_pa
     assert inspection["visible"] is False
     cleared = load.do_load(str(invalid))
     assert cleared["state_run"] is None and cleared["state_raw"] == {} and cleared["state_steps"] == []
-    assert cleared["main_tabs"]["visible"] is False
+    # A native error must not make the independent saved-AWE workspace disappear.
+    assert cleared["main_tabs"]["visible"] is True
     assert cleared["overview_kpi_html"]["value"] == ""
     assert cleared["overview_kpi_html"]["visible"] is False
     assert cleared["issues_html"] == ""
@@ -192,11 +194,11 @@ def test_failed_model_error_details_are_visible_and_escaped(tmp_path, source):
 def test_missing_otlp_usage_is_unavailable_in_workflow_cards_and_detail(tmp_path):
     run = tv.load(_write(tmp_path, [_span(1, "llm_request", request_id="unmeasured")]))
     assert "n/a tok" in render_workflow_html(run.steps)
-    detail = format_step_detail(run.steps[0])
+    detail = unmark_html(format_step_detail(run.steps[0]))
     for metric in ("Total Tokens", "Input Tokens", "Output Tokens", "Reasoning Tokens", "Cache Read", "Cache Write",
                    "Throughput", "Cache Ratio"):
         assert f"<td>{metric}</td><td>n/a</td>" in detail
     measured = tv.load(_write(tmp_path / "zero", [_span(2, "llm_request", input_tokens=0, output_tokens=0,
                                                          cache_read_tokens=0, cache_creation_tokens=0)]))
     assert "0 tok" in render_workflow_html(measured.steps)
-    assert "<td>Total Tokens</td><td>0</td>" in format_step_detail(measured.steps[0])
+    assert "<td>Total Tokens</td><td>0</td>" in unmark_html(format_step_detail(measured.steps[0]))

@@ -53,7 +53,7 @@ class IssuesJudgeLoadTests(unittest.TestCase):
 
 
 class SidebarAnalysisOptInTests(unittest.TestCase):
-    """The AI analysis sidebar only calls out when the user opened the panel."""
+    """Loading a trajectory does not call out, even while Settings is open."""
 
     def test_load_with_closed_sidebar_does_not_call_the_provider(self):
         from agent_trajviz.insight import assistant
@@ -73,8 +73,7 @@ class SidebarAnalysisOptInTests(unittest.TestCase):
             self.assertTrue(handlers, "sidebar load handler not found")
             steps = [{"index": 0, "role": "user", "parts": [], "tool_calls": []}]
             for bf in handlers:
-                # sidebar_open=False is the default: panel starts collapsed.
-                bf.fn(steps, "", False)
+                bf.fn(steps, "")
         finally:
             sidebar.analyze_loaded_trajectory = original
             assistant.analyze_loaded_trajectory = original

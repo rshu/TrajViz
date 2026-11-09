@@ -27,9 +27,12 @@ _FIXTURE = (
 
 # Every tab the composer builds. A tab that stops reaching the browser takes its
 # whole feature with it and raises nothing, so the set is asserted explicitly.
-EXPECTED_TABS = {"Overview", "Patterns", "Attribution", "AWE", "Comparison", "Workflow", "Raw Data",
-                 "Case evidence", "Provenance graph", "Symptoms", "Recommendations", "Reports & discovery",
-                 "Provenance", "RSI exchange"}
+EXPECTED_MAIN_TABS = {"Overview", "Patterns", "AWE", "Comparison", "Workflow", "Raw Data"}
+EXPECTED_TABS = EXPECTED_MAIN_TABS | {
+    "Trajectory", "Saved runs & evaluation",
+    "Case evidence", "Provenance graph", "Symptoms", "Recommendations", "Reports & discovery",
+    "Provenance", "RSI exchange", "Analysis", "Settings",
+}
 
 
 def _free_port():
@@ -49,6 +52,12 @@ def _tab_labels(components):
         for comp in components
         if comp.get("type") == "tabitem"
     }
+
+
+def _layout_nodes(node):
+    yield node
+    for child in node.get("children", []):
+        yield from _layout_nodes(child)
 
 
 class ServedDashboardTests(unittest.TestCase):
@@ -94,12 +103,56 @@ class ServedDashboardTests(unittest.TestCase):
         """Tabs are built in one place and consumed in another; keep them equal.
 
         Only the load-backed tabs are covered by the packer's key check, so a
-        dropped Attribution or Comparison tab would raise nothing at all.
+        dropped AWE or Comparison tab would raise nothing at all.
         """
         status, body = _get(self.base + "/config")
         self.assertEqual(status, 200)
-        served = _tab_labels(json.loads(body).get("components", []))
+        config = json.loads(body)
+        components = {component["id"]: component for component in config["components"]}
+        served = _tab_labels(components.values())
         self.assertEqual(served, EXPECTED_TABS)
+
+        layout = list(_layout_nodes(config["layout"]))
+
+        def named_layout(elem_id):
+            matches = [node for node in layout
+                       if components.get(node["id"], {}).get("props", {}).get("elem_id") == elem_id]
+            self.assertEqual(len(matches), 1, f"expected one {elem_id} container")
+            return matches[0]
+
+        # Main navigation stays separate from nested workspace/configuration tabs.
+        main = named_layout("main-tabs")
+        main_children = [components[node["id"]] for node in main.get("children", [])]
+        self.assertEqual(len(main_children), len(EXPECTED_MAIN_TABS))
+        self.assertEqual(_tab_labels(main_children), EXPECTED_MAIN_TABS)
+        self.assertEqual(_tab_labels(component for component in main_children
+                                     if component.get("props", {}).get("visible", True)),
+                         EXPECTED_MAIN_TABS - {"Patterns"})
+
+        # Both evidence sources share one main AWE workspace, while retaining
+        # distinct controls and state below its source selector.
+        awe = named_layout("awe-workspace")
+        self.assertIn(awe["id"], {node["id"] for node in main.get("children", [])})
+        source_tabs = named_layout("awe-workspace-tabs")
+        self.assertIn(source_tabs["id"], {node["id"] for node in _layout_nodes(awe)})
+        source_children = [components[node["id"]] for node in source_tabs.get("children", [])]
+        self.assertEqual(_tab_labels(source_children), {"Trajectory", "Saved runs & evaluation"})
+        self.assertEqual(len(source_children), 2)
+
+        sidebar = named_layout("analysis-sidebar")
+        sidebar_ids = {node["id"] for node in _layout_nodes(sidebar)}
+        panel_tabs = named_layout("analysis-tabs")
+        self.assertIn(panel_tabs["id"], sidebar_ids)
+        panel_children = [components[node["id"]] for node in panel_tabs.get("children", [])]
+        self.assertEqual(len(panel_children), 2)
+        self.assertEqual(_tab_labels(panel_children), {"Analysis", "Settings"})
+        panel_tab_ids = {component["id"] for component in panel_children}
+        all_configuration_tabs = {component["id"] for component in components.values()
+                                  if component.get("type") == "tabitem"
+                                  and component.get("props", {}).get("label") in {"Analysis", "Settings"}}
+        self.assertEqual(all_configuration_tabs, panel_tab_ids)
+        self.assertTrue(panel_tab_ids <= sidebar_ids)
+        self.assertFalse(panel_tab_ids & {node["id"] for node in _layout_nodes(main)})
 
         built = {
             block.label
@@ -109,15 +162,14 @@ class ServedDashboardTests(unittest.TestCase):
         self.assertEqual(served, built)
 
     def test_cross_tab_jumps_use_the_gradio_6_tab_selector(self):
-        """``.tab-nav`` does not exist in Gradio 6: it would be a silent no-op.
-
-        Every chart click and diagnostics chip reaches the Workflow tab through
-        a label lookup over ``button[role=tab]``. If a ``.tab-nav`` selector ever
-        comes back, the jumps stop working with no error anywhere.
-        """
+        """Served jumps target real main tabs and mobile overflow buttons."""
         _status, body = _get(self.base + "/config")
-        self.assertIn("button[role=tab]", body)
-        self.assertNotIn("tab-nav", body)
+        config = json.loads(body)
+        scripts = "\n".join(dependency.get("js") or "" for dependency in config["dependencies"])
+        self.assertIn("getElementById('main-tabs')", scripts)
+        self.assertIn('.tab-container[role="tablist"] button[role="tab"]', scripts)
+        self.assertIn(".overflow-dropdown button", scripts)
+        self.assertNotIn("tab-nav", scripts)
 
     def test_the_workflow_jump_has_exactly_one_emitter(self):
         """Two divergent definitions of the jump would fight over the same name."""

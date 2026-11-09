@@ -7,7 +7,7 @@ import re
 
 from .canonical import (
     CanonicalAction, compute_action_cost, semantic_equivalent,
-    canonicalize_steps, assign_effect_labels, DEFAULT_TOKEN_RATE,
+    canonicalize_steps, assign_effect_labels, _comparison_actions, DEFAULT_TOKEN_RATE,
 )
 
 
@@ -393,6 +393,8 @@ def build_comparison_report_from_steps(
     # Effect labeling
     assign_effect_labels(ref_actions, ref_steps, anchor_files)
     assign_effect_labels(cmp_actions, cmp_steps, anchor_files)
+    ref_actions = _comparison_actions(ref_actions, ref_raw)
+    cmp_actions = _comparison_actions(cmp_actions, cmp_raw)
 
     # Layer 1: Outcome
     ref_success = _detect_success(ref_steps)
@@ -485,6 +487,8 @@ def build_comparison_report_from_steps(
                 "Unanchored Layer 2 metrics are informational. Consider using --anchor-patch."
             )
     notes.append("This comparison is observational for one task pair.")
+    notes.append("File paths inside a recorded session working directory are compared relative to that directory; "
+                 "other paths retain their existing identity.")
     notes.append("Patterns are not promoted to general knowledge until confirmed across tasks.")
 
     # Determine agent names from metadata

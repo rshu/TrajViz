@@ -6,6 +6,8 @@ import math
 from collections import Counter, defaultdict
 from collections.abc import Sequence
 
+from ...i18n import localize_figure
+
 from ._layout import (
     _add_legend_hint,
     _apply_chart_layout,
@@ -196,6 +198,7 @@ def _finalize_step_chart(
         fig.update_layout(**extra_layout)
     _add_legend_hint(fig)
     _apply_dark(fig, dark)
+    localize_figure(fig, trace_names=True)
     return fig
 
 
@@ -1038,4 +1041,5 @@ def draw_agent_tokens(data: dict, dark: bool = False) -> go.Figure:
     )
     fig.update_layout(margin=dict(t=70))
     _apply_dark(fig, dark)
+    localize_figure(fig, trace_names=True)
     return fig

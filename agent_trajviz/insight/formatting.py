@@ -3,6 +3,7 @@
 import html
 import re
 
+from ..i18n import text as ui_text
 from .analysis import hotspots
 from .metrics import wall_clock_fmt  # noqa: F401  (re-exported: the display layer's callers import it here)
 
@@ -49,7 +50,7 @@ def _md_cell_text(value: object) -> str:
 
 
 def _metric_chip(label: str, value: str, *, wide: bool = False,
-                 verdict: str | None = None, hint: str = "") -> str:
+                 verdict: str | None = None, hint: str = "", localize_label: bool = True) -> str:
     """Render a single metric as a compact card chip (HTML).
 
     *verdict* adds a colored left border (good/warn/bad).
@@ -58,9 +59,11 @@ def _metric_chip(label: str, value: str, *, wide: bool = False,
     # label/value can be untrusted (tool, model, agent names); flatten to one
     # line (a newline would break the chip out of its markdown block) and
     # escape for HTML.
-    label = html.escape(_display_text(label))
+    # Names read from the trajectory opt out explicitly; a tool named "Input"
+    # is data, whereas the Input metric caption is application-owned text.
+    label = ui_text(_display_text(label)) if localize_label else html.escape(_display_text(label))
     value = html.escape(_display_text(value))
-    hint = html.escape(_display_text(hint)) if hint else ""
+    hint = ui_text(_display_text(hint)) if hint else ""
     min_w = "140px" if wide else "100px"
     border_left = ""
     bg = "var(--ov-chip-bg, #f8fafc)"
@@ -317,7 +320,7 @@ def format_performance_md(metrics: dict, wall_fmt: str) -> str:
     ]
 
     tool_chips = [
-        _metric_chip(k, str(v))
+        _metric_chip(k, str(v), localize_label=False)
         for k, v in sorted(metrics["tool_breakdown"].items(), key=lambda x: -x[1])
     ]
     # Build agent chips with main agent included and sub-agents labeled
@@ -330,9 +333,9 @@ def format_performance_md(metrics: dict, wall_fmt: str) -> str:
         agent_chips.append(_metric_chip("main agent", f"{main_agent_steps} steps", wide=True))
         for k, v in sorted(agent_bd.items(), key=lambda x: -x[1]):
             label = agent_labels.get(k) or f"sub-agent {k[:12]}"
-            agent_chips.append(_metric_chip(label, f"{v} steps", wide=True))
+            agent_chips.append(_metric_chip(label, f"{v} steps", wide=True, localize_label=False))
     model_chips = [
-        _metric_chip(k, str(v))
+        _metric_chip(k, str(v), localize_label=False)
         for k, v in sorted(metrics.get("model_breakdown", {}).items(), key=lambda x: -x[1])
     ]
 
@@ -454,23 +457,25 @@ def format_behavioral_md(metrics: dict, diag_metrics: dict | None = None) -> str
 def format_banner_html(filename: str, metrics: dict, wall_fmt: str) -> str:
     """Build the one-line HTML summary banner for the loaded trajectory."""
     import html as _html
+    rate = metrics.get('tool_success_rate')
+    success = ui_text("{rate}% success", rate=rate) if isinstance(rate, (int, float)) else ui_text("no success rate")
     parts = [
         f"<strong>{_html.escape(filename)}</strong> &nbsp;&mdash;&nbsp; ",
-        f"{metrics['total_steps']} steps &middot; ",
-        f"{metrics['tool_call_count']} tool calls ({_success_text(metrics.get('tool_success_rate'))}) &middot; ",
+        ui_text("{count} steps", count=metrics['total_steps']) + " &middot; ",
+        ui_text("{count} tool calls", count=metrics['tool_call_count']) + f" ({success}) &middot; ",
     ]
     # Only show token metrics if the format provides them
     total_tokens = metrics.get("tokens", {}).get("total", 0)
     if total_tokens is not None and total_tokens > 0:
-        parts.append(f"{total_tokens:,} tokens &middot; ")
+        parts.append(ui_text("{count} tokens", count=f"{total_tokens:,}") + " &middot; ")
         output_rate = metrics.get("output_tokens_per_sec")
         if isinstance(output_rate, (int, float)) and not isinstance(output_rate, bool):
-            parts.append(f"{output_rate} gen tok/s &middot; ")
+            parts.append(ui_text("{rate} gen tok/s", rate=output_rate) + " &middot; ")
         else:
-            parts.append(f"{metrics['tokens_per_second']} total processed tok/s &middot; ")
-    parts.append(f"{wall_fmt} wall-clock")
+            parts.append(ui_text("{rate} total processed tok/s", rate=metrics['tokens_per_second']) + " &middot; ")
+    parts.append(ui_text("{duration} wall-clock", duration=wall_fmt))
     if (metrics.get("reasoning_parts") or 0) > 0:
-        parts.append(f" &middot; {metrics['reasoning_parts']} reasoning")
+        parts.append(" &middot; " + ui_text("{count} reasoning", count=metrics['reasoning_parts']))
     return "".join(parts)
 
 
@@ -519,8 +524,19 @@ def format_context_pressure_html(
             )
         )
     note = stats.get("window_note") or ""
+    limit = stats.get("window_limit")
+    if not note and isinstance(limit, (int, float)) and limit > 0:
+        basis = {
+            "override": f"Capacity manually overridden to {limit:,.0f} tokens (user supplied).",
+            "declared": f"Capacity reported by the trajectory: {limit:,.0f} tokens.",
+            "model": (f"Capacity estimated from the model name ({limit:,.0f} tokens); "
+                      "the export does not report a context capacity."),
+            "default": (f"Capacity assumed: {limit:,.0f} tokens; "
+                        "the export does not report a capacity and its model has no catalog entry."),
+        }
+        note = basis.get(window_source, "")
     note_html = (
-        f"<div style='font-size:12px;color:var(--ov-muted);margin:-2px 0 8px;'>{html.escape(note)}</div>"
+        f"<div class='context-window-basis' style='font-size:12px;color:var(--ov-muted);margin:-2px 0 8px;'>{html.escape(note)}</div>"
         if note else ""
     )
     return (

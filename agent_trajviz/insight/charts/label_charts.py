@@ -5,17 +5,21 @@ from __future__ import annotations
 from ._layout import _apply_chart_layout, _apply_dark, _empty_figure
 import plotly.graph_objects as go
 
+from ...i18n import localize_figure
+from ...i18n.label_names import label_spec
 from ..palette import LABEL_PHASE_COLORS
 
 _LABEL_FONT = dict(size=13)  # consistent font size across label charts
 _CANONICAL_PHASES = ["understand", "plan", "implement", "debug", "validate", "report"]
 
 
-def _add_phase_legend(fig: go.Figure, phases_used: set[str]) -> None:
+def _add_phase_legend(fig: go.Figure, phases_used: set[str]) -> dict[int, dict]:
     """Add invisible trace per phase to create a color legend."""
     canonical = ["understand", "plan", "implement", "debug", "validate", "report"]
+    trace_labels = {}
     for phase in canonical:
         if phase in phases_used:
+            trace_labels[len(fig.data)] = {"name": label_spec("phase", phase)}
             fig.add_trace(
                 go.Bar(
                     x=[None],
@@ -25,6 +29,7 @@ def _add_phase_legend(fig: go.Figure, phases_used: set[str]) -> None:
                     showlegend=True,
                 )
             )
+    return trace_labels
 
 
 def _build_label_bar_chart(
@@ -33,6 +38,7 @@ def _build_label_bar_chart(
     title: str,
     *,
     orientation: str = "v",
+    label_kind: str = "phase",
     value_format: str = "",
     xaxis: str | None = None,
     yaxis: str | None = None,
@@ -47,6 +53,7 @@ def _build_label_bar_chart(
         color_fn: callable(label) -> hex color string
         title: chart title
         orientation: "v" for vertical, "h" for horizontal
+        label_kind: builtin taxonomy namespace used only for display labels
         value_format: format spec for text labels (e.g. ".1f" for durations)
         xaxis/yaxis: axis titles
         empty_message: message for empty chart
@@ -87,22 +94,27 @@ def _build_label_bar_chart(
         if action_to_phase:
             phases = [action_to_phase.get(a, "") for a in labels]
             bar_kwargs["customdata"] = phases
-            bar_kwargs["hovertemplate"] = (
-                "%{y} (%{customdata}): %{x" + (f":{value_format}" if value_format else "") + "}<extra></extra>"
-            )
+            hover_labels = [{"template": "{action} ({phase})", "labels": {
+                "action": label_spec("action", action), "phase": label_spec("phase", phase),
+            }} for action, phase in zip(labels, phases, strict=True)]
         else:
-            bar_kwargs["hovertemplate"] = "%{y}: %{x}<extra></extra>"
+            hover_labels = [label_spec(label_kind, label) for label in labels]
+        bar_kwargs["hovertemplate"] = (
+            "%{hovertext}: %{x" + (f":{value_format}" if value_format else "") + "}<extra></extra>"
+        )
     else:
         bar_kwargs.update(x=labels, y=values)
+        hover_labels = [label_spec(label_kind, label) for label in labels]
         hover_fmt = f":{value_format}" if value_format else ""
-        bar_kwargs["hovertemplate"] = "%{x}: %{y" + hover_fmt + "}<extra></extra>"
+        bar_kwargs["hovertemplate"] = "%{hovertext}: %{y" + hover_fmt + "}<extra></extra>"
 
     fig = go.Figure(go.Bar(**bar_kwargs))
+    trace_labels = {0: {"hovertext": hover_labels}}
 
     # Add phase legend for action charts
     if action_to_phase:
         phases_used = set(action_to_phase.get(a, "") for a in labels)
-        _add_phase_legend(fig, phases_used)
+        trace_labels.update(_add_phase_legend(fig, phases_used))
 
     # Layout
     layout_kwargs: dict = dict(margin=dict(t=50, b=40, l=60, r=40))
@@ -125,7 +137,11 @@ def _build_label_bar_chart(
         layout_kwargs["height"] = 380
 
     _apply_chart_layout(fig, title, xaxis=xaxis, yaxis=yaxis, **layout_kwargs)
-    return fig
+    axis = "yaxis" if orientation == "h" else "xaxis"
+    fig.update_layout(**{axis: {"tickmode": "array", "tickvals": labels}})
+    return localize_figure(fig, trace_labels=trace_labels, layout_labels={
+        f"{axis}.ticktext": [label_spec(label_kind, label) for label in labels],
+    })
 
 
 def build_label_phase_count_chart(phase_counts: dict[str, int], dark: bool = False) -> go.Figure:
@@ -152,6 +168,7 @@ def build_label_action_count_chart(
         color_fn=lambda a: LABEL_PHASE_COLORS.get(action_to_phase.get(a, ""), "#6b7280"),
         title="Step Count by Action",
         orientation="h",
+        label_kind="action",
         xaxis="Steps",
         empty_message="No action data",
         action_to_phase=action_to_phase,
@@ -185,6 +202,7 @@ def build_label_action_duration_chart(
         color_fn=lambda a: LABEL_PHASE_COLORS.get(action_to_phase.get(a, ""), "#6b7280"),
         title="Duration by Action",
         orientation="h",
+        label_kind="action",
         value_format=".1f",
         xaxis="Duration (s)",
         empty_message="No action duration data",
@@ -262,7 +280,13 @@ def _build_phase_comparison_chart(
     if max_val > 0:
         fig.update_yaxes(range=[0, max_val * 1.12])
     _apply_dark(fig, dark)
-    return fig
+    fig.update_xaxes(tickmode="array", tickvals=phases)
+    return localize_figure(fig, layout_labels={
+        "xaxis.ticktext": [label_spec("phase", phase) for phase in phases],
+    }, trace_labels={index: {
+        "hovertext": [label_spec("phase", phase) for phase in phases],
+        "hovertemplate": "%{hovertext}: %{y:" + value_format + "}<extra>%{fullData.name}</extra>",
+    } for index in range(len(fig.data))})
 
 
 def build_phase_count_comparison_chart(
@@ -327,33 +351,31 @@ def build_label_timeline_chart(steps: list[dict], dark: bool = False) -> go.Figu
     # --- Assistant bars (only non-user rows; user rows get 0) ---
     asst_durations = [d if r != "user" else 0 for d, r in zip(durations, roles, strict=False)]
     asst_colors = [LABEL_PHASE_COLORS.get(p, "#6b7280") for p in phases]
-    asst_text = [f"{a}  ({d:.1f}s)" if r != "user" else "" for r, a, d in zip(roles, actions, durations, strict=False)]
+    asst_text = [{"template": "{action}  ({duration:.1f}s)", "params": {"duration": duration},
+                  "labels": {"action": label_spec("action", action)}} if role != "user" else {"literal": ""}
+                 for role, action, duration in zip(roles, actions, durations, strict=False)]
     asst_hover = [
-        (
-            f"<b>Step {step_indices[i]}</b><br>"
-            f"Phase: {phases[i]}<br>"
-            f"Action: {actions[i]}<br>"
-            f"Duration: {durations[i]:.1f}s<br>"
-            f"Tokens: {s.get('tokens_total', 0):,}"
-        )
-        if roles[i] != "user"
-        else ""
+        {"template": "<b>Step {index}</b><br>Phase: {phase}<br>Action: {action}<br>"
+                     "Duration: {duration:.1f}s<br>Tokens: {tokens:,}",
+         "params": {"index": step_indices[i], "duration": durations[i], "tokens": s.get("tokens_total", 0)},
+         "labels": {"phase": label_spec("phase", phases[i]), "action": label_spec("action", actions[i])}}
+        if roles[i] != "user" else {"literal": ""}
         for i, s in enumerate(steps)
     ]
 
     fig = go.Figure()
+    trace_labels = {0: {"text": asst_text, "hovertext": asst_hover}}
+    layout_labels = {}
     fig.add_trace(
         go.Bar(
             x=asst_durations,
             y=y_pos,
             orientation="h",
             marker_color=asst_colors,
-            text=asst_text,
             textposition="outside",
             outsidetextfont=dict(size=11),
             textangle=0,
             cliponaxis=False,
-            hovertext=asst_hover,
             hoverinfo="text",
             showlegend=False,
         )
@@ -364,9 +386,11 @@ def build_label_timeline_chart(steps: list[dict], dark: bool = False) -> go.Figu
     user_indices = [i for i, r in enumerate(roles) if r == "user"]
     if user_indices:
         user_hover = [
-            f"<b>Step {step_indices[i]} — user prompt</b><br>{steps[i].get('text_preview', '')[:120]}"
+            {"template": "<b>Step {index} — user prompt</b><br>{preview}",
+             "params": {"index": step_indices[i], "preview": steps[i].get("text_preview", "")[:120]}}
             for i in user_indices
         ]
+        trace_labels[len(fig.data)] = {"hovertext": user_hover}
         fig.add_trace(
             go.Bar(
                 x=[user_bar_width] * len(user_indices),
@@ -375,12 +399,12 @@ def build_label_timeline_chart(steps: list[dict], dark: bool = False) -> go.Figu
                 width=0.8,  # match agent bar height
                 marker_color=_USER_COLOR,
                 marker_line=dict(color=_USER_BORDER, width=1),
-                hovertext=user_hover,
                 hoverinfo="text",
                 showlegend=False,
             )
         )
         for yi in user_indices:
+            layout_labels[f"annotations[{len(fig.layout.annotations)}].text"] = "<i>user prompt</i>"
             fig.add_annotation(
                 x=user_bar_width,
                 y=yi,
@@ -397,6 +421,7 @@ def build_label_timeline_chart(steps: list[dict], dark: bool = False) -> go.Figu
         key = "user" if role == "user" else phase
         if key and key not in seen:
             seen.add(key)
+            trace_labels[len(fig.data)] = {"name": "user prompt" if key == "user" else label_spec("phase", key)}
             fig.add_trace(
                 go.Bar(
                     x=[None],
@@ -443,7 +468,11 @@ def build_label_timeline_chart(steps: list[dict], dark: bool = False) -> go.Figu
     fig.update_yaxes(
         tickvals=y_pos,
         ticktext=step_labels,
-        autorange="reversed",
+        # Keep half a row at each edge instead of allowing numeric-axis
+        # autorange padding to grow with long sessions. Recorded step indices
+        # are labels; they must not introduce gaps between displayed rows.
+        range=[len(steps) - 0.5, -0.5],
+        autorange=False,
     )
     _apply_dark(fig, dark)
-    return fig
+    return localize_figure(fig, trace_labels=trace_labels, layout_labels=layout_labels)

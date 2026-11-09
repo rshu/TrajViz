@@ -63,6 +63,13 @@ _LIGHT_TOKENS = """
     --wf-border-reasoning: #7c3aed;
     --wf-bg-default: #f3f4f6;
     --wf-border-default: #6b7280;
+    /* Foregrounds follow the badge fill, independently of its border hue. */
+    --wf-badge-accent-ink: #ffffff;
+    --wf-badge-warm-ink: #0f172a;
+    --wf-label-error: #b91c1c;
+    --wf-label-warm: #92400e;
+    --wf-label-final: #065f46;
+    --wf-label-default: #4b5563;
     --wf-card-border: #e5e7eb;
     --wf-meta-color: #6b7280;
     --wf-preview-color: #374151;
@@ -133,6 +140,12 @@ _DARK_TOKENS = """
         --wf-border-reasoning: #a78bfa;
         --wf-bg-default: rgba(107,114,128,0.1);
         --wf-border-default: #6b7280;
+        --wf-badge-accent-ink: #0f172a;
+        --wf-badge-warm-ink: #0f172a;
+        --wf-label-error: #f87171;
+        --wf-label-warm: #fbbf24;
+        --wf-label-final: #34d399;
+        --wf-label-default: #cbd5e1;
         --wf-card-border: #2d2f45;
         --wf-meta-color: #94a3b8;
         --wf-preview-color: #cbd5e1;
@@ -160,7 +173,7 @@ _DARK_COMPONENTS = """
         color: #fca5a5;
     }
     %(s)s.diag-rc-primary:hover { background: rgba(220,38,38,0.15); }
-    /* Detail panel header stays light text on colored bg — no override needed */
+    /* Workflow headers choose their foreground from the active fill tokens. */
     %(s)s.dp-diff-pre { background: #0d1117; }
     %(s)s.filter-chip { background: var(--ov-card); color: var(--ov-muted); }
     %(s)s.filter-chip:hover { background: var(--ov-link-hover-bg); }
@@ -204,11 +217,108 @@ APP_CSS = """
     background: transparent;
     box-shadow: none;
 }
-/* Settings actions stay compact beside the analysis sidebar. */
+/* Settings uses the sidebar's width, independently of the page viewport. */
+#app-settings {
+    gap: 16px;
+    min-width: 0;
+}
+#app-settings .settings-intro,
+#app-settings .settings-status,
+#app-settings .settings-check {
+    padding: 0 !important;
+}
+#app-settings .settings-intro p,
+#app-settings .settings-status p { margin: 0; line-height: 1.5; }
+#app-settings .settings-intro,
+#app-settings .settings-status { color: var(--body-text-color, #334155); opacity: 0.75; }
+#app-settings .settings-field-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+    align-items: start;
+    gap: 16px;
+}
+#app-settings .settings-field-row > .column { min-width: 0 !important; }
+#app-settings .form {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    min-width: 0 !important;
+    overflow: visible !important;
+}
+#app-settings .settings-check { background: transparent; border: 0; box-shadow: none; }
+#app-settings .settings-field {
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+}
+#app-settings .settings-field > .container {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+#app-settings .settings-field [data-testid="block-info"] {
+    order: 0;
+    min-height: 20px;
+    line-height: 20px;
+    margin: 0;
+    font-weight: 550;
+}
+#app-settings .settings-field .input-container,
+#app-settings .settings-field input[type="number"],
+#app-settings .settings-field > .container > .wrap { order: 1; }
+#app-settings .settings-field .info-text,
+#app-settings .settings-check .info-text {
+    order: 2;
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--body-text-color, #334155);
+    opacity: 0.75;
+}
+#app-settings .settings-field textarea,
+#app-settings .settings-field input[type="password"],
+#app-settings .settings-field input[type="number"] {
+    box-sizing: border-box;
+    height: 42px !important;
+    min-height: 42px !important;
+    padding: 10px 12px !important;
+}
+#app-settings .settings-field > .container > .wrap {
+    box-sizing: border-box;
+    min-height: 42px;
+    display: flex;
+    align-items: center;
+}
+#app-settings .settings-field .wrap-inner { width: 100%; }
+#app-settings .settings-options { padding: 12px !important; }
+#app-settings .settings-options > [data-testid="accordion-content"] > .column { gap: 16px; }
+#app-settings .settings-actions { gap: 16px; flex-wrap: wrap; }
+#app-settings .settings-test-row { align-items: center; }
+#app-settings button.settings-test-action { min-height: 42px; border-radius: 8px; width: 100%; }
+#app-settings .settings-test-status,
+#app-settings .settings-test-status > .html-container { padding: 0 !important; }
+.settings-connection-result {
+    padding: 10px 12px;
+    border: 1px solid var(--border-color-primary, #dce3ef);
+    border-radius: 8px;
+    color: var(--body-text-color, #334155);
+    font-size: 12px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+.settings-connection-result.is-success { color: #166534; background: #f0fdf4; border-color: #bbf7d0; }
+.settings-connection-result.is-error { color: #991b1b; background: #fef2f2; border-color: #fecaca; }
+.settings-connection-result.is-testing { color: #1e40af; background: #eff6ff; border-color: #bfdbfe; }
 #app-settings button.settings-action {
     font-size: 13px !important;
-    padding: 8px 14px !important;
-    min-height: 36px;
+    padding: 10px 14px !important;
+    min-height: 42px;
+    border-radius: 8px;
+    flex: 1 1 180px !important;
+    min-width: 0 !important;
 }
 /* Type scale */
 h2, .section-header { font-size: 18px; font-weight: 700; }
@@ -405,7 +515,7 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     border-radius: 6px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    background: rgba(255,255,255,0.25);
+    background: transparent;
 }
 .dp-meta-table {
     width: 100%;
@@ -1836,7 +1946,7 @@ html.tv-theme-dark {
 .rg-tree-summary,
 .rg-tree-file {
     display: grid;
-    grid-template-columns: minmax(12em, 1fr) repeat(var(--rg-run-cols, 2), 5.6em) minmax(7em, auto);
+    grid-template-columns: minmax(12rem, 1fr) repeat(var(--rg-run-cols, 2), 5.6rem) 14rem;
     gap: 6px 8px;
     align-items: center;
 }
@@ -1870,7 +1980,9 @@ html.tv-theme-dark {
 .rg-tree-mix {
     font-size: 12px;
     color: var(--ov-muted);
-    white-space: nowrap;
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 .rg-tree-dir {
     margin: 2px 0 2px 0.15em;
@@ -2014,6 +2126,11 @@ html.tv-theme-dark {
 """ + _CONVERGE_CSS + """
 
 /* AI Trajectory Analysis sidebar */
+#analysis-sidebar {
+    --analysis-panel-width: min(560px, calc(100vw - 40px));
+    width: var(--analysis-panel-width) !important;
+    right: calc(-1 * var(--analysis-panel-width)) !important;
+}
 #analysis-sidebar .analysis-panel-title {
     font-size: 15px;
     font-weight: 700;
@@ -2082,6 +2199,89 @@ html.tv-theme-dark {
     #analysis-sidebar.right:not(.open) .toggle-button::after {
         content: "AI analysis";
     }
+}
+/* Consistent control surfaces and compact dashboard rhythm. */
+.gradio-container {
+    --color-accent: #1d4ed8;
+    --color-accent-soft: #eef2ff;
+    --button-primary-background-fill: #1d4ed8;
+    --button-primary-background-fill-hover: #1e40af;
+    --button-primary-border-color: #1d4ed8;
+    --button-primary-text-color: #ffffff;
+    --button-secondary-background-fill: #ffffff;
+    --button-secondary-background-fill-hover: #f1f5f9;
+    --button-secondary-border-color: #dce3ef;
+    --button-secondary-text-color: #334155;
+    --block-radius: 12px;
+    --input-radius: 8px;
+    --button-small-radius: 8px;
+    --button-large-radius: 8px;
+}
+.gradio-container button.primary,
+.gradio-container button.secondary { min-height: 34px; }
+.gradio-container button.secondary { border: 1px solid var(--ov-border); }
+.label-status-badge:has(.prose:empty) { display: none; }
+.gradio-container button[role="tab"][aria-selected="true"] {
+    color: var(--ov-accent);
+    border-bottom-color: var(--ov-accent);
+    font-weight: 650;
+}
+.gradio-container button:focus-visible,
+.gradio-container summary:focus-visible {
+    outline: 2px solid var(--ov-accent);
+    outline-offset: 3px;
+}
+.upload-row { margin-bottom: 2px !important; }
+.upload-row .prose p { font-size: 12px; line-height: 1.45; color: var(--ov-muted); }
+.overview-kpi-strip { margin-bottom: 14px; }
+.ov-kpi-grid { gap: 12px; }
+.ov-kpi-card { min-width: 0; }
+.ov-kpi-value { font-variant-numeric: tabular-nums; letter-spacing: -0.035em; }
+.ov-kpi-methodology { margin-top: 6px; font-size: 11px; line-height: 1.45; }
+.ov-kpi-methodology summary { color: var(--ov-accent); cursor: pointer; font-weight: 600; }
+.ov-kpi-methodology[open] { padding-top: 5px; border-top: 1px solid var(--ov-border); }
+.overview-issues-panel { border-radius: 10px; }
+.overview-issues-body { max-height: 28rem; overflow-y: auto; scrollbar-gutter: stable; }
+.overview-issue-head { min-width: 0; gap: 3px; }
+.overview-issue-title { flex-basis: 100%; overflow-wrap: anywhere; }
+.overview-issue-detail { flex-basis: 100%; overflow-wrap: anywhere; line-height: 1.5; }
+.overview-section-nav { border-radius: 12px; }
+.gradio-container table { font-variant-numeric: tabular-nums; }
+.gradio-container table:not(.file-preview) { border: 0; table-layout: auto; }
+.gradio-container table:not(.file-preview) th,
+.gradio-container table:not(.file-preview) td { border: 0; border-bottom: 1px solid var(--ov-border); }
+.gradio-container table:not(.file-preview) th {
+    line-height: 1.4; white-space: nowrap; word-break: normal; overflow-wrap: normal;
+    background: var(--ov-table-header-bg);
+}
+.gradio-container table:not(.file-preview) tbody tr:nth-child(even) { background: var(--ov-nav-bg); }
+.diagnostics-data-table .prose { overflow-x: auto; max-width: 100%; }
+.diagnostics-data-table table { min-width: 100%; }
+.diagnostics-data-table table th,
+.diagnostics-data-table table td { white-space: nowrap; word-break: normal; overflow-wrap: normal; }
+@media (max-width: 1100px) and (min-width: 769px) {
+    .ov-kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+    .ov-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+    .ov-kpi-card:last-child:nth-child(odd) { grid-column: 1 / -1; }
+    .ov-kpi-value { overflow-wrap: anywhere; }
+    .overview-issues-body { max-height: 24rem; }
+    .gradio-container button[role="tab"] { min-height: 40px; }
+}
+
+/* Keep Workflow chips usable when the desktop toolbar no longer fits. */
+@media (max-width: 768px) {
+    .wf-toolbar { flex-direction: column !important; align-items: stretch !important; }
+    .wf-toolbar #wf-filter-chips,
+    .wf-toolbar .wf-toolbar-search {
+        width: 100% !important; min-width: 0 !important; max-width: 100% !important;
+        flex: 0 0 auto !important;
+    }
+    .wf-toolbar #wf-filter-bar {
+        width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box;
+    }
+    .wf-toolbar > button { align-self: flex-start; }
 }
 """
 

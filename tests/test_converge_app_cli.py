@@ -67,7 +67,8 @@ class ConvergeAppConstructs(unittest.TestCase):
             build_ui()
         moved = [w for w in caught if "launch()" in str(w.message)]
         self.assertEqual(moved, [], [str(w.message) for w in moved])
-        self.assertEqual(set(LAUNCH_PRESENTATION), {"css", "theme"})
+        self.assertEqual(set(LAUNCH_PRESENTATION), {"css", "theme", "head"})
+        self.assertIn("tvSetLanguage", LAUNCH_PRESENTATION["head"])
 
     def test_file_pickers_only_offer_types_the_loader_accepts(self):
         # The loader rejects .log outright (loaders.py), so offering it in the

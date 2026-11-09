@@ -12,6 +12,8 @@ change the public API (the names exported from `agent_trajviz`).
 - Load CodeAgent session exports (`session` + `child_sessions` with
   data-wrapped messages and parts), including parent/child hierarchy, tools,
   reasoning, tokens and timing.
+- Switch the dashboards between English and Simplified Chinese, remembering
+  the browser's choice while preserving loaded trajectories and session settings.
 
 ### Fixed
 
@@ -21,6 +23,57 @@ change the public API (the names exported from `agent_trajviz`).
   SQLite consolidator exports (`info` + `parts`) are unchanged.
 - Session files saved by Windows PowerShell (`Out-File` / `Set-Content`,
   UTF-16 with a BOM) load. A `0xFF` byte that is not that BOM is still rejected.
+- Translate comparison scorecards, coverage tables, explanations and chart
+  labels consistently, including results refreshed after switching languages.
+- Preserve readable badge and status colors when switching dashboard languages.
+- Translate built-in phase and action labels in charts, timelines and label summaries.
+- Add English and Simplified Chinese reply-language choices for AI analyses,
+  follow-up answers and suggested fixes, defaulting to the dashboard language.
+- Keep routine OpenCode interruptions in the recorded history without showing
+  them as global import warnings.
+
+## [0.4.2] - 2026-11-04
+
+### Added
+
+- Inspect loaded trajectories directly in AWE, with recorded findings, file and
+  test activity, recovery observations, and links to supporting Workflow steps.
+- Add `awe.inspect_trajectory(run)` for inspection from an already-loaded session.
+- Test model connections from AI Trajectory Analysis Settings with a small,
+  explicit request that sends no trajectory data.
+
+### Changed
+
+- Make trajectory inspection the default AWE view, with optional reference-based
+  attribution and a separate saved-run viewer.
+- Move model settings into AI Trajectory Analysis and require an explicit action
+  to start model analysis. Keep API keys in the current session.
+
+### Fixed
+
+- Preserve native tool outcomes, file actions and child-thread identities; keep
+  quoted output and incomplete recordings from creating unsupported findings.
+- Correct comparison file identities, context-window explanations and label
+  coverage, and remove excess padding from labeled step timelines.
+- Protect source files during label exports and handle malformed optional saved
+  evidence without crashing or inventing assessments.
+- Improve responsive settings, evidence links, contrast and AWE navigation.
+
+## [0.4.1] - 2026-11-03
+
+### Fixed
+
+- Protect imported source and taxonomy files during exports and labeling, and
+  keep previous exports intact when a write fails.
+- Preserve explicitly selected trajectory formats through loading and exports.
+- Export unbounded cohort risk ratios as valid JSON with a clear interpretation.
+- Preserve computed scorecards in saved runs and distinguish historical catalog
+  notes from evidence collected for the current run.
+- Improve dashboard layouts, chart legends, wide tables, pattern navigation and
+  label provenance, including Converge milestone and waterfall labels.
+- Keep missing success, context and timing measurements unavailable.
+- Keep the independent AWE workspace accessible after a native import error.
+- Keep portable HTML report references independent of live dashboard navigation.
 
 ## [0.4.0] - 2026-11-03
 
@@ -398,7 +451,9 @@ First release as the `agent-trajviz` package.
   passwords, authorization headers and generated-looking values of
   secret-named assignments become `[REDACTED]`.
 
-[Unreleased]: https://github.com/rshu/TrajViz/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/rshu/TrajViz/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/rshu/TrajViz/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/rshu/TrajViz/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/rshu/TrajViz/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/rshu/TrajViz/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/rshu/TrajViz/compare/v0.3.0...v0.3.1

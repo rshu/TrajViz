@@ -16,6 +16,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .._llm_http import env_json_dict
+from ..i18n import text as ui_text
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -68,13 +69,13 @@ def load_env_files() -> None:
         _load_dotenv(str(_REPO_ROOT / ".env"))
 
 
-# Reply language of the AI sidebar and the Issues judge: English unless
+# Default reply language for calls without dashboard selectors: English unless
 # ANALYZE_LANGUAGE (any language name) says otherwise.
 DEFAULT_ANALYSIS_LANGUAGE = "English"
 
 
 def analysis_language() -> str:
-    """The language the LLM features reply in."""
+    """The default reply language for callers without a dashboard selection."""
     return _env("ANALYZE_LANGUAGE") or DEFAULT_ANALYSIS_LANGUAGE
 
 
@@ -234,6 +235,24 @@ def resolve_session_settings(settings: AnalysisSettings | None = None) -> Analys
     if not isinstance(settings, AnalysisSettings):
         raise ValueError("Invalid settings state. Reset settings and try again.")
     return settings
+
+
+def request_reply_language(language: str, ui_language: object | None = None,
+                           reply_language: object | None = None) -> str:
+    """Use the selected reply language, then the UI locale or non-UI fallback.
+
+    Read both selectors with each model request rather than mutating connection
+    state when the language changes. This preserves credentials and drafts.
+    """
+    if reply_language is not None:
+        if isinstance(reply_language, str) and is_chinese(reply_language):
+            return "Simplified Chinese"
+        if isinstance(reply_language, str) and reply_language.strip().lower() in {"english", "en"}:
+            return "English"
+        raise ValueError("Reply language must be English or Simplified Chinese.")
+    if ui_language is None:
+        return language
+    return "Simplified Chinese" if ui_language == "zh-CN" else "English"
 
 
 def _validated_base_url(value: str) -> str:
@@ -407,14 +426,14 @@ def config_status_html(*, loaded_steps: int | None = None, config: AnalysisLLMCo
             host = None
         host = host or "(invalid endpoint)"
         bits.append(
-            f"<span class='analysis-status-ok'>Ready</span> · "
+            f"<span class='analysis-status-ok'>{ui_text('Ready')}</span> · "
             f"<code>{_escape(cfg.model)}</code> · {_escape(cfg.provider)} · "
-            f"sends to <code>{_escape(host)}</code>"
+            f"{ui_text('sends to')} <code>{_escape(host)}</code>"
         )
         if cfg.source == "session":
-            bits.append("UI settings")
+            bits.append(ui_text("UI settings"))
         elif cfg.source == "label":
-            bits.append("using LABEL_*")
+            bits.append(ui_text("using LABEL_*"))
         elif cfg.source == "mixed":
             bits.append("ANALYZE_* + LABEL_*")
         else:
@@ -423,25 +442,25 @@ def config_status_html(*, loaded_steps: int | None = None, config: AnalysisLLMCo
         missing_fields = [label for label, value in (("base URL", cfg.base_url), ("API key", cfg.api_key),
                                                      ("model", cfg.model)) if not value]
         bits.append(
-            "<span class='analysis-status-warn'>Not configured</span> · "
-            f"set {_escape(', '.join(missing_fields))} in Settings"
+            f"<span class='analysis-status-warn'>{ui_text('Not configured')}</span> · "
+            + ui_text(f"set {', '.join(missing_fields)} in Settings")
         )
     elif len(cfg.missing) >= 3:
         bits.append(
-            "<span class='analysis-status-warn'>Not configured</span> · "
-            "open Settings, or set <code>ANALYZE_*</code> (or <code>LABEL_*</code>) in the environment "
-            "or a <code>.env</code> file"
+            f"<span class='analysis-status-warn'>{ui_text('Not configured')}</span> · "
+            f"{ui_text('open Settings, or set')} <code>ANALYZE_*</code> "
+            f"({ui_text('or')} <code>LABEL_*</code>) {ui_text('in the environment or a')} <code>.env</code> {ui_text('file')}"
         )
     else:
         missing = ", ".join(cfg.missing)
         bits.append(
-            f"<span class='analysis-status-warn'>Not configured</span> · "
-            f"open Settings, or set {_escape(missing)} in <code>.env</code>"
+            f"<span class='analysis-status-warn'>{ui_text('Not configured')}</span> · "
+            f"{ui_text('open Settings, or set {fields} in', fields=missing)} <code>.env</code>"
         )
     if loaded_steps:
-        bits.append(f"{loaded_steps} steps in context")
+        bits.append(ui_text("{count} steps in context", count=loaded_steps))
     elif loaded_steps == 0:
-        bits.append("load a trajectory first")
+        bits.append(ui_text("load a trajectory first"))
     return "<div class='analysis-status'>" + " · ".join(bits) + "</div>"
 
 

@@ -756,7 +756,7 @@ def _fault_side_section(D: dict) -> list[str]:
     sides = ("model", "grader", "harness")
     L = [
         "## Fault side — where does the repair belong?",
-        "_Case-level repair locus (`awe/faultside.py`, DESIGN.md §0ai). `grader` is "
+        "_Case-level repair locus from the bundled fault-side assessment. `grader` is "
         "the BA-HARNESS-1 suspect queue (evaluation-apparatus suspects, manual review "
         "pending — faults stay counted); `harness` is scaffold truncation (OP-TRUNC-1). "
         "Suspects annotate, never exonerate._",

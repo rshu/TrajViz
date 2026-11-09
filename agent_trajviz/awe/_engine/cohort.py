@@ -16,6 +16,8 @@ per-instance feature vectors; the statistics import nothing from detect/rootcaus
 
 from __future__ import annotations
 
+import json
+import math
 import random
 
 from . import behaviors
@@ -206,6 +208,37 @@ def discover(rows: list, seed: int = 0, B: int = 2000) -> dict:
         c["p_holm"] = ap
     results.sort(key=lambda c: (c["p_holm"], -abs(c["diff"])))
     return {"n_failed": len(failed), "n_solved": len(solved), "associations": results}
+
+
+def export_discovery(disc: dict) -> dict:
+    """Return a strict-JSON discovery record without losing an unbounded ratio.
+
+    Internal statistics retain mathematical infinity. JSON has no corresponding
+    number, so only a positive-infinite risk ratio is exported as ``"Infinity"``
+    with an explicit status. A zero ratio remains numeric zero; an undefined
+    ratio remains null. Other nonfinite statistics are rejected as invalid.
+    The input record and its association rows are never changed.
+    """
+    result = dict(disc)
+    result["associations"] = []
+    for association in disc.get("associations", []):
+        row = dict(association)
+        ratio = row.get("risk_ratio")
+        if row.get("binary") and "risk_ratio" in row:
+            if isinstance(ratio, (int, float)) and not isinstance(ratio, bool) and math.isinf(ratio) and ratio > 0:
+                row["risk_ratio"] = "Infinity"
+                row["risk_ratio_status"] = "positive_infinity"
+                row["risk_ratio_interpretation"] = (
+                    "Unbounded in this recorded sample: the behavior-absent stratum had no observed failures."
+                )
+            elif ratio is None:
+                row["risk_ratio_status"] = "undefined"
+            else:
+                row["risk_ratio_status"] = "finite"
+        result["associations"].append(row)
+    # Do not silently normalize invalid NaN/Infinity in unrelated measurements.
+    json.dumps(result, allow_nan=False)
+    return result
 
 
 def feature_rows(agent: str, instances) -> list:

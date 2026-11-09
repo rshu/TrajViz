@@ -777,14 +777,16 @@ class AnalysisUiTests(unittest.TestCase):
         self.assertIn(".overview-issue-analyze", APP_CSS)
         self.assertIn("position=\"right\"", source)
         self.assertIn("open=False", source)
-        self.assertIn('width="max(480px, 25vw)"', source)
+        self.assertIn('width="min(560px, calc(100vw - 40px))"', source)
         self.assertIn('content: "AI Trajectory Analysis"', APP_CSS)
         self.assertIn("state_analysis_brief", source)
         self.assertIn("on_analysis_ask", source)
-        # LLM first pass runs on sidebar expand (or load-while-open), not on every load.
+        # Opening the combined Analysis/Settings panel never starts model work.
         self.assertIn("on_sidebar_expand", source)
         self.assertIn("analysis_sidebar.expand", source)
-        self.assertIn("state_sidebar_open", source)
+        self.assertNotIn("state_sidebar_open", source)
         self.assertIn("on_trajectory_loaded", source)
+        self.assertIn("on_analyze_trajectory", source)
+        self.assertIn("analysis_run.click", source)
         from agent_trajviz.insight import insight as insight_mod
         self.assertIn("tvAnalyzeIssue", inspect.getsource(insight_mod))

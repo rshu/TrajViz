@@ -498,7 +498,8 @@ def _diagnose_locked(*, agent, instance_id, source_path, fmt, expected_sha,
             False, mode="gold_free", agent=agent, instance_id=instance_id,
             reason=f"no gold reference (data/requirements/{instance_id}.json) under "
                    f"{config.DATA.parent} — attribution needs the reference patch + "
-                   f"test outcome; showing trajectory-only signals instead")
+                   f"test outcome. Provide matching reference data, or inspect "
+                   f"trajectory-only diagnostics in Overview.")
 
     # Canonical identity: resolve via evaluation engine's OWN source resolution so we verify
     # the very file diagnosis will parse (codex prefers .jsonl).

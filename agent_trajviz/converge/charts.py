@@ -9,8 +9,12 @@ try:
 except ImportError:
     pass
 
+import html
+import textwrap
+
 import plotly.graph_objects as go
 
+from ..i18n import localize_figure
 from .milestones import MILESTONE_LABELS, MILESTONE_NAMES
 
 
@@ -50,7 +54,7 @@ def _empty_figure(height: int = 380, message: str | None = None) -> go.Figure:
             x=0.5, y=0.5, showarrow=False, font_size=16,
         )
     fig.update_layout(template=_TPL, height=height)
-    return fig
+    return localize_figure(fig, trace_names=True, annotations=True)
 
 
 def _apply_chart_layout(
@@ -60,11 +64,14 @@ def _apply_chart_layout(
 ) -> None:
     """Apply standard chart layout."""
     layout = dict(
-        title=title,
+        title=dict(text="<br>".join(textwrap.wrap(title, width=26)),
+                   x=0.02, xref="container", xanchor="left", y=0.94, yref="container", yanchor="top", pad=dict(t=2, b=6),
+                   font=dict(size=15)),
         template=_TPL,
         height=height,
         autosize=True,
-        margin=dict(t=50, b=40, l=60, r=20),
+        margin=dict(t=110, b=60, l=60, r=20),
+        legend=dict(orientation="h", x=0.5, xanchor="center", y=1.02, yanchor="bottom", font=dict(size=11)),
     )
     if xaxis:
         layout["xaxis_title"] = xaxis
@@ -80,88 +87,79 @@ def build_milestone_timeline_chart(
     ref_milestones: dict[str, int | None],
     cmp_milestones: dict[str, int | None],
 ) -> go.Figure:
-    """Dual-track horizontal chart showing milestone markers for reference and compared.
+    """Compare recorded milestone steps in distinct, collision-free lanes.
 
-    Reference milestones on the top track (y=1), compared on the bottom track (y=0),
-    with connecting lines showing deltas between matching milestones.
+    Each milestone has one named row. Reference and compared markers retain
+    their exact step indices and sit slightly above/below that row; dotted
+    connectors and signed deltas preserve the original comparison.
     """
-    if not ref_milestones and not cmp_milestones:
+    names = [name for name in _MILESTONE_NAMES
+             if ref_milestones.get(name) is not None or cmp_milestones.get(name) is not None]
+    if not names:
         return _empty_figure(message="No milestone data available")
 
+    lanes = {name: len(names) - index - 1 for index, name in enumerate(names)}
     fig = go.Figure()
-
-    # Reference track (top, y=1)
-    ref_x, ref_text = [], []
-    for name in _MILESTONE_NAMES:
-        val = ref_milestones.get(name)
-        if val is not None:
-            ref_x.append(val)
-            ref_text.append(_MILESTONE_LABELS.get(name, name))
-
-    if ref_x:
+    for name in names:
+        ref_val, cmp_val = ref_milestones.get(name), cmp_milestones.get(name)
+        if ref_val is None or cmp_val is None:
+            continue
+        delta = cmp_val - ref_val
         fig.add_trace(go.Scatter(
-            x=ref_x, y=[1] * len(ref_x),
-            mode="markers+text",
-            marker=dict(size=12, color=_REF_COLOR, symbol="diamond"),
-            text=ref_text,
-            textposition="top center",
-            textfont=dict(size=9),
-            name="Reference",
-            hovertemplate="<b>%{text}</b><br>Step: %{x}<extra>Reference</extra>",
+            x=[ref_val, cmp_val], y=[lanes[name] + 0.14, lanes[name] - 0.14],
+            mode="lines", line=dict(color=_DELTA_COLOR, width=1, dash="dot"),
+            showlegend=False, hoverinfo="skip",
         ))
+        fig.add_annotation(
+            x=(ref_val + cmp_val) / 2, y=lanes[name] + 0.42,
+            text=f"+{delta}" if delta > 0 else str(delta),
+            showarrow=False, font=dict(size=9, color=_DELTA_COLOR),
+        )
 
-    # Compared track (bottom, y=0)
-    cmp_x, cmp_text = [], []
-    for name in _MILESTONE_NAMES:
-        val = cmp_milestones.get(name)
-        if val is not None:
-            cmp_x.append(val)
-            cmp_text.append(_MILESTONE_LABELS.get(name, name))
-
-    if cmp_x:
+    trace_labels = {}
+    for milestones, other, label, color, offset in (
+        (ref_milestones, cmp_milestones, "Reference", _REF_COLOR, 0.14),
+        (cmp_milestones, ref_milestones, "Compared", _CMP_COLOR, -0.14),
+    ):
+        present = [name for name in names if milestones.get(name) is not None]
+        if not present:
+            continue
+        comparisons = []
+        comparison_labels = []
+        for name in present:
+            if other.get(name) is None:
+                comparisons.append("Matching milestone not recorded in the other run")
+                comparison_labels.append("Matching milestone not recorded in the other run")
+            else:
+                delta = cmp_milestones[name] - ref_milestones[name]
+                comparisons.append(f"Compared − reference: {delta:+} steps")
+                comparison_labels.append({"template": "Compared − reference: {delta} steps",
+                                          "params": {"delta": f"{delta:+}"}})
+        hovertemplate = "<b>%{text}</b><br>Step: %{x}<br>%{hovertext}<extra>" + label + "</extra>"
+        labels = [_MILESTONE_LABELS.get(name, name) for name in present]
+        trace_labels[len(fig.data)] = {
+            "text": labels, "hovertext": comparison_labels, "hovertemplate": hovertemplate,
+        }
         fig.add_trace(go.Scatter(
-            x=cmp_x, y=[0] * len(cmp_x),
-            mode="markers+text",
-            marker=dict(size=12, color=_CMP_COLOR, symbol="diamond"),
-            text=cmp_text,
-            textposition="bottom center",
-            textfont=dict(size=9),
-            name="Compared",
-            hovertemplate="<b>%{text}</b><br>Step: %{x}<extra>Compared</extra>",
+            x=[milestones[name] for name in present], y=[lanes[name] + offset for name in present],
+            mode="markers", marker=dict(size=12, color=color, symbol="diamond"),
+            text=labels, customdata=comparisons, hovertext=comparisons,
+            name=label,
+            hovertemplate=hovertemplate,
         ))
-
-    # Connecting lines for deltas
-    for name in _MILESTONE_NAMES:
-        ref_val = ref_milestones.get(name)
-        cmp_val = cmp_milestones.get(name)
-        if ref_val is not None and cmp_val is not None:
-            delta = cmp_val - ref_val
-            delta_label = f"+{delta}" if delta > 0 else str(delta)
-            fig.add_trace(go.Scatter(
-                x=[ref_val, cmp_val],
-                y=[1, 0],
-                mode="lines",
-                line=dict(color=_DELTA_COLOR, width=1, dash="dot"),
-                showlegend=False,
-                hoverinfo="skip",
-            ))
-            fig.add_annotation(
-                x=(ref_val + cmp_val) / 2, y=0.5,
-                text=delta_label,
-                showarrow=False,
-                font=dict(size=9, color=_DELTA_COLOR),
-            )
 
     _apply_chart_layout(
-        fig, "Milestone Timeline",
-        xaxis="Step Index", height=320,
-        yaxis_visible=False,
-        yaxis_range=[-0.5, 1.5],
-        yaxis_tickvals=[0, 1],
-        yaxis_ticktext=["Compared", "Reference"],
-        yaxis_showticklabels=True,
+        fig, "Milestone Timeline", xaxis="Step Index", height=max(300, 160 + len(names) * 44),
+        margin=dict(t=110, b=50, l=125, r=20),
+        legend=dict(orientation="h", x=0.5, xanchor="center", y=1.02, yanchor="bottom", font=dict(size=11)),
+        yaxis_visible=True, yaxis_range=[-0.6, len(names) - 0.3],
+        yaxis_tickvals=[lanes[name] for name in names],
+        yaxis_ticktext=["<br>".join(textwrap.wrap(_MILESTONE_LABELS.get(name, name), width=18)) for name in names],
+        yaxis_tickfont=dict(size=10), yaxis_showticklabels=True, yaxis_zeroline=False,
     )
-    return fig
+    return localize_figure(fig, trace_names=True, annotations=True,
+                           layout_labels={"yaxis.ticktext": list(fig.layout.yaxis.ticktext)},
+                           trace_labels=trace_labels)
 
 
 # -- Segment cost chart -------------------------------------------------------
@@ -223,7 +221,9 @@ def build_segment_cost_chart(
             barmode="group",
         )
 
-    return fig
+    fig.update_layout(height=500, margin=dict(b=180),
+                      xaxis=dict(title=None, tickangle=-45, automargin=True, tickfont=dict(size=10)))
+    return localize_figure(fig, trace_names=True, annotations=True)
 
 
 # -- Divergence waterfall chart ------------------------------------------------
@@ -258,18 +258,30 @@ def build_divergence_waterfall_chart(patterns: list[dict]) -> go.Figure:
         y=values,
         measure=measures,
         text=[f"{v:,}" for v in values],
-        textposition="outside",
+        textposition="outside", cliponaxis=False,
         connector=dict(line=dict(color="#d1d5db", width=1)),
         increasing=dict(marker=dict(color="#ef4444")),
         decreasing=dict(marker=dict(color="#22c55e")),
         totals=dict(marker=dict(color="#6366f1")),
     ))
 
+    # Outside labels need space beyond cumulative levels, including a final
+    # total or negative adjustments. Keep every original token value unchanged.
+    levels, cumulative = [0], 0
+    for value in values[:-1]:
+        cumulative += value
+        levels.append(cumulative)
+    low, high = min(levels), max(levels)
+    padding = max((high - low) * 0.18, 1)
     _apply_chart_layout(
         fig, "Divergence Cost Breakdown by Pattern",
         xaxis="Pattern", yaxis="Extra Tokens",
+        xaxis_tickmode="array", xaxis_tickvals=labels,
+        yaxis_range=[low - padding if low < 0 else 0, high + padding],
     )
-    return fig
+    return localize_figure(fig, trace_names=True, annotations=True, layout_labels={
+        "xaxis.ticktext": [{"literal": html.escape(label)} for label in labels[:-1]] + ["Total"],
+    })
 
 
 # -- Anchor class recall chart ------------------------------------------------
@@ -303,8 +315,11 @@ def build_anchor_class_chart(anchor_analysis: dict | None) -> go.Figure:
         y=ref_recalls,
         name="Reference",
         marker_color=_REF_COLOR,
-        text=[f"{v:.1f}%" for v in ref_recalls],
-        textposition="outside",
+        text=[("" if v == 0 else f"{v:.1f}%" if v % 1 else f"{v:.0f}%") for v in ref_recalls],
+        textposition=["inside" if v >= 10 else "outside" for v in ref_recalls], textangle=-90,
+        textfont=dict(size=11), insidetextfont=dict(color="#ffffff"), outsidetextfont=dict(color="#334155"),
+        constraintext="none", cliponaxis=False,
+        hovertemplate="%{x}<br>Recall: %{y}%<extra>Reference</extra>",
     ))
 
     fig.add_trace(go.Bar(
@@ -312,13 +327,19 @@ def build_anchor_class_chart(anchor_analysis: dict | None) -> go.Figure:
         y=cmp_recalls,
         name="Compared",
         marker_color="#f97316",  # orange
-        text=[f"{v:.1f}%" for v in cmp_recalls],
-        textposition="outside",
+        text=[("" if v == 0 else f"{v:.1f}%" if v % 1 else f"{v:.0f}%") for v in cmp_recalls],
+        textposition=["inside" if v >= 10 else "outside" for v in cmp_recalls], textangle=-90,
+        textfont=dict(size=11), insidetextfont=dict(color="#111827"), outsidetextfont=dict(color="#334155"),
+        constraintext="none", cliponaxis=False,
+        hovertemplate="%{x}<br>Recall: %{y}%<extra>Compared</extra>",
     ))
 
     _apply_chart_layout(
         fig, "Anchor Write Recall by File Class",
         xaxis="File Class", yaxis="Recall (%)",
-        barmode="group",
+        barmode="group", yaxis_range=[0, max(100, *ref_recalls, *cmp_recalls) * 1.14],
+        uniformtext=dict(minsize=11, mode="show"),
     )
-    return fig
+    return localize_figure(fig, trace_names=True, annotations=True, trace_labels={
+        index: {"hovertemplate": trace.hovertemplate} for index, trace in enumerate(fig.data)
+    })

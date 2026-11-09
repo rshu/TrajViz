@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ...i18n import text as ui_text
 import base64
 import json
 import logging
@@ -142,7 +143,7 @@ def build_filtered_workflow_outputs(
     if not steps:
         return (
             "<div style='padding:3em;color:var(--ov-muted);text-align:center;"
-            "font-size:15px;'>Load a trajectory to see the step flow.</div>",
+            f"font-size:15px;'>{ui_text('Load a trajectory to see the step flow.')}</div>",
             "",
             "",
         )
@@ -154,12 +155,12 @@ def build_filtered_workflow_outputs(
     if not (set(active_filters) & set(ROLE_FILTERS)):
         workflow_html = (
             "<div style='padding:2em;color:var(--ov-muted);text-align:center;'>"
-            "Select at least one role to see steps.</div>"
+            f"{ui_text('Select at least one role to see steps.')}</div>"
         )
     else:
         workflow_html = render_workflow_html(filtered_steps, expanded=expanded)
 
-    count_html = f"<div class='wf-count'>Showing {len(filtered_steps)} of {len(steps)} steps</div>"
+    count_html = f"<div class='wf-count'>{ui_text('Showing {shown} of {total} steps', shown=len(filtered_steps), total=len(steps))}</div>"
     collapsed = "toc-hidden" in (current_toc or "")
     return workflow_html, count_html, render_toc_sidebar(filtered_steps, collapsed=collapsed)
 
@@ -167,7 +168,7 @@ def build_filtered_workflow_outputs(
 def build_workflow_outputs(steps: list[dict]) -> dict:
     """Build workflow HTML, TOC, filter chips, and detail store."""
     wf_html = render_workflow_html(steps)
-    wf_count = f"<div class='wf-count'>Showing {len(steps)} of {len(steps)} steps</div>"
+    wf_count = f"<div class='wf-count'>{ui_text('Showing {shown} of {total} steps', shown=len(steps), total=len(steps))}</div>"
     toc_html_val = render_toc_sidebar(steps)
     detail_store_val = _prerender_step_details(steps)
 

@@ -7,11 +7,13 @@ import json
 import re
 from types import SimpleNamespace
 
+from i18n_test_helpers import unmark_html
+
 from agent_trajviz.awe import render
 
 
 def _report(name, value):
-    return render.report_html(SimpleNamespace(artifacts={name: value}), name)
+    return unmark_html(render.report_html(SimpleNamespace(artifacts={name: value}), name))
 
 
 class Tags(HTMLParser):
@@ -68,6 +70,9 @@ def test_structured_scores_render_heatmap_and_separate_sampling_ci_from_bounds()
                               "tool_use": {"score": 0, "score_ci": None}}}
     output = _report("scorecard.json", value)
     assert "awe-score-matrix" in output and "Recorded capability scores" in output
+    # Eight score columns retain readable width inside the existing scroll region.
+    assert ".awe-view table.awe-score-matrix{min-width:760px}" in output
+    assert "<div style='overflow-x:auto'><table class='awe-score-matrix'>" in output
     assert "Recorded CI: [60, 90]" in output
     assert "Recorded CI: Not recorded" in output
     assert "Identification bounds" in output and "[50, 75]" in output
@@ -109,7 +114,7 @@ def test_recorded_behavior_prevalence_is_a_comparison_table():
 
 def test_unknown_json_and_imported_html_remain_escaped_raw_source():
     output = _report("custom.json", {"unknown": "<svg onload=alert(1)>"})
-    assert "&lt;svg onload=alert(1)&gt;" in output and "awe-score-matrix" not in output
+    assert "&lt;svg onload=alert(1)&gt;" in output and "<table class='awe-score-matrix'>" not in output
     html_output = _report("ATTRIBUTION.html", "<script>danger()</script>")
     assert "never executed" in html_output and "<script>" not in html_output
 
@@ -139,7 +144,7 @@ def test_offline_graph_sources_resolve_and_reused_node_ids_have_unique_anchors(t
     (directory / "faults.json").write_text(json.dumps(cases), encoding="utf-8")
     (directory / "attribution_graphs.json").write_text(json.dumps({"graphs": graphs}), encoding="utf-8")
     run = awe.load_run(directory)
-    output = awe.write_report(run, tmp_path / "report.html").read_text(encoding="utf-8")
+    output = unmark_html(awe.write_report(run, tmp_path / "report.html").read_text(encoding="utf-8"))
 
     class Anchors(HTMLParser):
         def __init__(self):

@@ -17,6 +17,10 @@ from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
+from ..i18n import attrs, text
+from ..i18n.catalog_awe import ZH_CN
+from .summary import attribution_summary_html
+
 _STYLE = """<style>
 .awe-view{font-size:14px;line-height:1.55;color:var(--body-text-color,#192331);min-width:0}
 .awe-view *{box-sizing:border-box}.awe-view h3{font-size:17px;margin:14px 0 8px}
@@ -25,7 +29,14 @@ _STYLE = """<style>
 .awe-view summary{cursor:pointer;font-weight:600;overflow-wrap:anywhere}
 .awe-view pre{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;max-height:550px;overflow:auto;padding:10px;background:var(--background-fill-secondary,#f4f7fb);border-radius:6px;font:12px/1.55 ui-monospace,monospace}
 .awe-view table{border-collapse:collapse;width:100%;font-size:12px;table-layout:fixed}
+.awe-view table.awe-score-matrix{min-width:760px}
 .awe-view td,.awe-view th{text-align:left;vertical-align:top;padding:8px;border-bottom:1px solid var(--border-color-primary,#e1e7ef);overflow-wrap:anywhere}
+.awe-view .awe-report-scroll{width:100%;max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}
+.awe-view .awe-report-scroll table{width:max-content;min-width:100%;table-layout:auto}
+.awe-view .awe-report-scroll th,.awe-view .awe-report-scroll td{white-space:nowrap;overflow-wrap:normal;word-break:normal}
+.awe-view .awe-report-cell-details{width:clamp(220px,28vw,380px);white-space:normal}
+.awe-view .awe-report-cell-details summary{white-space:normal;overflow-wrap:anywhere;font-weight:400}
+.awe-view .awe-report-cell-details pre{max-height:260px;margin:6px 0;white-space:pre-wrap;overflow-wrap:anywhere}
 .awe-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:10px}
 .awe-node{display:block;text-decoration:none!important;color:inherit!important;border:1px solid #bfccdc;border-left:4px solid #7c66e8;border-radius:8px;padding:10px;margin:6px 0;overflow-wrap:anywhere}
 .awe-node.awe-selected{background:var(--background-fill-secondary,#f3f0ff);border-color:#7956d9}
@@ -49,10 +60,15 @@ def _pre(value: Any) -> str:
     return "<pre>" + _escape(_text(value)) + "</pre>"
 
 
+def _label(value: str) -> str:
+    """Translate an authored title without marking arbitrary artifact titles."""
+    return text(value) if value in ZH_CN else _escape(value)
+
+
 def _details(title: str, value: Any, *, opened: bool = False) -> str:
     if value is None:
         return ""
-    return (f"<details class='awe-panel'{' open' if opened else ''}><summary>{_escape(title)}</summary>"
+    return (f"<details class='awe-panel'{' open' if opened else ''}><summary>{_label(title)}</summary>"
             + _pre(value) + "</details>")
 
 
@@ -61,7 +77,7 @@ def _view(body: str) -> str:
 
 
 def notice(message: str) -> str:
-    return _view("<p class='awe-muted'>" + _escape(message) + "</p>")
+    return _view("<p class='awe-muted'>" + text(message) + "</p>")
 
 
 def identity(case: Mapping[str, Any], index: int = 0) -> str:
@@ -125,6 +141,45 @@ def selected_case(run: Any, key: str | None) -> dict[str, Any] | None:
     return next((case for i, case in enumerate(all_cases(run)) if identity(case, i) == key), None)
 
 
+def _task_context_html(task: Mapping[str, Any]) -> str:
+    body = ("<details class='awe-panel'><summary>" + text('Task and reference context') + '</summary>')
+    problem = task.get("problem_statement")
+    if isinstance(problem, str):
+        body += "<div class='awe-task-text'>" + _markdown_report(problem) + "</div>"
+        remaining = {key: value for key, value in task.items() if key != "problem_statement"}
+    else:
+        remaining = dict(task)
+    if remaining:
+        body += ('<h4>' + text('Reference context and additional task fields') + '</h4>') + _pre(remaining)
+    body += _details("Raw task artifact", dict(task))
+    return body + "</details>"
+
+
+def _code_evidence_value(value: Any, depth: int = 0) -> str:
+    """Render recorded strings as source text, retaining unknown JSON shapes."""
+    if isinstance(value, str):
+        return _pre(value)
+    if isinstance(value, list) and value and all(isinstance(item, str) for item in value):
+        return "".join(_pre(item) for item in value)
+    if isinstance(value, Mapping) and value and depth < 3:
+        parts = []
+        for name, item in value.items():
+            # First-level group names are labels; deeper names may be literal
+            # file paths and must retain their recorded spelling.
+            label = str(name).replace("_", " ") if depth == 0 else str(name)
+            parts.append("<div class='awe-code-field'><h4>" + _escape(label) + "</h4>"
+                         + _code_evidence_value(item, depth + 1) + "</div>")
+        return "".join(parts)
+    return _pre(value)
+
+
+def _code_evidence_html(value: Any) -> str:
+    if value is None:
+        return ""
+    return (("<details class='awe-panel'><summary>" + text('Agent and reference code') + '</summary>')
+            + _code_evidence_value(value) + _details("Raw code evidence artifact", value) + "</details>")
+
+
 def case_html(case: Mapping[str, Any] | None) -> str:
     if case is None:
         return notice("Choose a case to inspect its recorded evidence.")
@@ -132,31 +187,33 @@ def case_html(case: Mapping[str, Any] | None) -> str:
     body = f"<h3>{_escape(title)}</h3><p><span class='awe-tag'>{_escape(outcome(case))}</span>"
     if case.get("blame_status"):
         body += "<span class='awe-tag'>" + _escape(case["blame_status"]) + "</span>"
-    body += "</p><p class='awe-muted'>Recorded diagnostic attribution; causal effects remain untested unless explicitly documented.</p>"
+    body += ("</p><p class='awe-muted'>" + text('Recorded diagnostic attribution; causal effects remain untested unless explicitly documented.') + '</p>')
+    body += attribution_summary_html(dict(case))
     task = case.get("task")
     if isinstance(task, dict):
-        body += _details("Task and reference context", task, opened=True)
+        body += _task_context_html(task)
     faults = case.get("faults")
     if isinstance(faults, list):
         if not faults:
-            body += "<p>No supported fault is recorded for this case.</p>"
+            body += ('<p>' + text('No supported fault is recorded for this case.') + '</p>')
         for index, fault in enumerate(faults):
             if not isinstance(fault, dict):
                 continue
             heading = f"{index + 1}. {fault.get('capability', 'Unknown capability')} → {fault.get('error_type', 'Unknown fault')}"
             heading += " · primary" if fault.get("is_primary") else ""
             body += f"<details class='awe-panel'{' open' if fault.get('is_primary') else ''}><summary>{_escape(heading)}</summary>"
-            body += "<p>Recorded blame weight: " + _escape(fault.get("blame_weight", "unknown"))
-            body += " · confidence: " + _escape(fault.get("confidence", "unknown")) + "</p>"
+            body += "<p>" + text("Recorded blame weight:") + " " + _escape(fault.get("blame_weight", "unknown"))
+            body += " · " + text("confidence:") + " " + _escape(fault.get("confidence", "unknown")) + "</p>"
             for key, label in (("detector_evidence", "Detector evidence"), ("code_evidence", "Agent and reference code"),
                                ("evidence_chain", "Evidence chain, qualifications and checks"), ("audit", "Independent audit and mismatches"),
                                ("countermeasures", "Matched remedy specifications"), ("countermeasure_decisions", "Remedy selection decisions"),
                                ("recommendation", "Recommendation"), ("recommendation_support", "Recommendation support")):
                 if key in fault:
-                    body += _details(label, fault[key], opened=key == "detector_evidence")
+                    body += (_code_evidence_html(fault[key]) if key == "code_evidence"
+                             else _details(label, fault[key], opened=key == "detector_evidence"))
             body += _details("Complete fault record", fault) + "</details>"
     elif "analysis" in case:
-        body += "<p>Symptom observation only; this record does not assign fault blame.</p>"
+        body += ('<p>' + text('Symptom observation only; this record does not assign fault blame.') + '</p>')
     for key, label in (("attribution_trace", "Exact attribution policy trace"), ("arbiter", "Arbiter review"),
                        ("fault_side", "Model, scaffold and grader context"), ("execution_context", "Execution context"),
                        ("event_ledger", "Action/result ledger and recovery episodes"),
@@ -220,8 +277,8 @@ def _graph_svg(nodes: list[dict[str, Any]], edges: list[dict[str, Any]], selecte
     if namespace:
         marker_source = namespace + "\0" + marker_source
     marker = "awe-arrow-" + hashlib.sha256(marker_source.encode()).hexdigest()[:12]
-    svg = (f"<div class='awe-graph-scroll' role='region' aria-label='Scrollable provenance graph' tabindex='0'><svg xmlns='http://www.w3.org/2000/svg' width='{width}' height='{height}' "
-           f"viewBox='0 0 {width} {height}' role='img' aria-label='Numbered AWE provenance graph'>"
+    svg = (f"<div class='awe-graph-scroll' role='region' {attrs('Scrollable provenance graph', attribute='aria-label')} tabindex='0'><svg xmlns='http://www.w3.org/2000/svg' width='{width}' height='{height}' "
+           f"viewBox='0 0 {width} {height}' role='img' {attrs('Numbered AWE provenance graph', attribute='aria-label')}>"
            "<title>Recorded evidence and attribution decisions</title>"
            "<desc>Arrows are typed provenance links, not established causal effects. Node links lead to recorded details below.</desc>"
            f"<defs><marker id='{marker}' markerWidth='7' markerHeight='7' refX='6' refY='3.5' orient='auto'>"
@@ -306,17 +363,17 @@ def graph_html(graph: dict[str, Any] | None, selected: str | None = None, *, run
         return notice("No saved graph is available for this case. Import attribution_graphs.json alongside faults.json.")
     nodes = [n for n in graph.get("nodes", []) if isinstance(n, dict)]
     edges = [e for e in graph.get("edges", []) if isinstance(e, dict)]
-    body = "<p class='awe-muted'>Numbered provenance graph. Edges document recorded inputs and decisions; they do not establish causal effects.</p>"
-    body += "<p class='awe-muted'>Scroll within the graph to explore its stages, or use the graph node selector for focused details.</p>"
+    body = ("<p class='awe-muted'>" + text('Numbered provenance graph. Edges document recorded inputs and decisions; they do not establish causal effects.') + '</p>')
+    body += ("<p class='awe-muted'>" + text('Scroll within the graph to explore its stages, or use the graph node selector for focused details.') + '</p>')
     if graph.get("scope"):
         body += "<p>" + _escape(graph["scope"]) + "</p>"
     phases: dict[str, list[dict[str, Any]]] = {}
     for node in nodes:
         phases.setdefault(str(node.get("phase", "Events")), []).append(node)
     body += _graph_svg(nodes, edges, selected, namespace=namespace)
-    body += "<details class='awe-panel'><summary>Numbered card overview</summary><div class='awe-grid'>"
+    body += ("<details class='awe-panel'><summary>" + text('Numbered card overview') + "</summary><div class='awe-grid'>")
     for phase, rows in phases.items():
-        body += "<section><h4>" + _escape("Stage " + phase if phase != "Events" else phase) + "</h4>"
+        body += "<section><h4>" + (text("Stage {phase}", phase=phase) if phase != "Events" else text("Events")) + "</h4>"
         for node in rows:
             anchor = _graph_anchor(str(node.get("id")), namespace)
             selected_class = " awe-selected" if str(node.get("id")) == selected else ""
@@ -330,7 +387,7 @@ def graph_html(graph: dict[str, Any] | None, selected: str | None = None, *, run
         body += "</section>"
     body += "</div></details>"
     if edges:
-        body += "<h4>Recorded relations</h4><div class='awe-edges'>"
+        body += ('<h4>' + text('Recorded relations') + "</h4><div class='awe-edges'>")
         titles = {str(n.get("id")): str(n.get("number") or n.get("title") or n.get("id")) for n in nodes}
         for edge in edges:
             body += ("<p>" + _escape(titles.get(str(edge.get("from")), edge.get("from"))) + " → "
@@ -346,7 +403,7 @@ def graph_html(graph: dict[str, Any] | None, selected: str | None = None, *, run
         if run is not None:
             body += _details("Original artifact value", source_details(run, node.get("source")), opened=True)
         body += "</details>"
-    return _view(body if nodes else body + "<p>No graph nodes were recorded.</p>")
+    return _view(body if nodes else body + ('<p>' + text('No graph nodes were recorded.') + '</p>'))
 
 
 def node_html(graph: dict[str, Any] | None, selected: str | None, *, run: Any = None) -> str:
@@ -362,7 +419,7 @@ def node_html(graph: dict[str, Any] | None, selected: str | None, *, run: Any = 
 
 def symptoms_html(run: Any, case: Mapping[str, Any] | None = None) -> str:
     doc = run.symptoms
-    body = "<p class='awe-muted'>Unscored observations across solved, failed and unknown outcomes. Prevalence is not detector precision or causal effect.</p>"
+    body = ("<p class='awe-muted'>" + text('Unscored observations across solved, failed and unknown outcomes. Prevalence is not detector precision or causal effect.') + '</p>')
     if isinstance(doc, dict):
         body += _details("Outcome summary", doc.get("summary"), opened=True)
         rows = doc.get("cases", [])
@@ -373,7 +430,7 @@ def symptoms_html(run: Any, case: Mapping[str, Any] | None = None) -> str:
     if case is not None and case.get("symptom_analysis") is not None:
         body += _details("Selected dossier symptom analysis", case["symptom_analysis"], opened=True)
     if doc is None and not (case and case.get("symptom_analysis")):
-        body += "<p>No symptom export was included in this run.</p>"
+        body += ('<p>' + text('No symptom export was included in this run.') + '</p>')
     return _view(body)
 
 
@@ -381,7 +438,7 @@ def recommendations_html(run: Any, case: Mapping[str, Any] | None = None) -> str
     doc = run.recommendations
     if not isinstance(doc, dict):
         return notice("No recommendation plan was included. Case-level remedy fields remain available in the evidence panel.")
-    body = "<p class='awe-warning'>These are proposed experiments. Coverage rank does not estimate benefit, and a recipe is not an installed intervention.</p>"
+    body = ("<p class='awe-warning'>" + text('These are proposed experiments. Coverage rank does not estimate benefit, and a recipe is not an installed intervention.') + '</p>')
     body += _details("Experimental shortlist", doc.get("shortlist"), opened=True)
     candidates = doc.get("candidates", [])
     if case is not None:
@@ -391,7 +448,7 @@ def recommendations_html(run: Any, case: Mapping[str, Any] | None = None) -> str
         title = str(candidate.get("id", "Candidate")) + " · " + str(recipe.get("name") or recipe.get("title") or "Experimental remedy")
         body += _details(title, candidate, opened=case is not None)
     if not candidates:
-        body += "<p>No selected recipe matches this case or run.</p>"
+        body += ('<p>' + text('No selected recipe matches this case or run.') + '</p>')
     for key in ("prerequisites", "measurement", "limitations", "selection_decisions", "review_queues", "prioritization_policy"):
         if key in doc:
             body += _details(key.replace("_", " ").capitalize(), doc[key])
@@ -410,18 +467,33 @@ def _measurement(value: Any) -> str:
     return _text(value)
 
 
-def _report_table(headers: list[str], rows: list[list[Any]]) -> str:
+def _report_cell(value: Any) -> str:
+    if value is None:
+        return "<td>" + text("Not recorded") + "</td>"
+    content = _measurement(value)
+    if len(content) <= 120 and "\n" not in content and "\r" not in content:
+        return "<td>" + _escape(content) + "</td>"
+    preview = " ".join(content[:80].split())
+    if len(content) > 80:
+        preview += "…"
+    return ("<td><details class='awe-report-cell-details'><summary>"
+            + text("Preview ({count} characters): {preview}", count=f"{len(content):,}", preview=preview)
+            + "</summary>" + _pre(content) + "</details></td>")
+
+
+def _report_table(headers: list[str], rows: list[list[Any]], *, localize_headers: bool = False) -> str:
     width = max(len(headers), max((len(row) for row in rows), default=0))
-    headers = [*headers, *(f"Additional column {index + 1}" for index in range(width - len(headers)))]
-    body = "<div style='overflow-x:auto'><table><thead><tr>"
-    body += "".join("<th scope='col'>" + _escape(header) + "</th>" for header in headers)
+    labels = [text(header) if localize_headers else _escape(header) for header in headers]
+    labels.extend(text("Additional column {index}", index=index + 1) for index in range(width - len(headers)))
+    body = f"<div class='awe-report-scroll' role='region' {attrs('Scrollable report table', attribute='aria-label')} tabindex='0'><table><thead><tr>"
+    body += "".join("<th scope='col'>" + label + "</th>" for label in labels)
     body += "</tr></thead><tbody>"
     for row in rows[:2000]:
         values = [*row, *([None] * (width - len(row)))]
-        body += "<tr>" + "".join("<td>" + _escape(_measurement(value)) + "</td>" for value in values) + "</tr>"
+        body += "<tr>" + "".join(_report_cell(value) for value in values) + "</tr>"
     body += "</tbody></table></div>"
     if len(rows) > 2000:
-        body += "<p class='awe-muted'>Showing the first 2,000 rows. The complete original artifact remains available below and in downloads.</p>"
+        body += ("<p class='awe-muted'>" + text('Showing the first 2,000 rows. The complete original artifact remains available below and in downloads.') + '</p>')
     return body
 
 
@@ -526,34 +598,33 @@ def _score_report(value: Any) -> str:
                if isinstance(row.get("capabilities"), Mapping) or isinstance(row.get("scores"), Mapping)]
     if not records:
         return ""
-    body = ("<h4>Recorded capability scores</h4><p class='awe-muted'>Stored measurements only. "
-            "Missing scores and intervals remain unavailable. Blame-based scores and sampling intervals do not establish causal effects.</p>")
-    body += "<div style='overflow-x:auto'><table class='awe-score-matrix'><thead><tr><th scope='col'>Agent</th>"
-    body += "".join("<th scope='col'>" + label + "</th>" for _, label in _REPORT_CAPABILITIES) + "</tr></thead><tbody>"
+    body = ('<h4>' + text('Recorded capability scores') + "</h4><p class='awe-muted'>" + text('Stored measurements only. Missing scores and intervals remain unavailable. Blame-based scores and sampling intervals do not establish causal effects.') + '</p>')
+    body += ("<div style='overflow-x:auto'><table class='awe-score-matrix'><thead><tr><th scope='col'>" + text('Agent') + '</th>')
+    body += "".join("<th scope='col'>" + text(label) + "</th>" for _, label in _REPORT_CAPABILITIES) + "</tr></thead><tbody>"
     details, scope = [], []
     for agent, row in records:
         capabilities = row.get("capabilities") if isinstance(row.get("capabilities"), Mapping) else {}
         scores = row.get("scores") if isinstance(row.get("scores"), Mapping) else {}
         body += "<tr><th scope='row'>" + _escape(agent) + "</th>"
-        for capability, _label in _REPORT_CAPABILITIES:
+        for capability, _capability_label in _REPORT_CAPABILITIES:
             metric = capabilities.get(capability)
             metric = metric if isinstance(metric, Mapping) else {}
             score = metric.get("score", scores.get(capability))
             color = "transparent"
             if type(score) in (int, float) and 0 <= score <= 100 and math.isfinite(score):
                 color = ("#fee2e2", "#ffedd5", "#fef3c7", "#dcfce7", "#bbf7d0")[min(4, int(score // 25))]
-            body += f"<td style='background:{color}'>" + _escape(_measurement(score))
-            body += "<br><small>Recorded CI: " + _escape(_interval(metric.get("score_ci"))) + "</small></td>"
+            body += f"<td style='background:{color}'>" + _label(_measurement(score))
+            body += "<br><small>" + text("Recorded CI:") + " " + _label(_interval(metric.get("score_ci"))) + "</small></td>"
             if metric:
                 details.append([agent, capability, metric.get("opportunity"), metric.get("fault_incidence"),
                                 _interval(metric.get("score_identification_bounds"))])
         body += "</tr>"
         scope.append([agent, row.get("n_tasks", row.get("n")), row.get("n_failed"), row.get("failure_rate"), row.get("n_requested")])
-    body += "</tbody></table></div><h4>Recorded cohort coverage</h4>"
-    body += _report_table(["Agent", "Scored tasks", "Failed tasks", "Failure rate", "Requested tasks"], scope)
+    body += ('</tbody></table></div><h4>' + text('Recorded cohort coverage') + '</h4>')
+    body += _report_table(["Agent", "Scored tasks", "Failed tasks", "Failure rate", "Requested tasks"], scope, localize_headers=True)
     if details:
-        body += "<h4>Assessment coverage and identification bounds</h4><p class='awe-muted'>Identification bounds describe unresolved attribution mass; they are separate from sampling confidence intervals.</p>"
-        body += _report_table(["Agent", "Capability", "Opportunities", "Fault incidence", "Identification bounds"], details)
+        body += ('<h4>' + text('Assessment coverage and identification bounds') + "</h4><p class='awe-muted'>" + text('Identification bounds describe unresolved attribution mass; they are separate from sampling confidence intervals.') + '</p>')
+        body += _report_table(["Agent", "Capability", "Opportunities", "Fault incidence", "Identification bounds"], details, localize_headers=True)
     return body
 
 
@@ -574,14 +645,13 @@ def _discovery_report(value: Any) -> str:
                 behaviors.append([agent, name, record.get("n"), metric.get("n"), metric.get("rate"), metric.get("fail_given_mode")])
     if not associations and not coverage and not behaviors:
         return ""
-    body = ("<h4>Recorded discovery comparisons</h4><p class='awe-warning'>Observational associations, not causal effects. "
-            "Prevalence is not detector precision; missing cohort scope and measurements remain unknown.</p>")
+    body = ('<h4>' + text('Recorded discovery comparisons') + "</h4><p class='awe-warning'>" + text('Observational associations, not causal effects. Prevalence is not detector precision; missing cohort scope and measurements remain unknown.') + '</p>')
     if coverage:
-        body += _report_table(["Agent", "Solved cohort", "Failed cohort", "Unknown outcomes", "Recorded scope"], coverage)
+        body += _report_table(["Agent", "Solved cohort", "Failed cohort", "Unknown outcomes", "Recorded scope"], coverage, localize_headers=True)
     if associations:
-        body += _report_table(["Agent", "Behavior", "Solved mean", "Failed mean", "Failed − solved", "Recorded CI", "Holm p", "Risk ratio"], associations)
+        body += _report_table(["Agent", "Behavior", "Solved mean", "Failed mean", "Failed − solved", "Recorded CI", "Holm p", "Risk ratio"], associations, localize_headers=True)
     if behaviors:
-        body += _report_table(["Agent", "Behavior", "Observed runs", "Mode count", "Prevalence", "Failure given mode"], behaviors)
+        body += _report_table(["Agent", "Behavior", "Observed runs", "Mode count", "Prevalence", "Failure given mode"], behaviors, localize_headers=True)
     return body
 
 
@@ -592,7 +662,7 @@ def report_html(run: Any, name: str | None) -> str:
     value = run.artifacts[name]
     extension = name.rsplit(".", 1)[-1].lower()
     if extension == "html":
-        body += "<p class='awe-muted'>Imported HTML is displayed as source text and is never executed.</p>"
+        body += ("<p class='awe-muted'>" + text('Imported HTML is displayed as source text and is never executed.') + '</p>')
         return _view(body + _pre(value))
     if extension == "md" and isinstance(value, str):
         body += _markdown_report(value)
@@ -611,7 +681,7 @@ def report_html(run: Any, name: str | None) -> str:
 
 
 def provenance_html(run: Any) -> str:
-    body = "<h3>Saved run provenance</h3><p>Imported artifacts are preserved independently of the currently loaded native trajectory.</p>"
+    body = ('<h3>' + text('Saved run provenance') + '</h3><p>' + text('Imported artifacts are preserved independently of the currently loaded native trajectory.') + '</p>')
     for message in run.warnings:
         body += "<p class='awe-warning'>" + _escape(message) + "</p>"
     body += _details("Run manifest", run.manifest, opened=True)
@@ -627,10 +697,10 @@ def provenance_html(run: Any) -> str:
 
 
 def rsi_html(run: Any) -> str:
-    body = "<p class='awe-warning'>RSI proposals describe uninstalled experiments. Diagnostic feedback is privileged development data and must not be supplied to a task agent.</p>"
+    body = ("<p class='awe-warning'>" + text('RSI proposals describe uninstalled experiments. Diagnostic feedback is privileged development data and must not be supplied to a task agent.') + '</p>')
     names = [name for name in run.artifacts if name.rsplit("/", 1)[-1] in ("rsi_proposals.json", "rsi_feedback.json")]
     if not names:
-        body += "<p>No RSI exchange files were included.</p>"
+        body += ('<p>' + text('No RSI exchange files were included.') + '</p>')
     for name in names:
         body += _details(name, run.artifacts[name], opened=name.endswith("rsi_proposals.json"))
     return _view(body)

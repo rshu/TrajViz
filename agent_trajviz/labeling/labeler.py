@@ -99,7 +99,7 @@ def _ensure_output_is_not_input(trajectory_path: str | Path, output_path: str | 
     )
 
 
-def load_all_steps(trajectory_path: str) -> list[dict[str, Any]]:
+def load_all_steps(trajectory_path: str, *, output_path: str | None = None) -> list[dict[str, Any]]:
     """Load and normalize every step of a trajectory, preserving parser indices."""
     from ..insight.loaders import load_trajectory
     from ..insight.parser import parse_steps
@@ -107,6 +107,9 @@ def load_all_steps(trajectory_path: str) -> list[dict[str, Any]]:
     raw = load_trajectory(trajectory_path)
     if "_error" in raw:
         raise ValueError(f"Failed to load trajectory: {raw['_error']}")
+    if output_path is not None:
+        _fileio.ensure_output_does_not_overwrite(output_path, _fileio.input_sources(trajectory_path, raw),
+            exc=OutputSafetyError, message="Output path would overwrite input trajectory: {source}")
     return parse_steps(raw)
 
 
@@ -237,12 +240,14 @@ def label_trajectory(
     """
     _ensure_output_is_not_input(trajectory_path, output_path)
     taxonomy_file = Path(taxonomy_path) if taxonomy_path else DEFAULT_TAXONOMY
+    _fileio.ensure_output_does_not_overwrite(output_path, [taxonomy_file], exc=OutputSafetyError,
+        message="Output path would overwrite input taxonomy: {source}")
     taxonomy_mapping, taxonomy_version = load_taxonomy(taxonomy_file)
     valid = build_valid_sets(taxonomy_mapping)
     system_prompt = build_system_prompt(taxonomy_file.read_text(encoding="utf-8"))
 
     logger.info("Loading trajectory: %s", trajectory_path)
-    all_steps = load_all_steps(trajectory_path)
+    all_steps = load_all_steps(trajectory_path, output_path=output_path)
     roles = [str(step.get("role", "")).lower() for step in all_steps]
     assistant_count, user_count = roles.count("assistant"), roles.count("user")
     logger.info("Found %d steps (%d assistant, %d user)", len(all_steps), assistant_count, user_count)

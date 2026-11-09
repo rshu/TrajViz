@@ -7,8 +7,9 @@ from dataclasses import dataclass
 import gradio as gr
 
 from ..assistant import analyze_loaded_trajectory, answer_question
-from ..llm_config import AnalysisSettings, config_status_html, resolve_session_settings
+from ..llm_config import AnalysisSettings, config_status_html, request_reply_language, resolve_session_settings
 from ..presenters.issues import issue_analysis_question_from_payload
+from . import settings as settings_ui
 from .shared import SharedState
 
 
@@ -19,6 +20,8 @@ class SidebarRefs:
     analysis_chatbot: gr.Chatbot
     analysis_input: gr.Textbox
     analysis_clear: gr.Button
+    analysis_run: gr.Button
+    settings: settings_ui.SettingsRefs
     issue_ask_box: gr.Textbox
     issue_ask_btn: gr.Button
 
@@ -31,7 +34,7 @@ def layout() -> SidebarRefs:
     with gr.Sidebar(
         label="AI Trajectory Analysis",
         position="right",
-        width="max(480px, 25vw)",
+        width="min(560px, calc(100vw - 40px))",
         open=False,
         elem_id="analysis-sidebar",
         elem_classes=["analysis-sidebar"],
@@ -39,96 +42,111 @@ def layout() -> SidebarRefs:
         gr.HTML(
             "<div class='analysis-panel-title'>🤖 AI Trajectory Analysis</div>"
         )
-        analysis_status = gr.HTML(config_status_html(loaded_steps=0))
-        analysis_chatbot = gr.Chatbot(
-            value=[],
-            label="Analysis",
-            show_label=False,
-            height=380,
-            resizable=True,
-            layout="panel",
-            placeholder=(
-                "Open this panel after loading a trajectory to run analysis, "
-                "then ask follow-up questions."
-            ),
-            buttons=["copy"],
-            feedback_options=None,
-            elem_classes=["analysis-chatbot"],
-        )
-        with gr.Row():
-            analysis_input = gr.Textbox(
-                label="Question",
-                placeholder="e.g. What is the biggest performance bottleneck?",
-                scale=4,
-                container=False,
-                submit_btn=True,
-                elem_id="analysis-input",
-            )
-        analysis_clear = gr.Button("Clear chat", size="sm", variant="secondary")
-        # Gradio omits visible=False from the DOM; keep mounted and hide with CSS
-        # (same bridge pattern as #wf-filter-hidden). Filled by Overview
-        # "AI 深入分析"; the hidden button is the sole consumer.
-        issue_ask_box = gr.Textbox(
-            value="",
-            visible=True,
-            elem_id="tv-issue-ask",
-            show_label=False,
-            container=False,
-        )
-        issue_ask_btn = gr.Button(
-            "Analyze issue",
-            visible=True,
-            elem_id="tv-issue-ask-btn",
-        )
+        with gr.Tabs(elem_id="analysis-tabs"):
+            with gr.Tab("Analysis", elem_id="analysis-chat-tab"):
+                analysis_status = gr.HTML(config_status_html(loaded_steps=0))
+                analysis_run = gr.Button(
+                    "Analyze trajectory", size="sm", variant="primary", elem_id="analysis-run",
+                )
+                analysis_chatbot = gr.Chatbot(
+                    value=[],
+                    label="Analysis",
+                    show_label=False,
+                    height=380,
+                    resizable=True,
+                    layout="panel",
+                    placeholder=(
+                        "Load a trajectory and choose Analyze trajectory, or ask a question below. "
+                        "Requests send trajectory excerpts to the configured provider."
+                    ),
+                    buttons=["copy"],
+                    feedback_options=None,
+                    elem_classes=["analysis-chatbot"],
+                )
+                with gr.Row():
+                    analysis_input = gr.Textbox(
+                        label="Question",
+                        placeholder="e.g. What is the biggest performance bottleneck?",
+                        scale=4,
+                        container=False,
+                        submit_btn=True,
+                        elem_id="analysis-input",
+                    )
+                analysis_clear = gr.Button("Clear chat", size="sm", variant="secondary")
+                # Gradio omits visible=False from the DOM; keep mounted and hide with CSS
+                # (same bridge pattern as #wf-filter-hidden). Filled by Overview
+                # "AI 深入分析"; the hidden button is the sole consumer.
+                issue_ask_box = gr.Textbox(
+                    value="",
+                    visible=True,
+                    elem_id="tv-issue-ask",
+                    show_label=False,
+                    container=False,
+                )
+                issue_ask_btn = gr.Button(
+                    "Analyze issue",
+                    visible=True,
+                    elem_id="tv-issue-ask-btn",
+                )
+            with gr.Tab("Settings", elem_id="analysis-settings-tab"):
+                settings_refs = settings_ui.layout()
     return SidebarRefs(
         analysis_sidebar=analysis_sidebar,
         analysis_status=analysis_status,
         analysis_chatbot=analysis_chatbot,
         analysis_input=analysis_input,
         analysis_clear=analysis_clear,
+        analysis_run=analysis_run,
+        settings=settings_refs,
         issue_ask_box=issue_ask_box,
         issue_ask_btn=issue_ask_btn,
     )
 
 
-def _run_analysis(steps, brief, settings: AnalysisSettings | None = None):
+def _run_analysis(steps, brief, settings: AnalysisSettings | None = None, ui_language=None, reply_language=None):
     """First LLM pass using this session's settings and packed trajectory brief."""
     active = resolve_session_settings(settings)
     if not steps:
         return "", [], config_status_html(loaded_steps=0, config=active.config)
     packed = _brief_text(brief)
     brief, history = analyze_loaded_trajectory(
-        steps, brief=packed, config=active.config, language=active.language,
+        steps, brief=packed, config=active.config,
+        language=request_reply_language(active.language, ui_language, reply_language),
     )
     return brief, history, config_status_html(loaded_steps=len(steps), config=active.config)
 
 
-def bind(refs: SidebarRefs, shared: SharedState, load_events) -> tuple:
+def bind(refs: SidebarRefs, shared: SharedState, load_events, *, language: gr.Radio | None = None,
+         reply_language: gr.Dropdown | None = None) -> tuple:
     """Bind chat and return model event handles so settings can cancel stale work."""
     state_analysis_brief = shared.state_analysis_brief
     settings_inputs = [shared.state_settings] if shared.state_settings is not None else []
+    # An optional locale input must not occupy the settings argument's slot in
+    # an embedder that has no session overrides.
+    if (language is not None or reply_language is not None) and not settings_inputs:
+        settings_inputs = [gr.State(None)]
+    language_inputs = [language] if language is not None else []
+    if reply_language is not None:
+        if language is None:
+            language_inputs = [gr.State(None)]
+        language_inputs.append(reply_language)
     model_events = []
-    # Sidebar starts closed (open=False); expand/collapse keep this in sync so a
-    # load while the panel is already open still kicks off analysis.
-    state_sidebar_open = gr.State(False)
 
-    def on_trajectory_loaded(steps, brief, sidebar_open, settings=None):
-        """Pack status on load; run LLM only if the analysis panel is open."""
+    def on_trajectory_loaded(steps, brief, settings=None):
+        """Refresh local evidence and status without requesting a model."""
         active = resolve_session_settings(settings)
         if not steps:
             return "", [], config_status_html(loaded_steps=0, config=active.config)
         packed = _brief_text(brief)
         status = config_status_html(loaded_steps=len(steps), config=active.config)
-        if sidebar_open:
-            return _run_analysis(steps, packed, active)
         return packed, [], status
 
     for _ev in load_events:
-        model_events.append(_ev.then(
+        _ev.then(
             fn=on_trajectory_loaded,
-            inputs=[shared.state_steps, state_analysis_brief, state_sidebar_open, *settings_inputs],
+            inputs=[shared.state_steps, state_analysis_brief, *settings_inputs],
             outputs=[state_analysis_brief, refs.analysis_chatbot, refs.analysis_status],
-        ))
+        )
 
     def on_sidebar_expand(steps, brief, history, pending_q=None, settings=None):
         # Tests (and older callers) omit pending_q and pass settings in that slot.
@@ -136,22 +154,16 @@ def bind(refs: SidebarRefs, shared: SharedState, load_events) -> tuple:
             settings = pending_q
             pending_q = None
         active = resolve_session_settings(settings)
-        open_state = True
-        packed = _brief_text(brief)
-        n = len(steps) if steps else 0
-        # Pending issue ask is handled by issue_ask_btn; suppress the automatic
-        # whole-run first pass so the focused question is the first reply.
-        if str(pending_q or "").strip():
-            return packed, history, config_status_html(loaded_steps=n, config=active.config), open_state
-        if history:
-            return packed, history, config_status_html(loaded_steps=n, config=active.config), open_state
-        brief_out, history_out, status = _run_analysis(steps, packed, active)
-        return brief_out, history_out, status, open_state
+        # Opening the panel also exposes Settings, so it must never start analysis.
+        # Pending issue asks are handled by issue_ask_btn.
+        del pending_q
+        return (
+            _brief_text(brief),
+            history or [],
+            config_status_html(loaded_steps=len(steps or []), config=active.config),
+        )
 
-    def on_sidebar_collapse():
-        return False
-
-    model_events.append(refs.analysis_sidebar.expand(
+    refs.analysis_sidebar.expand(
         fn=on_sidebar_expand,
         inputs=[
             shared.state_steps,
@@ -164,28 +176,33 @@ def bind(refs: SidebarRefs, shared: SharedState, load_events) -> tuple:
             state_analysis_brief,
             refs.analysis_chatbot,
             refs.analysis_status,
-            state_sidebar_open,
         ],
-    ))
-    refs.analysis_sidebar.collapse(
-        fn=on_sidebar_collapse,
-        outputs=[state_sidebar_open],
     )
 
-    def on_analysis_ask(question, history, brief, settings=None):
+    def on_analyze_trajectory(steps, brief, settings=None, ui_language=None, reply_language=None):
+        return _run_analysis(steps, brief, settings, ui_language, reply_language)
+
+    model_events.append(refs.analysis_run.click(
+        fn=on_analyze_trajectory,
+        inputs=[shared.state_steps, state_analysis_brief, *settings_inputs, *language_inputs],
+        outputs=[state_analysis_brief, refs.analysis_chatbot, refs.analysis_status],
+    ))
+
+    def on_analysis_ask(question, history, brief, settings=None, ui_language=None, reply_language=None):
         active = resolve_session_settings(settings)
         return answer_question(
-            question, history, brief, config=active.config, language=active.language,
+            question, history, brief, config=active.config,
+            language=request_reply_language(active.language, ui_language, reply_language),
         ), ""
 
     model_events.append(refs.analysis_input.submit(
         fn=on_analysis_ask,
-        inputs=[refs.analysis_input, refs.analysis_chatbot, state_analysis_brief, *settings_inputs],
+        inputs=[refs.analysis_input, refs.analysis_chatbot, state_analysis_brief, *settings_inputs, *language_inputs],
         outputs=[refs.analysis_chatbot, refs.analysis_input],
     ))
     refs.analysis_clear.click(fn=lambda: [], outputs=[refs.analysis_chatbot])
 
-    def on_issue_ask(pending_q, history, brief, steps, issue_rows, settings=None):
+    def on_issue_ask(pending_q, history, brief, steps, issue_rows, settings=None, ui_language=None, reply_language=None):
         active = resolve_session_settings(settings)
         packed = _brief_text(brief)
         hist = list(history or [])
@@ -201,9 +218,10 @@ def bind(refs: SidebarRefs, shared: SharedState, load_events) -> tuple:
         question = issue_analysis_question_from_payload(rows, number)
         if question:
             hist = answer_question(
-                question, hist, packed, config=active.config, language=active.language,
+                question, hist, packed, config=active.config,
+                language=request_reply_language(active.language, ui_language, reply_language),
             )
-        return hist, packed, status, True, ""
+        return hist, packed, status, ""
 
     model_events.append(refs.issue_ask_btn.click(
         fn=on_issue_ask,
@@ -214,12 +232,12 @@ def bind(refs: SidebarRefs, shared: SharedState, load_events) -> tuple:
             shared.state_steps,
             shared.state_overview_issues,
             *settings_inputs,
+            *language_inputs,
         ],
         outputs=[
             refs.analysis_chatbot,
             state_analysis_brief,
             refs.analysis_status,
-            state_sidebar_open,
             refs.issue_ask_box,
         ],
     ))

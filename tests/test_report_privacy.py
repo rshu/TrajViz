@@ -12,7 +12,7 @@ import pytest
 import gradio as gr
 from gradio.processing_utils import async_move_files_to_cache
 
-from agent_trajviz import Trajectory
+from agent_trajviz import Trajectory, _fileio
 from agent_trajviz.insight import report
 from agent_trajviz.insight.session import session_from_run
 from agent_trajviz.insight.ui import upload
@@ -160,7 +160,7 @@ def test_write_failure_removes_only_its_new_scratch_directory(tmp_path, monkeypa
     def fail_write(*args, **kwargs):
         raise OSError("synthetic write failure")
 
-    monkeypatch.setattr(report, "open", fail_write, raising=False)
+    monkeypatch.setattr(_fileio.os, "replace", fail_write)
     with pytest.raises(OSError):
         report.write_report_file(session)
     assert list(tmp_path.iterdir()) == []

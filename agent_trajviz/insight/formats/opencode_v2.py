@@ -18,6 +18,16 @@ def _error(value: object) -> str:
     return _text(_dict(value).get("message")) or _text(value)
 
 
+def _is_step_interruption(value: object) -> bool:
+    """The native runner's exact control-flow marker, not a provider abort.
+
+    OpenCode's SessionStep uses this pair for runtime interruption or declined
+    interactions. Extra status/response evidence, generic AbortError names,
+    and other messages may describe real failures and must remain warnings.
+    """
+    return isinstance(value, dict) and value == {"type": "aborted", "message": "Step interrupted"}
+
+
 def _tokens(value: dict) -> dict:
     tokens = deepcopy(value)
     cache = _dict(tokens.get("cache"))
@@ -54,6 +64,12 @@ def _content(part: dict, message_id: str, position: int) -> dict:
     if not isinstance(metadata, dict):
         metadata = {}
         state["metadata"] = metadata
+    # A native tool invocation can complete while its result reports failure.
+    # Only literal booleans carry this meaning; preserve the original evidence.
+    if metadata.get("error") is True or metadata.get("timeout") is True:
+        state["status"] = "error"
+        if not state.get("error"):
+            state["error"] = "Tool timed out" if metadata.get("timeout") is True else "Tool reported an error"
     if state.get("status") in {"streaming", "running"}:
         metadata["_outcome_observed"] = False
     metadata["opencode_v2_tool"] = deepcopy(part)
@@ -109,6 +125,7 @@ def normalize_opencode_v2(raw: dict) -> dict:
     root_info.setdefault("directory", _dict(root_info.get("location")).get("directory", ""))
     messages: list[dict[str, Any]] = []
     errors: list[str] = []
+    warning_errors: list[str] = []
     terminal_error: str | None = None
     control_count = 0
     for record in records:
@@ -130,6 +147,11 @@ def normalize_opencode_v2(raw: dict) -> dict:
                 if record.get("outcome") in {"failed", "interrupted"}:
                     outcome_error = _error(record.get("error")) or f"Session turn {record['outcome']}."
                     errors.append(outcome_error)
+                    normal_interruption = record["outcome"] == "interrupted" and (
+                        not record.get("error") or _is_step_interruption(record["error"])
+                    )
+                    if not normal_interruption:
+                        warning_errors.append(outcome_error)
                 if session_id == root_id:
                     terminal_error = outcome_error
             continue
@@ -194,6 +216,8 @@ def normalize_opencode_v2(raw: dict) -> dict:
             error = _error(record["error"])
             if error:
                 errors.append(error)
+                if not _is_step_interruption(record["error"]):
+                    warning_errors.append(error)
             if kind == "assistant":
                 info.setdefault("finish", "error")
         if kind == "assistant" and not info.get("finish") and not _dict(record.get("time")).get("completed"):
@@ -205,8 +229,9 @@ def normalize_opencode_v2(raw: dict) -> dict:
     raw["_opencode_v2_errors"] = [terminal_error] if terminal_error else []
     if errors:
         raw["_opencode_v2_history_errors"] = list(dict.fromkeys(errors))
+    if warning_errors:
         warnings = raw.setdefault("_load_warnings", [])
-        for error in dict.fromkeys(errors):
+        for error in dict.fromkeys(warning_errors):
             warning = f"OpenCode model/session error: {error}"
             if warning not in warnings:
                 warnings.append(warning)

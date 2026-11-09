@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 
@@ -102,7 +103,7 @@ def test_graph_navigation_preserves_numbers_relations_and_exact_source_pointers(
     assert "<img src=x" not in output and "onclick='bad()'" not in output
     assert "href='#awe-node-" in output
     assert "<svg " in output and "marker-end='url(#awe-arrow-" in output
-    assert "aria-label='Numbered AWE provenance graph'" in output
+    assert re.search(r"aria-label=[\"']Numbered AWE provenance graph[\"']", output)
     assert "<foreignObject" not in output and "<script" not in output
     details = render.node_html(graph, selected)
     assert "/0/task" in details and "NODE-DETAIL" in details

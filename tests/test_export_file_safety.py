@@ -15,6 +15,89 @@ import agent_trajviz as tv
 REPO = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.parametrize("filename", ["trajectory.json", "index.json", "metrics.json"])
+def test_export_refuses_to_replace_loaded_source_before_writing_any_file(tmp_path, filename):
+    source = tmp_path / filename
+    original = (REPO / "tests/fixtures/codearts_minimal.json").read_bytes()
+    source.write_bytes(original)
+    run = tv.load(source)
+    with pytest.raises(ValueError, match="overwrite input source"):
+        tv.export_json(run, tmp_path)
+    assert source.read_bytes() == original
+    assert list(tmp_path.iterdir()) == [source]
+
+
+@pytest.mark.parametrize("link", ["symbolic", "hard"])
+def test_export_checks_file_aliases_before_writing_any_output(tmp_path, link):
+    source = tmp_path / "source.json"
+    original = (REPO / "tests/fixtures/codearts_minimal.json").read_bytes()
+    source.write_bytes(original)
+    output = tmp_path / "export"
+    output.mkdir()
+    alias = output / "metrics.json"
+    try:
+        alias.symlink_to(source) if link == "symbolic" else os.link(source, alias)
+    except OSError as exc:
+        pytest.skip(f"File links unavailable: {exc}")
+    with pytest.raises(ValueError, match="overwrite input source"):
+        tv.export_json(tv.load(source), output)
+    assert source.read_bytes() == alias.read_bytes() == original
+    assert list(output.iterdir()) == [alias]
+
+
+def test_json_cli_refuses_source_collision_with_a_controlled_error(tmp_path):
+    source = tmp_path / "trajectory.json"
+    original = (REPO / "tests/fixtures/codearts_minimal.json").read_bytes()
+    source.write_bytes(original)
+    result = subprocess.run([sys.executable, "-m", "agent_trajviz.insight", "--json", str(source), "-o", str(tmp_path)],
+                            cwd=REPO, env={**os.environ, "PYTHONPATH": str(REPO)},
+                            capture_output=True, text=True, timeout=60)
+    assert result.returncode == 1 and result.stdout == ""
+    assert "overwrite input source" in result.stderr and "Traceback" not in result.stderr
+    assert source.read_bytes() == original and list(tmp_path.iterdir()) == [source]
+
+
+@pytest.mark.parametrize("link", ["source", "symbolic", "hard"])
+def test_native_html_report_refuses_input_aliases_before_rendering(tmp_path, link):
+    source = tmp_path / "native.json"
+    original = (REPO / "tests/fixtures/codearts_minimal.json").read_bytes()
+    source.write_bytes(original)
+    output = source if link == "source" else tmp_path / "report.html"
+    if link != "source":
+        try:
+            output.symlink_to(source) if link == "symbolic" else os.link(source, output)
+        except OSError as exc:
+            pytest.skip(f"File links unavailable: {exc}")
+    run = tv.load(source)
+    with mock.patch("agent_trajviz.insight.report.build_report_html", side_effect=AssertionError("rendered before preflight")), \
+            pytest.raises(tv.ReportError, match="overwrite input source"):
+        tv.write_report(run, output)
+    assert source.read_bytes() == original
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_native_report_replacement_failure_preserves_previous_output(tmp_path):
+    previous = tmp_path / "report.html"
+    previous.write_bytes(b"previous report")
+    with mock.patch("agent_trajviz._fileio.os.replace", side_effect=OSError("controlled report replacement failure")), \
+            pytest.raises(OSError, match="controlled report replacement failure"):
+        tv.write_report(tv.load(REPO / "tests/fixtures/codearts_minimal.json"), previous)
+    assert previous.read_bytes() == b"previous report"
+    assert list(tmp_path.iterdir()) == [previous]
+
+
+def test_native_report_cli_refuses_source_collision_without_a_traceback(tmp_path):
+    source = tmp_path / "native.json"
+    original = (REPO / "tests/fixtures/codearts_minimal.json").read_bytes()
+    source.write_bytes(original)
+    result = subprocess.run([sys.executable, "-m", "agent_trajviz.insight", "--report", str(source), "-o", str(source)],
+                            cwd=REPO, env={**os.environ, "PYTHONPATH": str(REPO)},
+                            capture_output=True, text=True, timeout=60)
+    assert result.returncode == 1 and result.stdout == ""
+    assert "overwrite input source" in result.stderr and "Traceback" not in result.stderr
+    assert source.read_bytes() == original
+
+
 def _views(value):
     return {"probe": tv.View("probe", "Probe", "summary", "", {"value": value})}
 

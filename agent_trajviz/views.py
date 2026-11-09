@@ -67,6 +67,9 @@ class View:
     #: Evidence availability for this view; does not assert capture completeness.
     availability: Mapping[str, Any] | None = None
 
+    # Export preflight only: never part of the public value or serialized schema.
+    _input_sources: tuple[str, ...] = dataclasses.field(default=(), init=False, repr=False, compare=False)
+
     def to_dict(self) -> dict[str, Any]:
         """The view as one JSON object."""
         return {
@@ -102,8 +105,13 @@ def _jsonable(value: Any) -> Any:
         return [_jsonable(v) for v in value]
     if isinstance(value, (set, frozenset)):
         return [_jsonable(v) for v in sorted(value, key=str)]
+    if isinstance(value, View):
+        # Match the existing dataclass JSON shape without private export metadata.
+        return _jsonable({field.name: getattr(value, field.name)
+                          for field in dataclasses.fields(value) if field.init})
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return _jsonable(dataclasses.asdict(value))
+        return _jsonable({field.name: getattr(value, field.name)
+                          for field in dataclasses.fields(value)})
     if isinstance(value, os.PathLike):
         return os.fspath(value)
     raise TypeError(f"not JSON data: {type(value).__name__}")
@@ -619,10 +627,13 @@ def export_json(
     raw export, so the directory reloads with :func:`load`. The
     directory is created if needed; existing files of the same names are
     replaced atomically per file. View ids must be valid export filenames and
-    cannot collide with ``index`` or ``trajectory``.
+    cannot collide with ``index`` or ``trajectory``. Output cannot replace
+    files consumed by the trajectory or label views, including either side of
+    a label comparison. Copying the view mapping preserves these safeguards.
     """
     from . import __version__
     from .api import Trajectory
+    from ._fileio import ensure_output_does_not_overwrite, input_sources
 
     views = _source_views(source, only)
     seen: set[str] = set()
@@ -635,6 +646,15 @@ def export_json(
             raise ValueError(f"duplicate view id {view.id!r} (case-insensitive filename)")
         seen.add(filename_key)
     out_dir = Path(directory)
+    sources = input_sources(source.source, source.raw) if isinstance(source, Trajectory) else []
+    source_values = views.values() if isinstance(source, Trajectory) else source.values()
+    sources.extend(path for view in source_values if isinstance(view, View) for path in view._input_sources)
+    sources = list(dict.fromkeys(sources))
+    planned = [*(view.id + ".json" for view in views.values()), "index.json"]
+    if isinstance(source, Trajectory):
+        planned.append("trajectory.json")
+    for name in planned:
+        ensure_output_does_not_overwrite(out_dir / name, sources)
     out_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
 
@@ -684,6 +704,23 @@ def _labels_data(source: str | os.PathLike[str] | Mapping[str, Any]) -> dict[str
         raise LoadError(f"not a step-labels file: {exc}", code="invalid_labels", path=path) from exc
 
 
+def _aggregate_label_source(
+    source: str | os.PathLike[str] | Mapping[str, Any],
+) -> tuple[dict[str, Any], tuple[str, ...]]:
+    from .insight.labels import aggregate_labels
+
+    inputs = [] if isinstance(source, Mapping) else [str(Path(source).resolve())]
+    data = aggregate_labels(_labels_data(source), _input_files=inputs)
+    return data, tuple(dict.fromkeys(inputs))
+
+
+def _with_input_sources(views: dict[str, View], sources: Iterable[str]) -> dict[str, View]:
+    paths = tuple(dict.fromkeys(str(Path(path).resolve()) for path in sources))
+    for view in views.values():
+        object.__setattr__(view, "_input_sources", paths)
+    return views
+
+
 def label_views(source: str | os.PathLike[str] | Mapping[str, Any]) -> dict[str, View]:
     """Views of a step-labels sidecar written by ``agent-trajviz-label``.
 
@@ -692,9 +729,7 @@ def label_views(source: str | os.PathLike[str] | Mapping[str, Any]) -> dict[str,
     distributions and the timeline. Raises :class:`LoadError` (code
     ``"invalid_labels"``) for a file that is not a labels sidecar.
     """
-    from .insight.labels import aggregate_labels
-
-    agg = aggregate_labels(_labels_data(source))
+    agg, inputs = _aggregate_label_source(source)
     specs: list[tuple[str, ViewKind, str, str, Any]] = [
         ("labels_summary", "summary", "Labels summary",
          "Assistant steps labelled, how many were classified, and the taxonomy and model used.",
@@ -716,7 +751,8 @@ def label_views(source: str | os.PathLike[str] | Mapping[str, Any]) -> dict[str,
          "Every labelled step in order with its phase, action and duration (user turns included).",
          {"steps": agg["steps"]}),
     ]
-    return {vid: View(vid, title, kind, desc, _jsonable(data)) for vid, kind, title, desc, data in specs}
+    return _with_input_sources(
+        {vid: View(vid, title, kind, desc, _jsonable(data)) for vid, kind, title, desc, data in specs}, inputs)
 
 
 def label_comparison_views(
@@ -727,10 +763,9 @@ def label_comparison_views(
     compared_name: str = "compared",
 ) -> dict[str, View]:
     """Phase counts and time of two labelled runs side by side."""
-    from .insight.labels import aggregate_labels
-
-    ref, cmp_ = aggregate_labels(_labels_data(reference)), aggregate_labels(_labels_data(compared))
-    return {
+    ref, ref_inputs = _aggregate_label_source(reference)
+    cmp_, cmp_inputs = _aggregate_label_source(compared)
+    return _with_input_sources({
         "label_phase_count_comparison": View(
             "label_phase_count_comparison", "Steps by phase, compared", "chart",
             "Classified steps per phase in each run.",
@@ -741,7 +776,7 @@ def label_comparison_views(
             "Seconds per phase in each run.",
             _jsonable({"reference": {"name": reference_name, "durations_s": ref["phase_durations"]},
                        "compared": {"name": compared_name, "durations_s": cmp_["phase_durations"]}})),
-    }
+    }, (*ref_inputs, *cmp_inputs))
 
 
 # -- run groups ------------------------------------------------------------------

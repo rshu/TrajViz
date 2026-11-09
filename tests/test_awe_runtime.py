@@ -5,6 +5,7 @@ import dataclasses
 import json
 import os
 import shutil
+import subprocess
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -449,3 +450,30 @@ def test_bundled_engine_rsi_prepare_and_decide_preserve_experiment_boundaries(bu
     feedback = (Path(exported.output_dir) / "dossier" / "rsi_feedback.json").read_text()
     assert "PRIVATE REFERENCE PATCH" not in feedback and "private-test-id" not in feedback
     assert json.loads(feedback)["runtime_input_allowed"] is False
+
+
+@pytest.mark.parametrize("failure,phase,errno", [
+    ("start", "starting isolated worker", 13),
+    ("wait", "waiting for isolated worker", 5),
+    ("cleanup", "stopping timed-out process tree", 1),
+])
+def test_parent_oserror_reports_phase_and_errno_without_private_details(engine, monkeypatch, failure, phase, errno):
+    _, settings = engine
+    private = "private-command-and-environment-detail"
+    error = PermissionError(errno, private, "/private/input-path") if errno != 5 else OSError(errno, private)
+    process = Mock()
+    popen = Mock(return_value=process)
+    if failure == "start":
+        popen.side_effect = error
+    elif failure == "wait":
+        process.communicate.side_effect = error
+    else:
+        process.communicate.side_effect = subprocess.TimeoutExpired(private, 1)
+        monkeypatch.setattr(runtime, "_stop_process_tree", Mock(side_effect=error))
+    monkeypatch.setattr(runtime.subprocess, "Popen", popen)
+    result = runtime.run_operation("pipeline", settings)
+    assert not result.success and not result.available
+    assert phase in result.reason and f"errno={errno}" in result.reason
+    assert type(error).__name__ in result.reason
+    assert private not in result.reason and "/private/input-path" not in result.reason
+    assert result.logs == "" and result.output_dir is None

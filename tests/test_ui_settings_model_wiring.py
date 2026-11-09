@@ -56,18 +56,27 @@ def handlers():
 
 def test_every_model_callback_receives_the_same_session_state(handlers):
     callbacks = [handlers[name] for name in (
-        "on_trajectory_loaded", "on_sidebar_expand", "on_analysis_ask", "on_suggest_fixes",
+        "on_trajectory_loaded", "on_sidebar_expand", "on_analyze_trajectory", "on_analysis_ask", "on_suggest_fixes",
     )]
     state = callbacks[0].inputs[-1]
     assert isinstance(state, gr.State)
-    assert all(bf.inputs[-1] is state for bf in callbacks)
+    assert all(state in bf.inputs for bf in callbacks)
+    language = callbacks[2].inputs[-2]
+    assert isinstance(language, gr.Radio)
+    assert language.choices == [("EN", "en"), ("中", "zh-CN")]
+    reply_language = callbacks[2].inputs[-1]
+    assert isinstance(reply_language, gr.Dropdown)
+    assert reply_language.choices == [("English", "English"), ("简体中文", "Simplified Chinese")]
+    assert all(bf.inputs[-2] is language for bf in callbacks[2:])
+    assert all(bf.inputs[-1] is reply_language for bf in callbacks[2:])
+    assert all(bf.inputs[-3] is state for bf in callbacks[2:])
 
 
 def test_closed_sidebar_load_does_not_request_analysis_with_ui_settings(handlers):
     settings = _settings()
     with patch.object(sidebar, "analyze_loaded_trajectory") as call:
         packed, history, status = handlers["on_trajectory_loaded"].fn(
-            [{"index": 0}], "packed evidence", False, settings,
+            [{"index": 0}], "packed evidence", settings,
         )
     call.assert_not_called()
     assert (packed, history) == ("packed evidence", [])
@@ -75,16 +84,12 @@ def test_closed_sidebar_load_does_not_request_analysis_with_ui_settings(handlers
     assert settings.config.api_key not in status
 
 
-@pytest.mark.parametrize("trigger", ["on_trajectory_loaded", "on_sidebar_expand"])
-def test_initial_analysis_uses_session_connection_and_language(handlers, trigger):
+def test_explicit_analysis_uses_session_connection_and_language(handlers):
     settings = _settings()
     steps = [{"index": 0}]
     history = [{"role": "assistant", "content": "fixture analysis"}]
     with patch.object(sidebar, "analyze_loaded_trajectory", return_value=("packed", history)) as call:
-        if trigger == "on_trajectory_loaded":
-            result = handlers[trigger].fn(steps, "packed", True, settings)
-        else:
-            result = handlers[trigger].fn(steps, "packed", [], settings)
+        result = handlers["on_analyze_trajectory"].fn(steps, "packed", settings)
     call.assert_called_once_with(
         steps, brief="packed", config=settings.config, language=settings.language,
     )
@@ -111,6 +116,15 @@ def test_followups_keep_sessions_isolated_and_leave_environment_untouched(handle
     assert [c.kwargs["config"] for c in call.call_args_list] == [first.config, second.config]
     assert [c.kwargs["language"] for c in call.call_args_list] == ["French", "German"]
     assert dict(os.environ) == environment
+
+
+@pytest.mark.parametrize("ui_language,expected", [("en", "English"), ("zh-CN", "Simplified Chinese")])
+def test_optional_missing_reply_choice_defaults_to_current_ui_language(handlers, ui_language, expected):
+    settings = _settings(language="German")
+    with patch.object(sidebar, "answer_question", return_value=[]) as call:
+        handlers["on_analysis_ask"].fn("Why?", [], "packed", settings, ui_language)
+    assert call.call_args.kwargs["language"] == expected
+    assert call.call_args.kwargs["config"] is settings.config
 
 
 def test_initial_analysis_prompt_uses_explicit_language_over_environment():

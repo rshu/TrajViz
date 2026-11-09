@@ -89,7 +89,7 @@ def test_codex_json_results_retain_only_recorded_integer_exit_codes(ontology, ex
     from agent_trajviz.awe._engine import trajectory
     trajectory.codex_result_header = lambda text: (None, None, text)
     output = json.dumps({"metadata": {"exit_code": exit_code}, "output": "2 passed"})
-    call = {"type": "tool_call", "tool_name": "Read", "tool_id": "json-result", "input": {},
+    call = {"type": "tool_call", "tool_name": "exec_command", "tool_id": "json-result", "input": {},
             "output": output, "metadata": {}, "status": "success"}
     result = project_native(tv.Trajectory(format="codex", steps=[_row(call)]), "codex", "case-1")
     observed = result.steps[-1]

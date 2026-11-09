@@ -76,7 +76,7 @@ def _export_json(parser: argparse.ArgumentParser, args: argparse.Namespace) -> i
     try:
         run = load(args.json, format=args.format, session_id=args.session_id)
         export_json(run, out_dir, only=args.view)
-    except (LoadError, OSError) as exc:
+    except (LoadError, OSError, ValueError) as exc:
         print(f"agent-trajviz: {exc}", file=sys.stderr)
         return 1
     print(out_dir)

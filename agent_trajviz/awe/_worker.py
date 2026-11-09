@@ -213,9 +213,10 @@ def _discovery(request: dict[str, Any]) -> dict[str, Any]:
     output = Path(request["output"]) / "discovery"
     output.mkdir(parents=True, exist_ok=True)
     if request["operation"] == "cohort":
-        from agent_trajviz.awe._engine.cohort import cohort_report_md, discover_agent
+        from agent_trajviz.awe._engine.cohort import cohort_report_md, discover_agent, export_discovery
         rows = [discover_agent(agent, instances) for agent in selected]
         markdown = "\n\n".join(cohort_report_md(row) for row in rows)
+        rows = [export_discovery(row) for row in rows]
         name = "cohort_contrast"
     elif request["operation"] == "behaviors":
         from agent_trajviz.awe._engine.behaviors import behaviors_report_md, behaviors_summary

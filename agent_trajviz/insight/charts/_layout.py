@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections import Counter
+import html
+import textwrap
 from collections.abc import Sequence
 
 # Pre-import pandas before plotly to avoid circular import error
@@ -15,6 +17,7 @@ except ImportError:
 import plotly.graph_objects as go
 
 from ..palette import PLOTLY_DARK_TEMPLATE
+from ...i18n import localize_figure
 
 _TPL = "plotly_white"
 
@@ -23,16 +26,19 @@ def _apply_dark(fig: go.Figure, dark: bool) -> go.Figure:
     """Apply dark-mode layout overrides when *dark* is True."""
     if dark:
         fig.update_layout(**PLOTLY_DARK_TEMPLATE)
-    return fig
+    return localize_figure(fig)
 
 
 def _empty_figure(height: int = 380, message: str | None = None) -> go.Figure:
     """Return a blank Plotly figure, optionally with a centered message."""
     fig = go.Figure()
     if message:
-        fig.add_annotation(text=message, xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font_size=16)
-    fig.update_layout(template=_TPL, height=height)
-    return fig
+        lines = "<br>".join(html.escape(line) for line in textwrap.wrap(message, width=32))
+        fig.add_annotation(text=lines, xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False,
+                           font=dict(size=13, color="#64748b"), align="center")
+    fig.update_layout(template=_TPL, height=height, margin=dict(l=24, r=24, t=24, b=24),
+                      xaxis=dict(visible=False), yaxis=dict(visible=False), hovermode=False, dragmode=False)
+    return localize_figure(fig, annotations=True)
 
 
 def _apply_chart_layout(
@@ -63,20 +69,25 @@ def _apply_chart_layout(
         layout["yaxis_title"] = yaxis
     layout.update(kwargs)
     fig.update_layout(**layout)
+    localize_figure(fig)
 
 
 def _add_legend_hint(fig: go.Figure) -> None:
-    """Add a subtle 'click legend to toggle' hint at the bottom-right."""
+    """Place the legend hint in its own row below the x-axis title."""
+    fig.update_layout(margin=dict(b=max(fig.layout.margin.b or 0, 84)))
     fig.add_annotation(
         text="Click legend items to show/hide series",
         xref="paper",
         yref="paper",
         x=1.0,
-        y=-0.12,
+        y=0,
+        yshift=-56,
+        yanchor="top",
         showarrow=False,
-        font=dict(size=9, color="#9ca3af"),
+        font=dict(size=9, color="#64748b"),
         xanchor="right",
     )
+    localize_figure(fig, annotations=True)
 
 
 def _fmt_duration(seconds: float) -> str:

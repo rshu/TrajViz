@@ -10,16 +10,21 @@ from __future__ import annotations
 import base64
 import binascii
 import copy
+import contextlib
 import hashlib
 import json
 import math
 import os
 import stat
+import tempfile
 import zipfile
 from collections import deque
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, BinaryIO
+
+from .._fileio import ensure_output_does_not_overwrite
 
 RUN_TYPE = "agent-trajviz-awe-run"
 SCHEMA_VERSION = 1
@@ -30,6 +35,25 @@ MAX_DEPTH = 128
 _KNOWN = {"faults.json", "attribution_graphs.json", "symptoms.json", "recommendations.json",
           "manifest.json", "last_run.json", "insights.json", "rsi_proposals.json", "rsi_feedback.json",
           "operation-manifest.json", "operation-result.json"}
+_SIBLING_SOURCES = {"manifest.json", "last_run.json", "faults.json", "operation-manifest.json", "operation-result.json"}
+
+
+@contextlib.contextmanager
+def _atomic_output(path: Path) -> Iterator[BinaryIO]:
+    """Replace output only after the complete JSON, ZIP or HTML is durable."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile("w+b", dir=path.parent, prefix=".trajviz-awe-", suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            yield stream
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            with contextlib.suppress(OSError):
+                temporary.unlink(missing_ok=True)
 
 
 def _name(value: str) -> str:
@@ -485,6 +509,18 @@ class SavedRun:
     raw_artifacts: dict[str, bytes] = field(default_factory=dict, repr=False)
     _extra: dict[str, Any] = field(default_factory=dict, repr=False)
 
+    def _check_output(self, dest: str | os.PathLike[str]) -> Path:
+        """Protect the selected source and every imported sibling artifact."""
+        path = Path(dest)
+        if self.source is not None:
+            source = Path(self.source)
+            inputs = [source]
+            root = source if source.is_dir() else source.parent if source.name in _SIBLING_SOURCES else None
+            if root is not None:
+                inputs.extend(root / _name(name) for name in self.raw_artifacts)
+            ensure_output_does_not_overwrite(path, inputs)
+        return path
+
     def _check_integrity(self) -> None:
         if set(self.artifacts) != set(self.raw_artifacts) or set(self.artifacts) != set(self.fingerprints):
             raise ValueError("Saved artifact data no longer matches its original bytes")
@@ -505,18 +541,17 @@ class SavedRun:
 
     def write(self, dest: str | os.PathLike[str]) -> Path:
         """Write the portable JSON envelope to *dest* and return its path."""
-        path = Path(dest)
+        path = self._check_output(dest)
         body = json.dumps(self.to_dict(), ensure_ascii=False, indent=2, allow_nan=False) + "\n"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(body, encoding="utf-8")
+        with _atomic_output(path) as stream:
+            stream.write(body.encode("utf-8"))
         return path
 
     def export(self, dest: str | os.PathLike[str]) -> Path:
         """Write a ZIP containing the original, byte-identical saved artifacts."""
         self._check_integrity()
-        path = Path(dest)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        path = self._check_output(dest)
+        with _atomic_output(path) as stream, zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             for name, body in self.raw_artifacts.items():
                 archive.writestr(_name(name), body)
         return path
@@ -618,6 +653,6 @@ def load_run(source: str | os.PathLike[str] | dict[str, Any] | list[Any]) -> Sav
         return _shape({"faults.json": _canonical([value])}, origin)
     # A manifest describes sibling artifacts. A dossier selected from an output
     # directory is also an unambiguous invitation to read that saved run.
-    if path.name in ("manifest.json", "last_run.json", "faults.json", "operation-manifest.json", "operation-result.json"):
+    if path.name in _SIBLING_SOURCES:
         return _shape(_directory(path.parent), origin)
     return _shape({name: body}, origin)

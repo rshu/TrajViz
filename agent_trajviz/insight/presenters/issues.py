@@ -12,6 +12,7 @@ import re
 from dataclasses import asdict, dataclass
 from typing import cast, get_args
 
+from ...i18n import text as ui_text
 from ..context_usage import _explicit_compaction_events
 from ..issues import (  # noqa: F401  (re-exported: UI and judge import them here)
     Confidence,
@@ -489,7 +490,7 @@ def issue_analysis_question_from_payload(rows: list, number: int) -> str | None:
     return issue_analysis_question(overview_issue_from_payload(row), number)
 
 
-def _issue_card(issue: OverviewIssue, number: int) -> str:
+def _issue_card(issue: OverviewIssue, number: int, *, workflow_links: bool = True) -> str:
     """Scan row: number + kind badge + plain title, then visible impact and
     action lines; the technical detail folds away below.
 
@@ -502,7 +503,12 @@ def _issue_card(issue: OverviewIssue, number: int) -> str:
     action_raw = _issue_action_zh(issue)
     title = html.escape(title_raw)
     border = ISSUE_KIND_COLORS[issue.kind]
-    steps_html = _step_link_chips(list(issue.steps), label="第{n}步", more="另有 {extra} 步")
+    steps_html = _step_link_chips(
+        list(issue.steps),
+        label="第{n}步",
+        more="另有 {extra} 步",
+        workflow_links=workflow_links,
+    )
 
     judgment = issue.judgment
     why_html = ""
@@ -662,9 +668,13 @@ def group_issue_families(ranked: list[OverviewIssue]) -> list[_IssueGroupView]:
 _GROUP_LEAF_PREVIEW = 3
 
 
-def _issue_group_children_html(leaves: tuple[tuple[int, OverviewIssue], ...]) -> str:
+def _issue_group_children_html(
+    leaves: tuple[tuple[int, OverviewIssue], ...],
+    *,
+    workflow_links: bool = True,
+) -> str:
     cards = [
-        f"<div class='overview-issue-child'>{_issue_card(issue, number)}</div>"
+        f"<div class='overview-issue-child'>{_issue_card(issue, number, workflow_links=workflow_links)}</div>"
         for number, issue in leaves
     ]
     if len(cards) <= _GROUP_LEAF_PREVIEW:
@@ -679,10 +689,10 @@ def _issue_group_children_html(leaves: tuple[tuple[int, OverviewIssue], ...]) ->
     )
 
 
-def _issue_group_html(view: _IssueGroupView) -> str:
+def _issue_group_html(view: _IssueGroupView, *, workflow_links: bool = True) -> str:
     if view.parent_title is None:
         number, issue = view.leaves[0]
-        return _issue_card(issue, number)
+        return _issue_card(issue, number, workflow_links=workflow_links)
 
     border = ISSUE_KIND_COLORS[view.parent_kind]
     return (
@@ -695,14 +705,17 @@ def _issue_group_html(view: _IssueGroupView) -> str:
         f"<span class='overview-issue-group-meta'>{len(view.leaves)} 项</span>"
         f"</summary>"
         f"<div class='overview-issue-group-body'>"
-        f"{_issue_group_children_html(view.leaves)}</div>"
+        f"{_issue_group_children_html(view.leaves, workflow_links=workflow_links)}</div>"
         f"</details>"
     )
 
 
-def _issue_cards_html(issues: list[OverviewIssue]) -> str:
+def _issue_cards_html(issues: list[OverviewIssue], *, workflow_links: bool = True) -> str:
     """Render ranked leaf issues, nested under family parents when applicable."""
-    return "".join(_issue_group_html(view) for view in group_issue_families(issues))
+    return "".join(
+        _issue_group_html(view, workflow_links=workflow_links)
+        for view in group_issue_families(issues)
+    )
 
 
 def _fmt_k(n: float) -> str:
@@ -893,6 +906,7 @@ def render_overview_issues_html(
     progress: str = "",
     run_summary: str = "",
     limited_evidence: bool = False,
+    workflow_links: bool = True,
 ) -> str:
     """Render a foldable Issues panel with an evidence-aware empty state.
 
@@ -911,67 +925,78 @@ def render_overview_issues_html(
     if progress:
         progress_html = (
             "<div class='overview-issues-progress' role='status' aria-live='polite'>"
-            "<span class='overview-issues-progress-label'>思考中…</span>"
+            f"<span class='overview-issues-progress-label'>{ui_text('Thinking…')}</span>"
             f"{_SPINNER_SVG}<span>{html.escape(progress)}</span>"
             "</div>"
         )
 
     if not issues:
-        empty_meta = "证据有限" if limited_evidence else "未检测到问题"
-        empty_detail = (
-            "部分工作流检查对此捕获不可用；现有证据不能证明运行没有问题。"
-            if limited_evidence
-            else "未检测到明显的工作流问题。"
+        status = "limited evidence" if limited_evidence else "none detected"
+        detail = (
+            "Some workflow checks are unavailable for this capture. "
+            "The available evidence does not establish that the run is free of issues."
+            if limited_evidence else "No major workflow issues detected."
         )
         return (
             _verdict_banner_html(issues)
             + run_summary
             + "<details class='overview-issues-panel' id='overview-issues'>"
             "<summary class='overview-issues-summary'>"
-            "<span>问题</span>"
-            f"<span class='overview-issues-summary-meta'>{empty_meta}</span>"
+            f"<span>{ui_text('Issues')}</span>"
+            f"<span class='overview-issues-summary-meta'>{ui_text(status)}</span>"
             "</summary>"
             "<div class='overview-issues-body'>"
             f"{progress_html}"
             f"{banner_html}"
             "<div style='padding:8px 0 4px;color:var(--ov-muted);text-align:center;font-size:13px;'>"
-            f"{empty_detail}"
+            f"{ui_text(detail)}"
             "</div></div></details>"
         )
 
     count = len(issues)
     judged = sum(1 for i in issues if i.judgment is not None)
-    count_label = f"{count} 个问题"
+    count_label = ui_text("{count} issue" if count == 1 else "{count} issues", count=count)
     if limited_evidence:
-        count_label += " · 证据有限"
+        count_label += " · " + ui_text("limited evidence")
     if progress:
-        count_label += " · 正在 AI 分析…"
+        count_label += " · " + ui_text("suggesting fixes…")
     elif judged:
-        count_label += f" · 已为 {judged} 个问题生成修复建议"
+        count_label += " · " + ui_text("{count} with LLM fix", count=judged)
 
-    lead = (
-        "各问题下方为 LLM 给出的修改位置和修复建议"
-        if judged and not progress
-        else "按严重程度排序"
-    )
-    hint = (
-        f"<div class='overview-issues-hint'>{lead} · 点击步骤可跳转到 Workflow"
-        " · 技术细节默认折叠，点击展开"
-        " · 「AI 深入分析」打开右侧分析面板继续追问</div>"
-    )
+    if workflow_links:
+        hint = (
+            "LLM Change/Fix shown below — click a step to open Workflow"
+            if judged and not progress
+            else "Ranked problems — click a step to open Workflow; expand Why for context"
+        )
+        # Fork CodeAgent: mention the AI deep-dive control when links are live.
+        hint_html = (
+            f"<div class='overview-issues-hint'>{ui_text(hint)}"
+            " · 「AI 深入分析」打开右侧分析面板继续追问</div>"
+        )
+    else:
+        hint = (
+            "LLM Change/Fix shown below — step numbers refer to the recorded trajectory"
+            if judged and not progress else
+            "Ranked problems — step numbers refer to the recorded trajectory; expand Why for context"
+        )
+        hint_html = (
+            f"<div style='font-size:12px;color:var(--ov-muted);margin:0 0 8px;'>"
+            f"{ui_text(hint)}</div>"
+        )
     return (
         _verdict_banner_html(issues)
         + run_summary
         + "<details class='overview-issues-panel' id='overview-issues' open>"
         "<summary class='overview-issues-summary'>"
-        "<span>问题</span>"
-        f"<span class='overview-issues-summary-meta'>{html.escape(count_label)}</span>"
+        f"<span>{ui_text('Issues')}</span>"
+        f"<span class='overview-issues-summary-meta'>{count_label}</span>"
         "</summary>"
         "<div class='overview-issues-body'>"
         f"{progress_html}"
         f"{banner_html}"
-        f"{hint}"
-        + _issue_cards_html(issues)
+        f"{hint_html}"
+        + _issue_cards_html(issues, workflow_links=workflow_links)
         + "</div></details>"
     )
 
@@ -984,6 +1009,7 @@ def build_overview_issues_html(
     progress: str = "",
     ai_summary: tuple[str, str] | None = None,
     ai_pending: bool = False,
+    workflow_links: bool = True,
 ) -> str:
     """Collect (deduped + ranked) and render Overview Issues for *session*."""
     if issues is None:
@@ -1000,4 +1026,5 @@ def build_overview_issues_html(
         progress=progress,
         run_summary=build_run_summary_html(session, ai_summary, ai_pending=ai_pending),
         limited_evidence=limited,
+        workflow_links=workflow_links,
     )

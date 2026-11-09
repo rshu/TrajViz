@@ -22,7 +22,7 @@ class PatternsRefs:
 
 
 def layout() -> PatternsRefs:
-    with gr.TabItem("Patterns"):
+    with gr.TabItem("Patterns", visible=False):
         gr.HTML(
             "<div class='section-subtitle'>Recurring patterns detected in the trajectory — tool sequences, failure clusters, and phase transition anomalies.</div>"
         )
