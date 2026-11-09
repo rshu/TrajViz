@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .._endpoints import anthropic_messages_url
-from .._llm_http import env_json_dict, merge_llm_headers
+from .._llm_http import env_headers_for_connection, merge_llm_headers, raise_for_llm_status
 from .._redact import redact
 
 logger = logging.getLogger(__name__)
@@ -125,13 +125,13 @@ def call_llm(
     model reached the token limit before writing any answer text.
 
     *headers* are extra gateway HTTP headers. When omitted, ``LABEL_HEADERS``
-    from the environment is used.
+    applies only to its configured base URL and provider.
     """
     system_prompt, in_system = redact(system_prompt)
     user_message, in_user = redact(user_message)
     if in_system + in_user:
         logger.info("redacted %d credential-shaped string(s) from the LLM request", in_system + in_user)
-    extra = headers if headers is not None else env_json_dict("LABEL_HEADERS")
+    extra = headers if headers is not None else env_headers_for_connection("LABEL", base_url, provider)
     if provider == "anthropic":
         return _call_anthropic(base_url, api_key, model, system_prompt, user_message,
                                temperature, max_tokens, timeout, extra)
@@ -162,8 +162,9 @@ def _call_openai(
         json=body,
         headers=merge_llm_headers(extra_headers, auth={"Authorization": f"Bearer {api_key}"}),
         timeout=timeout,
+        allow_redirects=False,
     )
-    resp.raise_for_status()
+    raise_for_llm_status(resp)
     choice = resp.json()["choices"][0]
     content = choice["message"]["content"]
     if content is not None and not isinstance(content, str):
@@ -197,8 +198,9 @@ def _call_anthropic(
             auth={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
         ),
         timeout=timeout,
+        allow_redirects=False,
     )
-    resp.raise_for_status()
+    raise_for_llm_status(resp)
     data = resp.json()
     texts = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
     text = "\n".join(texts).strip()

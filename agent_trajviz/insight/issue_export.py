@@ -13,7 +13,8 @@ import re
 from typing import Any
 
 from .assistant import _first_user_task
-from .issues import IssueKind, OverviewIssue, prepare_overview_issues
+from .issues import OverviewIssue, prepare_overview_issues
+from .presenters.issues import issue_suggested_action as issue_suggested_action
 from .issue_judge import _step_window_indices
 from .session import LoadedSession
 from .tool_failure import tool_call_failed
@@ -44,118 +45,11 @@ _INSTRUCTIONS = (
     "After changes, re-run the failing commands or checks shown in the evidence when possible.",
 )
 
-#: English playbook mirrored from presenters.issues._ISSUE_ACTION_ZH.
-_ISSUE_ACTION_EN: tuple[tuple[str, str], ...] = (
-    (
-        "antipattern:compaction_thin_read",
-        "Manually review files written after that compaction; confirm edits match the real file state.",
-    ),
-    (
-        "antipattern:compaction_premature",
-        "Check whether the compaction summary kept critical context; if this is frequent, raise the context window.",
-    ),
-    (
-        "antipattern:compaction_grew",
-        "This compaction can be ignored; if frequent, check whether summaries are too long.",
-    ),
-    (
-        "antipattern:fruitless",
-        "Change search keywords or paths; confirm the target location exists first.",
-    ),
-    (
-        "antipattern:repeated_search",
-        "Fix the query or path so empty searches are not repeated.",
-    ),
-    (
-        "antipattern:bash_read",
-        "Prefer the Read tool for files (line numbers, less context waste) instead of shell cat/head.",
-    ),
-    (
-        "antipattern:edit_thrash",
-        "Read the target file before writing; confirm path and content match.",
-    ),
-    (
-        "antipattern:stalled_plan",
-        "Check unfinished todos — close them or finish the remaining work.",
-    ),
-    (
-        "antipattern:plan_resets",
-        "Confirm the plan reset was intentional; otherwise have the agent revise the plan in place.",
-    ),
-    (
-        "antipattern:tool_errors",
-        "Debug the environment: paths, permissions, and dependencies.",
-    ),
-    (
-        "antipattern:oversized_output",
-        "Have the agent use bounded reads (line ranges, head/tail, grep -c) and quiet test output.",
-    ),
-    (
-        "antipattern:blind_retry",
-        "After a failure, read the error and change the command or environment before retrying.",
-    ),
-    (
-        "antipattern:user_repeat",
-        "Inspect the agent's response after the first identical user message and why it fell short.",
-    ),
-    (
-        "antipattern:unvalidated_writes",
-        "Have the agent run tests or a build after edits (pytest, make, npm run build, etc.).",
-    ),
-    (
-        "antipattern:redundant_reread",
-        "Reuse already-read content; re-read only after a write or compaction when needed.",
-    ),
-    ("fail:system:", "Debug the runtime environment (paths, permissions)."),
-    (
-        "cascade:",
-        "Start at the first failing step; avoid retry loops that amplify the failure.",
-    ),
-    (
-        "bottleneck:",
-        "Inspect the slow step's timing breakdown and optimize that wait.",
-    ),
-)
-
-_ISSUE_ACTION_FALLBACK_EN: dict[IssueKind, str] = {
-    "error": "Inspect the related steps' inputs and environment for the failure.",
-    "risk": "Review the related steps' outputs for correctness risk.",
-    "antipattern": "Review the related steps and adjust agent behavior to avoid the pattern.",
-    "bottleneck": "Inspect the related step's timing breakdown and reduce the wait.",
-}
-
-
 def _clip(text: str, limit: int) -> str:
     text = text.replace("\r\n", "\n").strip()
     if len(text) <= limit:
         return text
     return text[: max(0, limit - 1)] + "…"
-
-
-def issue_suggested_action(issue: OverviewIssue) -> str:
-    """English 'what to do' line for one issue (agent export / API)."""
-    sid = issue.source_id or ""
-    why = issue.why or ""
-    if why.startswith("Typical recovery: "):
-        chain = why[len("Typical recovery: ") :]
-        tools = [t.strip() for t in chain.split("→") if t.strip()]
-        if len(tools) == 1:
-            did = f"called {tools[0]}"
-        else:
-            did = "called " + " → ".join(tools)
-        return (
-            f"After the failure the agent {did} and recovered on its own; "
-            "usually no human intervention is required."
-        )
-    if why == "No recovery path found after this error cluster.":
-        return (
-            "The agent did not recover after this error — investigate the "
-            "related steps' inputs and environment."
-        )
-    for prefix, action in _ISSUE_ACTION_EN:
-        if sid.startswith(prefix):
-            return action
-    return _ISSUE_ACTION_FALLBACK_EN.get(issue.kind, "")
 
 
 def _stringify_output(value: Any) -> str:

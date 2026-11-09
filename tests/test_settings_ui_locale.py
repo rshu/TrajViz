@@ -11,8 +11,10 @@ import pytest
 
 from agent_trajviz.i18n import translate
 from agent_trajviz.insight.llm_config import build_session_settings, request_reply_language
-from agent_trajviz.insight.ui import settings
+from agent_trajviz.insight.presenters.issues import issue_analysis_question_from_payload
+from agent_trajviz.insight.ui import overview_tab, settings
 from agent_trajviz.insight.ui.shared import SharedState
+from tests.overview_session_stub import overview_session
 
 _ENV = {
     "GRADIO_ANALYTICS_ENABLED": "False",
@@ -193,6 +195,32 @@ def test_reset_with_no_environment_key_clears_the_presence_placeholder(make_sett
     with patch.dict(os.environ, {**_ENV, "ANALYZE_API_KEY": ""}, clear=True):
         reset_values = reset.fn([], None)
     assert _output(reset, reset_values, refs.api_key) == gr.update(value="", placeholder="")
+
+
+def test_issue_card_number_selects_same_issue_after_judging_apply_and_reset(make_settings, monkeypatch):
+    session = overview_session(
+        steps=[{"index": 3}],
+        failure_patterns=[{
+            "cluster_label": "Bash: exit 1", "count": 3, "example_error": "fail", "steps": [3, 4, 5],
+        }],
+        failure_chains=[{"start": 3, "end": 5, "steps": [3, 4, 5]}],
+        fruitless_streaks=[{"start_step": 8, "end_step": 10, "length": 3}],
+    )
+    run = SimpleNamespace(steps=session.steps)
+    monkeypatch.setattr(settings, "session_from_run", lambda *_args: session)
+    monkeypatch.setattr(overview_tab, "session_from_run", lambda *_args: session)
+    app, _, _, shared, _, _ = make_settings()
+    apply = _function(app, "on_apply_settings")
+    reset = _function(app, "on_reset_settings")
+    with patch.dict(os.environ, {"GRADIO_ANALYTICS_ENABLED": "False"}, clear=True):
+        _, judged_rows = next(overview_tab.on_suggest_fixes(run))
+        applied = apply.fn("openai", "", "", "", .3, 1024, 30, "English", False, False, None, run.steps, run)
+        reset_values = reset.fn(run.steps, run)
+    for action, values in ((apply, applied), (reset, reset_values)):
+        rows = _output(action, values, shared.state_overview_issues)
+        assert rows == judged_rows
+        assert [row["source_id"] for row in rows] == ["fail:0:Bash: exit 1", "antipattern:fruitless"]
+        assert "Fruitless search streaks" in issue_analysis_question_from_payload(rows, 2)
 
 
 def test_standalone_legacy_preferences_normalize_dropdown_without_changing_stored_fallback(make_settings):

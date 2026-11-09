@@ -112,7 +112,7 @@ def recorded_transport(monkeypatch):
     monkeypatch.setattr(assistant, "complete_chat", lambda *args: record("chat", *args))
     monkeypatch.setattr(issue_judge, "complete_chat", lambda *args: record("fix", *args))
     issue = OverviewIssue(kind="error", title="fixture error", detail="command failed", steps=(1,), source_id="fixture")
-    monkeypatch.setattr(overview_tab, "collect_overview_issues", lambda _session: [issue])
+    monkeypatch.setattr(overview_tab, "prepare_overview_issues", lambda _session: [issue])
     return calls
 
 

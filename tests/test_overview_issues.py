@@ -26,8 +26,8 @@ class OverviewIssuesTests(unittest.TestCase):
         self.assertIn("overview-issues", html)
         self.assertIn("<details", html)
         self.assertIn("overview-issues-summary", html)
-        # Verdict stays Chinese (CodeAgent); panel chrome uses upstream i18n markers.
-        self.assertIn("未检测到明显问题", html)
+        self.assertIn('>✅ No major issues detected</span>', html)
+        self.assertIn('data-tv-i18n-zh="✅ 未检测到明显问题"', html)
         self.assertIn("none detected", html)
         self.assertIn("No major workflow issues detected", html)
         self.assertNotIn("insight-step-link", html)
@@ -171,14 +171,14 @@ class OverviewIssuesTests(unittest.TestCase):
         ])
         self.assertIn("tvGotoWorkflowStep(3)", html)
         self.assertIn("tvGotoWorkflowStep(7)", html)
-        self.assertIn(">第3步<", html)
-        self.assertIn(">第7步<", html)
+        self.assertIn(">Step 3<", html)
+        self.assertIn(">Step 7<", html)
         self.assertIn("overview-issue-why", html)
         self.assertIn("overview-issue-action", html)
         self.assertIn("overview-issue-tech", html)
-        self.assertIn(">影响<", html)
-        self.assertIn(">建议<", html)
-        self.assertIn(">技术细节<", html)
+        self.assertIn(">Impact<", html)
+        self.assertIn(">Suggestion<", html)
+        self.assertIn(">Technical details<", html)
         self.assertIn("失败后智能体调用 Read，自行恢复了", html)
         self.assertIn("overview-issue-analyze", html)
         self.assertIn("AI 深入分析", html)
@@ -387,8 +387,8 @@ class OverviewIssuesTests(unittest.TestCase):
             )
         ))
         views = group_issue_families(issues)
-        thrash_groups = [v for v in views if v.parent_title and "失败编辑重试" in v.parent_title]
-        search_groups = [v for v in views if v.parent_title == "搜索浪费"]
+        thrash_groups = [v for v in views if v.parent_title and v.parent_title[0].startswith("Failed edit retries")]
+        search_groups = [v for v in views if v.parent_title == ("Wasted searches", "搜索浪费")]
         self.assertEqual(len(thrash_groups), 1)
         self.assertEqual(len(thrash_groups[0].leaves), 2)
         self.assertEqual(len(search_groups), 1)
@@ -452,7 +452,7 @@ class OverviewIssuesTests(unittest.TestCase):
             )
         ))
         views = group_issue_families(issues)
-        idle_groups = [v for v in views if v.parent_title and "空闲" in v.parent_title]
+        idle_groups = [v for v in views if v.parent_title and v.parent_title[0].startswith("Idle / queue bottleneck")]
         self.assertEqual(len(idle_groups), 1)
         self.assertEqual(len(idle_groups[0].leaves), 2)
         flat_tool = [v for v in views if v.parent_title is None]
@@ -560,11 +560,11 @@ class RunSummaryTests(unittest.TestCase):
             session, ai_summary=("修复登录页崩溃", "已修复，测试全绿")
         )
         self.assertIn("ov-run-summary", html)
-        self.assertIn("ov-run-label'>任务", html)
+        self.assertIn('data-tv-i18n-en="Task"', html)
         self.assertIn("修复登录页崩溃", html)
-        self.assertIn("ov-run-label'>结局", html)
+        self.assertIn('data-tv-i18n-en="Outcome"', html)
         self.assertIn("已修复，测试全绿", html)
-        self.assertIn("ov-run-label'>数字", html)
+        self.assertIn('data-tv-i18n-en="Metrics"', html)
         self.assertIn("2 步", html)
         self.assertIn("2m 5s", html)
         self.assertIn("12.3k token", html)
@@ -581,10 +581,10 @@ class RunSummaryTests(unittest.TestCase):
         )
         html = build_run_summary_html(session)
         self.assertIn("ov-run-summary", html)
-        self.assertIn("ov-run-label'>数字", html)
+        self.assertIn('data-tv-i18n-en="Metrics"', html)
         self.assertIn("2 步", html)
-        self.assertNotIn("ov-run-label'>任务", html)
-        self.assertNotIn("ov-run-label'>结局", html)
+        self.assertNotIn('data-tv-i18n-en="Task"', html)
+        self.assertNotIn('data-tv-i18n-en="Outcome"', html)
         self.assertNotIn("修复登录页在 Safari 下崩溃的问题", html)
         self.assertNotIn("已修复：回归测试全绿", html)
 
@@ -625,7 +625,7 @@ class RunSummaryTests(unittest.TestCase):
         )
         html = build_run_summary_html(session, ai_summary=("部署", "尝试部署"))
         self.assertIn("ov-run-note", html)
-        self.assertIn("该步工具调用全部失败", html)
+        self.assertIn("最后一个工具步骤的调用全部失败", html)
 
     def test_recovered_ending_is_not_flagged(self):
         session = self._session(
@@ -653,13 +653,13 @@ class RunSummaryTests(unittest.TestCase):
             [self._step("user", "很长的原始任务描述"), self._step("assistant", "完成")],
         )
         html = build_run_summary_html(session, ai_pending=True)
-        self.assertIn("ov-run-label'>任务与结局", html)
+        self.assertIn('data-tv-i18n-en="Task and outcome"', html)
         self.assertIn("正在等待 AI 总结任务与结局…", html)
         self.assertIn("overview-issues-progress-spinner", html)
         self.assertIn("animateTransform", html)
-        self.assertIn("ov-run-label'>数字", html)
+        self.assertIn('data-tv-i18n-en="Metrics"', html)
         self.assertNotIn("很长的原始任务描述", html)
-        self.assertNotIn("ov-run-label'>任务</span>", html)
+        self.assertNotIn('data-tv-i18n-en="Task"', html)
 
     def test_ai_summary_replaces_raw_text_with_badge(self):
         session = self._session(
@@ -688,7 +688,7 @@ class RunSummaryTests(unittest.TestCase):
             [self._step("user", "原始任务"), self._step("assistant", "原始结局")],
         )
         html = build_run_summary_html(session, ai_summary=("", "AI 结局"))
-        self.assertIn("（AI 未总结任务）", html)
+        self.assertIn("AI 未总结任务", html)
         self.assertIn("AI 结局", html)
         self.assertNotIn("原始任务", html)
         self.assertNotIn("原始结局", html)
@@ -750,6 +750,21 @@ class TokenSummaryLineTests(unittest.TestCase):
         session = _session()
         session.steps = [{"role": "user", "parts": [], "tool_calls": [], "tokens": {}}]
         self.assertEqual(build_token_summary_html(session), "")
+
+    def test_cache_summary_uses_disjoint_prompt_components(self):
+        html = build_token_summary_html(self._session([
+            self._step("assistant", tokens={"total": 13, "input": 10, "output": 3, "cache_read": 4}),
+            self._step("assistant", tokens={"total": 16, "input": 7, "output": 2, "cache_read": 2, "cache_write": 5}),
+        ]))
+        # Codex-style input includes the cache read. Claude-style writes
+        # contribute to both uncached prompt and peak occupancy.
+        self.assertIn("25%", html)
+        self.assertIn("上下文峰值 14", html)
+
+    def test_partial_telemetry_omits_unobserved_cache_summary(self):
+        step = self._step("assistant", tokens={"input": 10, "output": 5})
+        step["_otel"] = {"fields": {"tokens.input": "observed", "tokens.output": "observed"}}
+        self.assertEqual(build_token_summary_html(self._session([step])), "")
 
 
 if __name__ == "__main__":

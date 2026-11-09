@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .._llm_http import env_json_dict
+from .._llm_http import env_headers_for_connection
 from ..i18n import text as ui_text
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -199,9 +199,6 @@ def resolve_analysis_config() -> AnalysisLLMConfig:
     if timeout <= 0:
         timeout = 120
 
-    # ANALYZE_HEADERS wins; LABEL_HEADERS fills so one .env drives both tools.
-    extra_headers = env_json_dict("ANALYZE_HEADERS") or env_json_dict("LABEL_HEADERS")
-
     return AnalysisLLMConfig(
         base_url=base_url.rstrip("/"),
         api_key=api_key,
@@ -211,9 +208,13 @@ def resolve_analysis_config() -> AnalysisLLMConfig:
         max_tokens=max_tokens,
         timeout=timeout,
         source=source,
-        extra_headers=extra_headers,
+        extra_headers=_connection_headers(base_url, provider),
     )
 
+
+def _connection_headers(base_url: str, provider: str) -> dict[str, str]:
+    return (env_headers_for_connection("ANALYZE", base_url, provider)
+            or env_headers_for_connection("LABEL", base_url, provider))
 
 
 @dataclass(frozen=True)
@@ -400,7 +401,7 @@ def build_session_settings(
         max_tokens=_positive_integer(max_tokens, "Maximum output tokens"),
         timeout=_positive_integer(timeout, "Timeout"),
         source="session",
-        extra_headers=env_json_dict("ANALYZE_HEADERS") or env_json_dict("LABEL_HEADERS"),
+        extra_headers=_connection_headers(endpoint, provider),
     )
     return AnalysisSettings(config=config, language=language)
 

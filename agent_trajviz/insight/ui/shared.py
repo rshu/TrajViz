@@ -7,8 +7,13 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from threading import Lock
+from typing import TYPE_CHECKING
+from weakref import WeakValueDictionary
 
 import gradio as gr
+
+if TYPE_CHECKING:
+    from ...api import Trajectory
 
 logger = logging.getLogger(__name__)
 
@@ -42,34 +47,36 @@ def format_choices() -> list[tuple[str, str]]:
     return [("Auto-detect", ""), *((label, key) for key, label in FORMATS.items())]
 
 
-# The run each browser session last loaded (``None`` after a clear), keyed by
-# Gradio session hash. Post-load streams that paint the UI across many yields
-# (the LLM Issues judge) check this to stop themselves once a newer load
-# replaced the trajectory they were analyzing — otherwise the replaced stream
-# keeps overwriting the new trace's panels with the old one's content.
-_latest_run_by_session: dict[str | None, object] = {}
+# Gradio owns each loaded run. Weak references let its state eviction free
+# both the trajectory and this index, including clients that never unload.
+_latest_run_by_session: WeakValueDictionary[str, Trajectory] = WeakValueDictionary()
 _latest_run_lock = Lock()
 
 
-def record_latest_run(session_hash: str | None, run: object) -> None:
-    """Note *run* as the trajectory *session_hash* currently displays."""
+def record_latest_run(session_hash: str | None, run: Trajectory | None) -> None:
+    """Track the run the session displays, or invalidate it after a clear."""
+    if session_hash is None:
+        return
     with _latest_run_lock:
-        _latest_run_by_session[session_hash] = run
+        if run is None:
+            _latest_run_by_session.pop(session_hash, None)
+        else:
+            _latest_run_by_session[session_hash] = run
 
 
-def is_latest_run(session_hash: str | None, run: object) -> bool:
+def is_latest_run(session_hash: str | None, run: Trajectory) -> bool:
     """True while *run* is still what *session_hash* last loaded.
 
-    With no record (direct/library callers, tests) everything counts as
-    current; a recorded ``None`` (cleared upload) supersedes every run.
+    Only direct callers without a session bypass this check. A cleared,
+    evicted, or closed browser session supersedes its pending work.
     """
+    if session_hash is None:
+        return True
     with _latest_run_lock:
-        if session_hash not in _latest_run_by_session:
-            return True
-        return _latest_run_by_session[session_hash] is run
+        return _latest_run_by_session.get(session_hash) is run
 
 
-def drop_latest_run(session_hash: str | None) -> None:
+def drop_latest_run(session_hash: str) -> None:
     """Forget *session_hash* on browser unload."""
     with _latest_run_lock:
         _latest_run_by_session.pop(session_hash, None)

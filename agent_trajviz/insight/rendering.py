@@ -9,7 +9,7 @@ from pygments import highlight as _pygments_highlight
 from pygments.formatters import HtmlFormatter as _HtmlFormatter
 from pygments.lexers import get_lexer_by_name as _get_lexer, TextLexer as _TextLexer
 
-from ..i18n import text as ui_text
+from ..i18n import attrs as ui_attrs, text as ui_text
 from .timeline_agents import bind_timeline_agents
 from .issues import _indices_for_step_range
 from .chart_data import step_category
@@ -1562,16 +1562,17 @@ def _step_link_chip(
     *title* is an optional tooltip; it is escaped.
     """
     n = _step_index(idx)
-    title_attr = f" title='{html.escape(title, quote=True)}'" if title else ""
+    title_attr = f" {ui_attrs(title)}" if title else ""
+    label_html = f"#{n}" if label == "#{n}" else ui_text(label, n=n)
     if not workflow_links:
         style = _STEP_CHIP_STYLE.replace("cursor:pointer;", "")
         return (
             f"<span class='insight-step-index' style='{style}'{title_attr}>"
-            f"{label.format(n=n)}</span>"
+            f"{label_html}</span>"
         )
     return (
         f"<span class='insight-step-link' style='{_STEP_CHIP_STYLE}'{title_attr} "
-        f"onclick=\"{_diag_jump_onclick(n)}\">{label.format(n=n)}</span>"
+        f"onclick=\"{_diag_jump_onclick(n)}\">{label_html}</span>"
     )
 
 
@@ -1595,7 +1596,7 @@ def _step_link_chips(
     if extra > 0:
         chips += (
             f"<span style='font-size:11px;color:var(--ov-muted);'>"
-            f"{more.format(extra=extra)}</span>"
+            f"{ui_text(more, extra=extra)}</span>"
         )
     return f"<div style='margin-top:4px;'>{chips}</div>"
 

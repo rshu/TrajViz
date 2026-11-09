@@ -14,6 +14,12 @@ change the public API (the names exported from `agent_trajviz`).
   reasoning, tokens and timing.
 - Switch the dashboards between English and Simplified Chinese, remembering
   the browser's choice while preserving loaded trajectories and session settings.
+- Use **Suggest fixes with LLM** to summarize a run and suggest fixes for
+  ranked issues, or **Analyze issue with AI** for a focused follow-up.
+
+### Changed
+
+- Group related Overview issues and collapse duplicate failure cascades.
 
 ### Fixed
 
@@ -167,17 +173,6 @@ change the public API (the names exported from `agent_trajviz`).
   and clear stale labels, comparisons and downloads when the input changes.
 - Correct mobile header overlap, repeated warning padding, upload action sizing
   and clipped comparison tables.
-
-### Changed
-
-- The Overview "Suggest fixes with LLM" judge runs automatically after each
-  trajectory load when `ANALYZE_*` / `LABEL_*` are configured (the button still
-  re-runs it). Without a configured endpoint it only shows the setup banner.
-- Each Overview issue has an **AI 深入分析** button that opens the AI Trajectory
-  Analysis sidebar and asks a focused follow-up about that issue.
-- Overview Issues dedupe overlapping failure cascades, group same-family cards
-  (edit thrash, search waste, same-cause bottlenecks), and preview three leaves
-  per group with expand/collapse.
 
 ## [0.3.0] - 2026-10-27
 

@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING
 
 import plotly.graph_objects as go
 
-from ...i18n import text as ui_text
+from ...i18n import paired_text, text as ui_text
 from ..formats.common import as_text
-from ..context_usage import PRESSURE_ALL_AGENTS, _explicit_compaction_events
+from ..context_usage import PRESSURE_ALL_AGENTS, _explicit_compaction_events, step_context_occupancy
 from ..formatting import (
     format_banner_html,
     format_behavioral_md,
@@ -20,11 +20,12 @@ from ..formatting import (
     _build_hotspots_md,
     _build_per_message_md,
 )
-from ..help import HELP_TEXT, SECTION_GUIDES
+from ..help import HELP_TEXT, SECTION_GUIDES, SECTION_GUIDES_EN
 from ..loaders import tokens_are_estimates
 from ...plugins import format_label
 from ..metrics import extract_agent_info, format_duration_seconds
 from ..palette import AGENT_COLORS
+from ..parser import step_token_segments, usable_token_count
 from ..rendering import (
     build_root_cause_html,
     render_agent_summary_cards,
@@ -40,6 +41,7 @@ from .issues import (
 )
 
 from ..session import MAX_STEPS, LoadedSession
+from ..telemetry_quality import field_observed
 
 if TYPE_CHECKING:
     from ...api import Trajectory
@@ -58,24 +60,24 @@ def trajectory_format_label(fmt: str | None) -> str:
 def render_section_guide(section: str) -> str:
     """Header for an Overview Contents section: summary line plus a hover/focus
     panel describing each chart and a debugging example."""
-    guide = SECTION_GUIDES[section]
+    guide, guide_zh = SECTION_GUIDES_EN[section], SECTION_GUIDES[section]
     charts = "".join(
         "<li class='section-guide-chart'>"
-        f"<span class='section-guide-chart-name'>{html.escape(name)}</span>"
-        f"：{html.escape(desc)}</li>"
-        for name, desc in guide.charts
+        f"<span class='section-guide-chart-name'>{paired_text(name, name_zh)}</span>"
+        f"{paired_text(': ' + desc, '：' + desc_zh)}</li>"
+        for (name, desc), (name_zh, desc_zh) in zip(guide.charts, guide_zh.charts, strict=True)
     )
     return (
         "<div class='section-guide'>"
-        f"<span class='section-guide-summary'>{html.escape(guide.summary)}</span>"
+        f"<span class='section-guide-summary'>{paired_text(guide.summary, guide_zh.summary)}</span>"
         "<div class='section-guide-tip' tabindex='0'>"
-        "<span class='section-guide-trigger'>ⓘ 图表说明与调试示例</span>"
+        f"<span class='section-guide-trigger'>{paired_text('ⓘ Charts and debugging example', 'ⓘ 图表说明与调试示例')}</span>"
         "<div class='section-guide-pop' role='tooltip'>"
         "<div class='section-guide-panel'>"
-        "<div class='section-guide-heading'>本页图表</div>"
+        f"<div class='section-guide-heading'>{paired_text('Charts', '本页图表')}</div>"
         f"<ul class='section-guide-charts'>{charts}</ul>"
-        "<div class='section-guide-heading'>调试示例</div>"
-        f"<p class='section-guide-example'>{html.escape(guide.example)}</p>"
+        f"<div class='section-guide-heading'>{paired_text('Debugging example', '调试示例')}</div>"
+        f"<p class='section-guide-example'>{paired_text(guide.example, guide_zh.example)}</p>"
         "</div></div></div></div>"
     )
 
@@ -439,34 +441,54 @@ def build_token_summary_html(session: LoadedSession) -> str:
     cache_read = fresh = peak = 0
     max_total = 0
     max_idx = None
+    prompt_covered = True
+    total_covered = True
     for i, s in enumerate(steps):
+        if s.get("role") != "assistant" or s.get("is_compaction_checkpoint"):
+            continue
         tokens = s.get("tokens") or {}
-        cr = tokens.get("cache_read") or 0
-        inp = tokens.get("input") or 0
-        if cr or inp:
-            cache_read += cr
-            fresh += inp
-            peak = max(peak, cr + inp)
-        total = tokens.get("total") or 0
-        if total > max_total:
+        if all(field_observed(s, f"tokens.{field}") and usable_token_count(tokens.get(field, 0)) is not None
+               for field in ("input", "cache_read", "cache_write")):
+            segments = step_token_segments(tokens)
+            if segments["reading"] == "total_only":
+                prompt_covered = False
+            else:
+                cache_read += segments["cache_read"]
+                fresh += segments["fresh"] + segments["cache_write"]
+                peak = max(peak, step_context_occupancy(s)["occupancy"])
+        else:
+            prompt_covered = False
+        total = usable_token_count(tokens.get("total", 0)) if field_observed(s, "tokens.total") else None
+        if total is None:
+            total_covered = False
+        elif total > max_total:
             max_total = total
             max_idx = i
 
     parts = []
-    if cache_read + fresh > 0:
+    if prompt_covered and cache_read + fresh > 0:
         pct = round(cache_read / (cache_read + fresh) * 100)
-        parts.append(f"缓存命中 {pct}%（命中 {_fmt_k(cache_read)} / 新算 {_fmt_k(fresh)}）")
+        parts.append(paired_text(
+            f"{pct}% cache hit ({_fmt_k(cache_read)} cached / {_fmt_k(fresh)} fresh)",
+            f"缓存命中 {pct}%（命中 {_fmt_k(cache_read)} / 新算 {_fmt_k(fresh)}）",
+        ))
     compactions = _explicit_compaction_events(steps)
     if compactions:
         dropped = sum(int(e.get("dropped") or 0) for e in compactions)
         if dropped > 0:
-            parts.append(f"压缩丢弃 {_fmt_k(dropped)} token（{len(compactions)} 次）")
+            parts.append(paired_text(
+                f"{_fmt_k(dropped)} tokens dropped ({len(compactions)} compactions)",
+                f"压缩丢弃 {_fmt_k(dropped)} token（{len(compactions)} 次）",
+            ))
         else:
-            parts.append(f"压缩 {len(compactions)} 次")
-    if max_idx is not None and max_total > 0:
-        parts.append(f"最大单步 {_fmt_k(max_total)}（第 {max_idx} 步）")
-    if peak > 0:
-        parts.append(f"上下文峰值 {_fmt_k(peak)}")
+            parts.append(paired_text(f"{len(compactions)} compactions", f"压缩 {len(compactions)} 次"))
+    if total_covered and max_idx is not None and max_total > 0:
+        parts.append(paired_text(
+            f"Largest step: {_fmt_k(max_total)} tokens (step {max_idx})",
+            f"最大单步 {_fmt_k(max_total)}（第 {max_idx} 步）",
+        ))
+    if prompt_covered and peak > 0:
+        parts.append(paired_text(f"Peak context: {_fmt_k(peak)} tokens", f"上下文峰值 {_fmt_k(peak)}"))
     if not parts:
         return ""
     return (
@@ -505,7 +527,7 @@ def build_overview_outputs(session: LoadedSession, *, ai_pending: bool = False, 
     metrics_text = format_performance_md(metrics, wfmt)
 
     behavior_text = format_behavioral_md(metrics, diag_metrics=session.diagnostic_metrics)
-    hotspots_text = _build_hotspots_md(message_rows)
+    hotspots_text = _build_hotspots_md(message_rows, steps=steps)
     per_message_text = _build_per_message_md(message_rows)
 
     def _d(k):

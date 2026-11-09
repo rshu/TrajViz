@@ -272,9 +272,9 @@ usage analyses.
 The **AI Trajectory Analysis** sidebar starts closed; open it from the labeled
 control on the right edge. It answers follow-up questions using the same
 dashboard statistics (health verdicts, bottlenecks, failures, fruitless
-streaks). Each Overview issue also has **AI 深入分析**, which opens this
-sidebar and asks a focused follow-up about that issue. It does not re-upload
-the raw file.
+streaks). Select **Analyze issue with AI** on an Overview issue to open the sidebar
+and ask a focused question about that issue. Select **Suggest fixes with LLM**
+to summarize the run and get recommendations for ranked issues.
 
 Open **AI Trajectory Analysis → Settings** to configure the provider, API key,
 base URL, model and request options. Use **Analyze trajectory** on the Analysis

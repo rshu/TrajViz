@@ -87,7 +87,7 @@ class SpawnStepMapTests(unittest.TestCase):
 class SpawnBadgeTests(unittest.TestCase):
     def test_badge_shown_once_on_first_child_card(self):
         html_out = render_workflow_html(parse_steps(_raw(with_metadata=True)))
-        self.assertEqual(1, html_out.count("spawned by #1"))
+        self.assertEqual(1, html_out.count(">spawned by #1</span>"))
         self.assertIn("tvGotoWorkflowStep(1)", html_out)
 
     def test_no_badge_without_spawn_link(self):

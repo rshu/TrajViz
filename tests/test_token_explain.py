@@ -9,15 +9,15 @@ from agent_trajviz.insight.token_explain import (
 
 def _step(role="assistant", total=0, inp=0, output=0, cache_read=0, reasoning=0,
           tool_calls=None, parts=None, text_preview="", model_id="test-model",
-          session_id=""):
+          session_id="", cache_write=0, provider_id=""):
     return {
         "index": 0, "raw_index": 0, "role": role, "session_id": session_id,
         "tokens": {
             "total": total, "input": inp, "output": output,
-            "cache_read": cache_read, "cache_write": 0, "reasoning": reasoning,
+            "cache_read": cache_read, "cache_write": cache_write, "reasoning": reasoning,
         },
         "tool_calls": tool_calls or [], "parts": parts or [],
-        "text_preview": text_preview, "model_id": model_id, "finish": "stop",
+        "text_preview": text_preview, "model_id": model_id, "provider_id": provider_id, "finish": "stop",
     }
 
 
@@ -65,6 +65,7 @@ class TokenStepExplanationTests(unittest.TestCase):
         )
         cur = _step(
             total=20136, inp=622, output=99, reasoning=215, cache_read=19200,
+            provider_id="sglang",
             tool_calls=[{
                 "tool_name": "bash",
                 "input": {"command": "python3 bisect_demo.py"},
@@ -74,8 +75,8 @@ class TokenStepExplanationTests(unittest.TestCase):
             parts=[{"type": "text", "text": "测试通过"}],
         )
         html_out = build_token_step_explanation_html([prev, cur], 1)
-        self.assertIn("页尾重算 70", html_out)
-        self.assertIn("新增内容 552（实际值）", html_out)
+        self.assertIn("页尾重算 ≈ 70", html_out)
+        self.assertIn("新增内容 ≈ 552（估算）", html_out)
         self.assertIn("read(notes.md)", html_out)
         self.assertIn("550 tok", html_out)
         self.assertIn("消息框架 ≈ 13 tok", html_out)
@@ -112,7 +113,7 @@ class TokenStepExplanationTests(unittest.TestCase):
                 "status": "ok",
             }],
         )
-        cur = _step(total=1424, inp=400, output=0, reasoning=0, cache_read=1024)
+        cur = _step(total=1424, inp=400, output=0, reasoning=0, cache_read=1024, provider_id="sglang")
         html_out = build_token_step_explanation_html([prev, cur], 1)
         self.assertIn("read(big.md) 的执行结果 ≈ 100 tok", html_out)
         self.assertIn("消息框架 ≈ 13 tok", html_out)
@@ -164,13 +165,13 @@ class TokenStepExplanationTests(unittest.TestCase):
                 "status": "ok",
             }],
         )
-        cur = _step(total=20136, inp=622, output=99, reasoning=215, cache_read=19200)
+        cur = _step(total=20136, inp=622, output=99, reasoning=215, cache_read=19200, provider_id="sglang")
         html_out = build_token_step_explanation_html([prev, cur], 1)
-        self.assertIn(f"{_IND1}- 新增内容 552（实际值）", html_out)
-        self.assertIn(f"{_IND1}- 页尾重算 70", html_out)
-        self.assertIn(f"{_IND2}- read(notes.md) 的执行结果", html_out)
-        self.assertIn(f"{_IND2}- 消息框架 ≈ 13 tok", html_out)
-        self.assertIn(f"{_IND2}（估算合计", html_out)
+        self.assertIn(f'{_IND1}<span data-tv-i18n="" data-tv-i18n-en="- New content ≈ 552', html_out)
+        self.assertIn(f'{_IND1}<span data-tv-i18n="" data-tv-i18n-en="- Partial page recomputation ≈ 70', html_out)
+        self.assertIn(f'{_IND2}<span data-tv-i18n="" data-tv-i18n-en="- read(notes.md) result', html_out)
+        self.assertIn(f'{_IND2}<span data-tv-i18n="" data-tv-i18n-en="- Message framing ≈ 13 tok', html_out)
+        self.assertIn(f'{_IND2}<span data-tv-i18n="" data-tv-i18n-en="(Estimated sum', html_out)
 
     def test_explanation_embeds_workflow_jump_link(self):
         # The panel links each step to its Workflow card via the shared
@@ -261,6 +262,32 @@ class TokenStepExplanationTests(unittest.TestCase):
         html_out = build_token_step_explanation_html(steps, 1)
         self.assertNotIn("首次 LLM 调用", html_out)
         self.assertIn("10,000", html_out)
+
+    def test_cache_writes_are_prompt_tokens_and_reasoning_is_disjoint(self):
+        claude = _step(total=37, inp=10, output=5, cache_read=20, cache_write=2)
+        codex = _step(total=13, inp=10, output=3, cache_read=4, reasoning=2)
+        claude_html = build_token_step_explanation_html([claude], 0)
+        codex_html = build_token_step_explanation_html([codex], 0)
+        self.assertIn("Cache Write", claude_html)
+        self.assertIn("Total 37 = prompt 32 (10 fresh + 20 read + 2 written) + completion 5", claude_html)
+        self.assertIn("Total 13 = prompt 10 (6 fresh + 4 read) + completion 3 (1 output + 2 reasoning)", codex_html)
+
+    def test_unknown_provider_does_not_claim_sglang_page_recomputation(self):
+        prev = _step(total=19270, inp=19270)
+        cur = _step(total=20136, inp=622, output=314, cache_read=19200, provider_id="anthropic")
+        html_out = build_token_step_explanation_html([prev, cur], 1)
+        self.assertNotIn("页尾重算", html_out)
+        self.assertNotIn("75 页", html_out)
+        self.assertIn("19,200", html_out)
+
+    def test_total_only_and_partial_token_telemetry_have_no_invented_breakdown(self):
+        total_only = build_token_step_explanation_html([_step(total=50)], 0)
+        self.assertIn("仅记录总量 50 token", total_only)
+        partial = _step(total=50, inp=30, output=20)
+        partial["_otel"] = {"fields": {"tokens.input": "observed", "tokens.output": "observed"}}
+        partial_html = build_token_step_explanation_html([partial], 0)
+        self.assertIn("没有 token 记录可用于构成分析", partial_html)
+        self.assertNotIn("无前缀缓存命中", partial_html)
 
 
 if __name__ == "__main__":

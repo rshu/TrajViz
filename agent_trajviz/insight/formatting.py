@@ -128,9 +128,9 @@ def _number(value: int | float | None, spec: str = ",") -> str:
     return "N/A" if value is None else format(value, spec)
 
 
-def _build_hotspots_md(rows: list[dict]) -> str:
+def _build_hotspots_md(rows: list[dict], *, steps: list[dict] | None = None) -> str:
     """Build markdown tables for top latency/token/cache-miss hotspots."""
-    picked = hotspots(rows)
+    picked = hotspots(rows, steps=steps)
     top_d, top_t = picked["slowest"], picked["heaviest"]
 
     def fmt_table(items: list[dict], value_field: str, value_header: str,

@@ -78,6 +78,36 @@ class NativeOpenCodeV2Tests(unittest.TestCase):
         self.assertIn("Controlled provider failure", run.warnings[0])
         self.assertIn("Controlled provider failure", run.raw["output"]["error"])
 
+    def test_versionless_failure_preserves_attachments_and_error_evidence(self):
+        data = capture()
+        del data["info"]["version"]
+        user, assistant, idle = data["messages"]
+        # Some desktop exports nest model information in user metadata. A
+        # native-only attachment and provider error still take precedence.
+        user["metadata"] = {"model": {"modelID": "example-model"}}
+        user["files"] = [{"path": "input.txt", "mime": "text/plain"}]
+        del assistant["time"]["streamed"]
+        error = {"type": "provider.auth", "message": "Controlled provider failure", "status": 401}
+        assistant.update(content=[], finish="error", error=error)
+        idle.update(outcome="failed", error=error)
+        run = self.load(data)
+        self.assertEqual([step["role"] for step in run.steps], ["user", "assistant"])
+        self.assertEqual(run.steps[0]["parts"][-1]["raw"]["data"]["path"], "input.txt")
+        self.assertEqual(run.raw["output"]["error"], error["message"])
+        self.assertIn(error["message"], run.warnings[0])
+        self.assertEqual(run.raw["_opencode_v2_messages"], data["messages"])
+
+    def test_versionless_text_turn_keeps_native_token_accounting(self):
+        data = capture()
+        del data["info"]["version"]
+        user, assistant, _idle = data["messages"]
+        del user["files"]
+        del assistant["time"]["streamed"]
+        assistant["content"] = [{"type": "text", "text": "The focused tests pass."}]
+        run = self.load(data)
+        self.assertEqual(run.steps[1]["tokens"]["total"], 39)
+        self.assertEqual(run.raw["_opencode_v2_messages"], data["messages"])
+
     def test_resumed_success_keeps_error_history_without_terminal_failure(self):
         data = capture()
         data["messages"][1]["content"][1]["state"]["status"] = "error"

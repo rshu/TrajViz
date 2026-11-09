@@ -26,7 +26,7 @@ from agent_trajviz.tool_vocab import (
 
 from .formats.common import as_text
 from .metrics import effective_agent, tagged_subagent_display_label
-from .parser import token_segments, spawned_child_session_id
+from .parser import step_token_segments, spawned_child_session_id
 
 # Display order follows Cursor's tray, then TrajViz-only tool_outputs
 # (Cursor folds tool results into Conversation).
@@ -235,14 +235,7 @@ def step_context_occupancy(step: dict) -> dict:
         # at a time, so occupancy is the largest one, not the summed usage.
         cached = tokens.get("prompt_peak_cache_read") or 0
         return {"fresh": int(peak - cached), "cache_read": int(cached), "occupancy": int(peak)}
-    seg = token_segments(
-        tokens.get("total", 0) or 0,
-        tokens.get("input", 0) or 0,
-        tokens.get("output", 0) or 0,
-        tokens.get("reasoning", 0) or 0,
-        tokens.get("cache_read", 0) or 0,
-        tokens.get("cache_write", 0) or 0,
-    )
+    seg = step_token_segments(tokens)
     # Tokens written to the cache this turn were part of this turn's prompt
     # (Anthropic's cache_creation_input_tokens). Leaving them out made a Claude
     # Code first turn — which writes the whole system prompt to the cache —

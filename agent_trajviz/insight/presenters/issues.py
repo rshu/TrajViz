@@ -1,8 +1,8 @@
 """Overview Issues panel: render the ranked issues as foldable HTML cards.
 
-The issues themselves are computed by :mod:`agent_trajviz.insight.issues`
-(English titles/details for the public API). Dashboard chrome here is Chinese,
-including the title / detail / why text shown on each card.
+The issues themselves are computed by :mod:`agent_trajviz.insight.issues`.
+Render their dashboard labels in the viewer's locale while retaining the
+canonical issue data for analysis and export.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import re
 from dataclasses import asdict, dataclass
 from typing import cast, get_args
 
-from ...i18n import text as ui_text
+from ...i18n import paired_text, text as ui_text
 from ..context_usage import _explicit_compaction_events
 from ..issues import (  # noqa: F401  (re-exported: UI and judge import them here)
     Confidence,
@@ -37,11 +37,11 @@ ISSUE_KIND_COLORS: dict[IssueKind, str] = {
     "bottleneck": "var(--ov-accent)",
 }
 
-_ISSUE_KIND_LABELS_ZH: dict[IssueKind, str] = {
-    "error": "错误",
-    "risk": "质量风险",
-    "antipattern": "行为问题",
-    "bottleneck": "耗时过长",
+_ISSUE_KIND_LABELS: dict[IssueKind, tuple[str, str]] = {
+    "error": ("Error", "错误"),
+    "risk": ("Quality risk", "质量风险"),
+    "antipattern": ("Behavior pattern", "行为问题"),
+    "bottleneck": ("Bottleneck", "耗时过长"),
 }
 
 _CONFIDENCE_ZH: dict[Confidence, str] = {"high": "高", "medium": "中", "low": "低"}
@@ -79,6 +79,113 @@ _ISSUE_ACTION_FALLBACK_ZH: dict[IssueKind, str] = {
 #: Real impact line for tool-failure cards; the recovery path moves to the
 #: action line (it is "what to do", not "what it costs").
 _FAIL_IMPACT_ZH = "工具调用失败会浪费轮次和 token；连续失败可能拖慢甚至卡住任务。"
+
+
+#: English playbook for the dashboard and agent export.
+_ISSUE_ACTION_EN: tuple[tuple[str, str], ...] = (
+    (
+        "antipattern:compaction_thin_read",
+        "Manually review files written after that compaction; confirm edits match the real file state.",
+    ),
+    (
+        "antipattern:compaction_premature",
+        "Check whether the compaction summary kept critical context; if this is frequent, raise the context window.",
+    ),
+    (
+        "antipattern:compaction_grew",
+        "This compaction can be ignored; if frequent, check whether summaries are too long.",
+    ),
+    (
+        "antipattern:fruitless",
+        "Change search keywords or paths; confirm the target location exists first.",
+    ),
+    (
+        "antipattern:repeated_search",
+        "Fix the query or path so empty searches are not repeated.",
+    ),
+    (
+        "antipattern:bash_read",
+        "Prefer the Read tool for files (line numbers, less context waste) instead of shell cat/head.",
+    ),
+    (
+        "antipattern:edit_thrash",
+        "Read the target file before writing; confirm path and content match.",
+    ),
+    (
+        "antipattern:stalled_plan",
+        "Check unfinished todos — close them or finish the remaining work.",
+    ),
+    (
+        "antipattern:plan_resets",
+        "Confirm the plan reset was intentional; otherwise have the agent revise the plan in place.",
+    ),
+    (
+        "antipattern:tool_errors",
+        "Debug the environment: paths, permissions, and dependencies.",
+    ),
+    (
+        "antipattern:oversized_output",
+        "Have the agent use bounded reads (line ranges, head/tail, grep -c) and quiet test output.",
+    ),
+    (
+        "antipattern:blind_retry",
+        "After a failure, read the error and change the command or environment before retrying.",
+    ),
+    (
+        "antipattern:user_repeat",
+        "Inspect the agent's response after the first identical user message and why it fell short.",
+    ),
+    (
+        "antipattern:unvalidated_writes",
+        "Have the agent run tests or a build after edits (pytest, make, npm run build, etc.).",
+    ),
+    (
+        "antipattern:redundant_reread",
+        "Reuse already-read content; re-read only after a write or compaction when needed.",
+    ),
+    ("fail:system:", "Debug the runtime environment (paths, permissions)."),
+    (
+        "cascade:",
+        "Start at the first failing step; avoid retry loops that amplify the failure.",
+    ),
+    (
+        "bottleneck:",
+        "Inspect the slow step's timing breakdown and optimize that wait.",
+    ),
+)
+
+_ISSUE_ACTION_FALLBACK_EN: dict[IssueKind, str] = {
+    "error": "Inspect the related steps' inputs and environment for the failure.",
+    "risk": "Review the related steps' outputs for correctness risk.",
+    "antipattern": "Review the related steps and adjust agent behavior to avoid the pattern.",
+    "bottleneck": "Inspect the related step's timing breakdown and reduce the wait.",
+}
+
+
+def issue_suggested_action(issue: OverviewIssue) -> str:
+    """English 'what to do' line for one issue (agent export / API)."""
+    sid = issue.source_id or ""
+    why = issue.why or ""
+    if why.startswith("Typical recovery: "):
+        chain = why[len("Typical recovery: ") :]
+        tools = [t.strip() for t in chain.split("→") if t.strip()]
+        if len(tools) == 1:
+            did = f"called {tools[0]}"
+        else:
+            did = "called " + " → ".join(tools)
+        return (
+            f"After the failure the agent {did} and recovered on its own; "
+            "usually no human intervention is required."
+        )
+    if why == "No recovery path found after this error cluster.":
+        return (
+            "The agent did not recover after this error — investigate the "
+            "related steps' inputs and environment."
+        )
+    for prefix, action in _ISSUE_ACTION_EN:
+        if sid.startswith(prefix):
+            return action
+    return _ISSUE_ACTION_FALLBACK_EN.get(issue.kind, "")
 
 
 def _issue_action_zh(issue: OverviewIssue) -> str:
@@ -523,66 +630,66 @@ def _issue_card(issue: OverviewIssue, number: int, *, workflow_links: bool = Tru
     playbook. When the LLM owns the slot, the playbook folds away under
     技术细节 as 常规做法.
     """
-    title_raw, detail_raw, why_raw = _localize_issue_text(issue)
-    action_raw = _issue_action_zh(issue)
-    title = html.escape(title_raw)
+    title_zh, detail_zh, why_zh = _localize_issue_text(issue)
+    title = paired_text(issue.title, title_zh)
+    action = paired_text(issue_suggested_action(issue), _issue_action_zh(issue))
     border = ISSUE_KIND_COLORS[issue.kind]
     steps_html = _step_link_chips(
         list(issue.steps),
-        label="第{n}步",
-        more="另有 {extra} 步",
+        label="Step {n}",
+        more="{extra} more steps",
         workflow_links=workflow_links,
     )
 
     judgment = issue.judgment
     why_html = ""
-    if why_raw:
+    if issue.why:
         why_html = (
             "<div class='overview-issue-why'>"
-            "<span class='overview-issue-label'>影响</span>"
-            f"{html.escape(why_raw)}</div>"
+            f"<span class='overview-issue-label'>{paired_text('Impact', '影响')}</span>"
+            f"{paired_text(issue.why, why_zh)}</div>"
         )
     action_html = ""
     if judgment is not None:
         also_html = ""
         if judgment.also:
             also_html = (
-                f"<div class='overview-issue-also'>补充：{html.escape(judgment.also)}</div>"
+                f"<div class='overview-issue-also'>{paired_text('Also:', '补充：')} {html.escape(judgment.also)}</div>"
             )
         action_html = (
             "<div class='overview-issue-action'>"
-            "<span class='overview-issue-label'>建议</span>"
+            f"<span class='overview-issue-label'>{paired_text('Suggestion', '建议')}</span>"
             f"<span class='overview-issue-label overview-issue-label-ai'>"
-            f"AI · 置信度：{_CONFIDENCE_ZH[judgment.confidence]}</span>"
+            f"{paired_text(f'AI · {judgment.confidence} confidence', f'AI · 置信度：{_CONFIDENCE_ZH[judgment.confidence]}')}</span>"
             f"<div class='overview-issue-fix'>{html.escape(judgment.fix)}</div>"
             "<div class='overview-issue-where'>"
-            "<span class='overview-issue-where-label'>修改位置</span>"
+            f"<span class='overview-issue-where-label'>{paired_text('Change location', '修改位置')}</span>"
             f"<span class='overview-issue-where-value'>{html.escape(judgment.where)}</span>"
             f"</div>{also_html}</div>"
         )
-    elif action_raw:
+    else:
         action_html = (
             "<div class='overview-issue-action'>"
-            "<span class='overview-issue-label'>建议</span>"
-            f"{html.escape(action_raw)}</div>"
+            f"<span class='overview-issue-label'>{paired_text('Suggestion', '建议')}</span>"
+            f"{action}</div>"
         )
 
     tech_parts: list[str] = []
-    if detail_raw:
+    if issue.detail or detail_zh:
         tech_parts.append(
-            f"<div class='overview-issue-detail'>{html.escape(detail_raw)}</div>"
+            f"<div class='overview-issue-detail'>{paired_text(issue.detail, detail_zh)}</div>"
         )
-    if judgment is not None and action_raw:
+    if judgment is not None:
         tech_parts.append(
             "<div class='overview-issue-detail'>"
-            "<span class='overview-issue-label'>常规做法</span>"
-            f"{html.escape(action_raw)}</div>"
+            f"<span class='overview-issue-label'>{paired_text('Usual approach', '常规做法')}</span>"
+            f"{action}</div>"
         )
     tech_html = ""
     if tech_parts:
         tech_html = (
             "<details class='overview-issue-tech'>"
-            "<summary>技术细节</summary>"
+            f"<summary>{paired_text('Technical details', '技术细节')}</summary>"
             f"{''.join(tech_parts)}</details>"
         )
     # Live dashboard only: static/exported reports keep evidence without
@@ -594,14 +701,14 @@ def _issue_card(issue: OverviewIssue, number: int, *, workflow_links: bool = Tru
             f"data-issue-index=\"{number}\" "
             f"onclick=\"if(window.tvAnalyzeIssue)"
             f"{{window.tvAnalyzeIssue(this.getAttribute('data-issue-index'));}}\">"
-            f"AI 深入分析</button>"
+            f"{paired_text('Analyze issue with AI', 'AI 深入分析')}</button>"
         )
     return (
         f"<div class='overview-issue-card' style='border-left-color:{border};'>"
         f"<div class='overview-issue-head'>"
         f"<span class='overview-issue-index'>#{number}</span>"
         f"<span class='overview-issue-kind' style='color:{border};'>"
-        f"{_ISSUE_KIND_LABELS_ZH[issue.kind]}</span>"
+        f"{paired_text(*_ISSUE_KIND_LABELS[issue.kind])}</span>"
         f"<span class='overview-issue-title'>{title}</span>"
         f"</div>"
         f"{why_html}"
@@ -617,16 +724,16 @@ def _issue_card(issue: OverviewIssue, number: int, *, workflow_links: bool = Tru
 class _IssueGroupView:
     """One flat card or a parent wrapping same-family leaves (UI only)."""
 
-    parent_title: str | None
+    parent_title: tuple[str, str] | None
     parent_kind: IssueKind
     leaves: tuple[tuple[int, OverviewIssue], ...]  # (leaf_number, issue)
 
 
-_BOTTLENECK_CAUSE_ZH = {
-    "idle": "空闲/排队瓶颈",
-    "tool": "工具瓶颈",
-    "context": "上下文/缓存瓶颈",
-    "inference": "推理瓶颈",
+_BOTTLENECK_CAUSE_LABELS = {
+    "idle": ("Idle / queue bottleneck", "空闲/排队瓶颈"),
+    "tool": ("Tool bottleneck", "工具瓶颈"),
+    "context": ("Context / cache bottleneck", "上下文/缓存瓶颈"),
+    "inference": ("Inference bottleneck", "推理瓶颈"),
 }
 
 
@@ -644,16 +751,16 @@ def _issue_family_key(issue: OverviewIssue) -> tuple[str, ...] | None:
     return None
 
 
-def _group_parent_title(key: tuple[str, ...], n: int) -> str:
+def _group_parent_title(key: tuple[str, ...], n: int) -> tuple[str, str]:
     kind = key[0]
     if kind == "edit_thrash":
-        return f"失败编辑重试（{n} 个文件）"
+        return f"Failed edit retries ({n} files)", f"失败编辑重试（{n} 个文件）"
     if kind == "search_waste":
-        return "搜索浪费"
+        return "Wasted searches", "搜索浪费"
     if kind == "bottleneck":
-        label = _BOTTLENECK_CAUSE_ZH.get(key[1] if len(key) > 1 else "unknown", "性能瓶颈")
-        return f"{label}（{n}）"
-    return f"相关问题（{n}）"
+        english, chinese = _BOTTLENECK_CAUSE_LABELS.get(key[1], ("Performance bottleneck", "性能瓶颈"))
+        return f"{english} ({n})", f"{chinese}（{n}）"
+    return f"Related issues ({n})", f"相关问题（{n}）"
 
 
 def group_issue_families(ranked: list[OverviewIssue]) -> list[_IssueGroupView]:
@@ -711,7 +818,7 @@ def _issue_group_children_html(
     return (
         f"{''.join(cards[:_GROUP_LEAF_PREVIEW])}"
         f"<details class='overview-issue-more'>"
-        f"<summary class='overview-issue-more-summary'>显示其余 {more} 项</summary>"
+        f"<summary class='overview-issue-more-summary'>{paired_text(f'Show {more} more', f'显示其余 {more} 项')}</summary>"
         f"<div class='overview-issue-more-body'>{''.join(cards[_GROUP_LEAF_PREVIEW:])}</div>"
         f"</details>"
     )
@@ -728,9 +835,9 @@ def _issue_group_html(view: _IssueGroupView, *, workflow_links: bool = True) -> 
         f"style='border-left-color:{border};'>"
         f"<summary class='overview-issue-group-head'>"
         f"<span class='overview-issue-kind' style='color:{border};'>"
-        f"{_ISSUE_KIND_LABELS_ZH[view.parent_kind]}</span>"
-        f"<span class='overview-issue-title'>{html.escape(view.parent_title)}</span>"
-        f"<span class='overview-issue-group-meta'>{len(view.leaves)} 项</span>"
+        f"{paired_text(*_ISSUE_KIND_LABELS[view.parent_kind])}</span>"
+        f"<span class='overview-issue-title'>{paired_text(*view.parent_title)}</span>"
+        f"<span class='overview-issue-group-meta'>{ui_text('{count} issues', count=len(view.leaves))}</span>"
         f"</summary>"
         f"<div class='overview-issue-group-body'>"
         f"{_issue_group_children_html(view.leaves, workflow_links=workflow_links)}</div>"
@@ -757,41 +864,40 @@ def _fmt_k(n: float) -> str:
     return f"{n / 1_000_000:.2f}M"
 
 
-def _run_numbers_zh(steps: list[dict], metrics: dict) -> list[str]:
-    """The headline numbers of a run, as display-ready strings.
-
-    Tool names come from the export, so they are escaped here and the list is
-    joined WITHOUT a second escape.
-    """
+def _run_numbers_html(steps: list[dict], metrics: dict) -> list[str]:
+    """The headline numbers of a run, marked for display in both locales."""
     from ..metrics import format_duration_seconds
 
-    nums = [f"{len(steps)} 步"]
+    nums = [paired_text(f"{len(steps)} steps", f"{len(steps)} 步")]
     wall = metrics.get("wall_clock")
     if isinstance(wall, (int, float)) and wall > 0:
         nums.append(format_duration_seconds(wall))
     toks = metrics.get("tokens") or {}
     total_tokens = toks.get("total") or 0
     if total_tokens:
-        nums.append(f"{_fmt_k(total_tokens)} token")
+        nums.append(f"{_fmt_k(total_tokens)} tokens")
     cache_read = toks.get("cache_read") or 0
     fresh = toks.get("input") or 0
     if cache_read + fresh > 0:
         pct = round(cache_read / (cache_read + fresh) * 100)
-        nums.append(f"缓存命中 {pct}%")
+        nums.append(paired_text(f"{pct}% cache hit", f"缓存命中 {pct}%"))
     tool_n = metrics.get("tool_call_count") or 0
     if tool_n:
         breakdown = metrics.get("tool_breakdown") or {}
         if breakdown:
             top_name, top_n = max(breakdown.items(), key=lambda kv: kv[1])
-            nums.append(f"工具 {tool_n} 次（{html.escape(str(top_name))} 最多，{top_n} 次）")
+            nums.append(paired_text(
+                f"{tool_n} tool calls ({top_name} most used, {top_n} calls)",
+                f"工具 {tool_n} 次（{top_name} 最多，{top_n} 次）",
+            ))
         else:
-            nums.append(f"工具 {tool_n} 次")
+            nums.append(paired_text(f"{tool_n} tool calls", f"工具 {tool_n} 次"))
     compactions = _explicit_compaction_events(steps)
     if compactions:
-        nums.append(f"压缩 {len(compactions)} 次")
+        nums.append(paired_text(f"{len(compactions)} compactions", f"压缩 {len(compactions)} 次"))
     sub_agents = len(metrics.get("agent_breakdown") or {})
     if sub_agents:
-        nums.append(f"{sub_agents + 1} 个 agent")
+        nums.append(paired_text(f"{sub_agents + 1} agents", f"{sub_agents + 1} 个智能体"))
     return nums
 
 
@@ -809,20 +915,20 @@ _SPINNER_SVG = (
 )
 
 
-def _issues_spinner_html(label: str, *, inline: bool = False) -> str:
+def _issues_spinner_html(label: str, label_zh: str, *, inline: bool = False) -> str:
     """SMIL spinner (survives Gradio HTML swaps / prefers-reduced-motion)."""
     tag = "span" if inline else "div"
     style = " style='margin:0;display:inline-flex;'" if inline else ""
     return (
         f"<{tag} class='overview-issues-progress' role='status' "
         f"aria-live='polite'{style}>"
-        f"{_SPINNER_SVG}<span>{html.escape(label)}</span></{tag}>"
+        f"{_SPINNER_SVG}{paired_text(label, label_zh)}</{tag}>"
     )
 
 
 def _run_pending_value_html() -> str:
     """Spinner placeholder shown while the LLM run summary is being generated."""
-    return _issues_spinner_html("正在等待 AI 总结任务与结局…", inline=True)
+    return _issues_spinner_html("Waiting for AI to summarize the task and outcome…", "正在等待 AI 总结任务与结局…", inline=True)
 
 
 def build_run_summary_html(
@@ -833,10 +939,10 @@ def build_run_summary_html(
 ) -> str:
     """Story of the run shown under the verdict banner.
 
-    任务/结局 come from the LLM (*ai_summary*, shown with an AI badge — see
+    Task and outcome come from the LLM (*ai_summary*, shown with an AI badge — see
     ``issue_judge.judge_run_summary``); while it is being generated
     (*ai_pending*) a spinner placeholder is shown instead. Without AI the two
-    rows are omitted entirely — only the 数字 row (local metrics) remains.
+    rows are omitted entirely — only the metrics row remains.
     """
     steps = session.steps
     if not steps:
@@ -844,18 +950,17 @@ def build_run_summary_html(
 
     # Ending note: the last assistant step that ran tools ended with every
     # call failed — the run likely stopped on broken ground.
-    note = ""
+    all_tools_failed = False
     for s in reversed(steps):
         calls = s.get("tool_calls") or []
         if s.get("role") == "assistant" and calls:
-            if all(tool_call_failed(c) for c in calls if isinstance(c, dict)):
-                note = "该步工具调用全部失败"
+            all_tools_failed = all(tool_call_failed(c) for c in calls if isinstance(c, dict))
             break
 
-    def _row(label: str, value: str) -> str:
+    def _row(label: str, label_zh: str, value: str) -> str:
         return (
             f"<div class='ov-run-row'>"
-            f"<span class='ov-run-label'>{label}</span>"
+            f"<span class='ov-run-label'>{paired_text(label, label_zh)}</span>"
             f"<span class='ov-run-value'>{value}</span></div>"
         )
 
@@ -868,7 +973,7 @@ def build_run_summary_html(
                 f"{html.escape(ai_task)}"
             )
         else:
-            task = "<span class='ov-run-muted'>（AI 未总结任务）</span>"
+            task = f"<span class='ov-run-muted'>{paired_text('No AI task summary', 'AI 未总结任务')}</span>"
         outcome_parts = []
         if ai_outcome:
             outcome_parts.append(
@@ -876,17 +981,17 @@ def build_run_summary_html(
                 f"{html.escape(ai_outcome)}"
             )
         else:
-            outcome_parts.append("<span class='ov-run-muted'>（AI 未总结结局）</span>")
-        if note:
+            outcome_parts.append(f"<span class='ov-run-muted'>{paired_text('No AI outcome summary', 'AI 未总结结局')}</span>")
+        if all_tools_failed:
             outcome_parts.append(
-                f"<span class='ov-run-note'>⚠ {html.escape(note)}</span>"
+                f"<span class='ov-run-note'>⚠ {paired_text('All tool calls in the last tool step failed', '最后一个工具步骤的调用全部失败')}</span>"
             )
-        rows.append(_row("任务", task))
-        rows.append(_row("结局", " ".join(outcome_parts)))
+        rows.append(_row("Task", "任务", task))
+        rows.append(_row("Outcome", "结局", " ".join(outcome_parts)))
     elif ai_pending:
-        rows.append(_row("任务与结局", _run_pending_value_html()))
+        rows.append(_row("Task and outcome", "任务与结局", _run_pending_value_html()))
     metrics = getattr(session, "metrics", None) or {}
-    rows.append(_row("数字", " · ".join(_run_numbers_zh(steps, metrics))))
+    rows.append(_row("Metrics", "数字", " · ".join(_run_numbers_html(steps, metrics))))
     return "<div class='ov-run-summary'>" + "".join(rows) + "</div>"
 
 
@@ -899,53 +1004,51 @@ def _verdict_banner_html(
     Limited-evidence captures (OTLP / incomplete tool outcomes) must not claim
     a healthy empty state — the available checks cannot prove the run is clean.
     """
-    if not issues:
-        if limited_evidence:
-            return (
-                "<div class='ov-verdict' style='border-left-color:var(--ov-warn);'>"
-                "<div class='ov-verdict-head' style='color:var(--ov-warn);'>"
-                "⚠ 证据有限</div>"
-                "<div class='ov-verdict-text'>部分工作流检查对此捕获不可用；"
-                "现有证据不能证明运行没有问题。</div></div>"
-            )
-        return (
-            "<div class='ov-verdict' style='border-left-color:var(--ov-success);'>"
-            "<div class='ov-verdict-head' style='color:var(--ov-success);'>"
-            "✅ 未检测到明显问题</div>"
-            "<div class='ov-verdict-text'>本次运行的工作流健康；"
-            "可在下方各分区查看执行细节。</div></div>"
-        )
-    errors = sum(1 for i in issues if i.kind == "error")
-    risks = sum(1 for i in issues if i.kind == "risk")
-    others = len(issues) - errors - risks
-    top = issues[0]
-    top_title, _, _top_detail = _localize_issue_text(top)
-    top_action = _issue_action_zh(top)
-    if errors or risks:
-        color = "var(--ov-bad)" if errors else "var(--ov-risk)"
-        parts = []
-        if errors:
-            parts.append(f"{errors} 个错误")
-        if risks:
-            parts.append(f"{risks} 个质量风险")
-        head = "❗ 需要关注：" + "、".join(parts)
-        text = f"最要紧的一项：「{top_title}」。{top_action}"
-    else:
+    if not issues and limited_evidence:
         color = "var(--ov-warn)"
-        head = f"⚠ 运行完成，有 {others} 个可优化项（不影响结果正确性）"
-        text = f"最主要的一项：「{top_title}」。{top_action}"
+        head = paired_text("⚠ Limited evidence", "⚠ 证据有限")
+        text = paired_text(
+            "This capture does not contain enough evidence to run every workflow check.",
+            "此记录的证据不足，无法执行全部工作流检查。",
+        )
+    elif not issues:
+        color = "var(--ov-success)"
+        head = paired_text("✅ No major issues detected", "✅ 未检测到明显问题")
+        text = paired_text("Explore the execution details in the sections below.", "可在下方各分区查看执行细节。")
+    else:
+        errors = sum(1 for i in issues if i.kind == "error")
+        risks = sum(1 for i in issues if i.kind == "risk")
+        top = issues[0]
+        top_title_zh, _, _ = _localize_issue_text(top)
+        if errors or risks:
+            color = "var(--ov-bad)" if errors else "var(--ov-risk)"
+            parts = []
+            if errors:
+                parts.append(paired_text(f"{errors} {'error' if errors == 1 else 'errors'}", f"{errors} 个错误"))
+            if risks:
+                parts.append(paired_text(f"{risks} {'quality risk' if risks == 1 else 'quality risks'}", f"{risks} 个质量风险"))
+            head = f"{paired_text('❗ Needs attention', '❗ 需要关注')} · " + " · ".join(parts)
+        else:
+            color = "var(--ov-warn)"
+            count = len(issues)
+            noun = "improvement" if count == 1 else "improvements"
+            head = paired_text(f"⚠ {count} potential {noun}", f"⚠ 有 {count} 个可优化项")
+        text = paired_text(
+            f"Top issue: {top.title}. {issue_suggested_action(top)}",
+            f"最主要的一项：「{top_title_zh}」。{_issue_action_zh(top)}",
+        )
     return (
         f"<div class='ov-verdict' style='border-left-color:{color};'>"
         f"<div class='ov-verdict-head' style='color:{color};'>{head}</div>"
-        f"<div class='ov-verdict-text'>{html.escape(text)}</div></div>"
+        f"<div class='ov-verdict-text'>{text}</div></div>"
     )
 
 
 def render_overview_issues_html(
     issues: list[OverviewIssue],
     *,
-    banner: str = "",
-    progress: str = "",
+    banner: str | tuple[str, str] = "",
+    progress: str | tuple[str, str] = "",
     run_summary: str = "",
     limited_evidence: bool = False,
     workflow_links: bool = True,
@@ -958,17 +1061,19 @@ def render_overview_issues_html(
     """
     banner_html = ""
     if banner:
+        message = paired_text(*banner) if isinstance(banner, tuple) else html.escape(banner)
         banner_html = (
             f"<div style='font-size:12px;color:var(--ov-muted);margin:0 0 8px;'>"
-            f"{html.escape(banner)}</div>"
+            f"{message}</div>"
         )
 
     progress_html = ""
     if progress:
+        message = paired_text(*progress) if isinstance(progress, tuple) else html.escape(progress)
         progress_html = (
             "<div class='overview-issues-progress' role='status' aria-live='polite'>"
             f"<span class='overview-issues-progress-label'>{ui_text('Thinking…')}</span>"
-            f"{_SPINNER_SVG}<span>{html.escape(progress)}</span>"
+            f"{_SPINNER_SVG}<span>{message}</span>"
             "</div>"
         )
 
@@ -1011,10 +1116,9 @@ def render_overview_issues_html(
             if judged and not progress
             else "Ranked problems — click a step to open Workflow; expand Why for context"
         )
-        # Fork CodeAgent: mention the AI deep-dive control when links are live.
         hint_html = (
             f"<div class='overview-issues-hint'>{ui_text(hint)}"
-            " · 「AI 深入分析」打开右侧分析面板继续追问</div>"
+            f" · {paired_text('Analyze issue with AI opens the sidebar for a focused follow-up.', '「AI 深入分析」打开右侧分析面板继续追问。')}</div>"
         )
     else:
         hint = (
@@ -1047,8 +1151,8 @@ def build_overview_issues_html(
     session: LoadedSession,
     *,
     issues: list[OverviewIssue] | None = None,
-    banner: str = "",
-    progress: str = "",
+    banner: str | tuple[str, str] = "",
+    progress: str | tuple[str, str] = "",
     ai_summary: tuple[str, str] | None = None,
     ai_pending: bool = False,
     workflow_links: bool = True,

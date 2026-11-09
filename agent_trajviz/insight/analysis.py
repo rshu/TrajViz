@@ -21,6 +21,7 @@ from .context_usage import (
     detect_compaction_aftermath,
     detect_premature_compactions,
     pressure_agent_choices,
+    step_context_occupancy,
 )
 from .diagnostics import (
     annotate_clusters_with_agents,
@@ -40,6 +41,7 @@ from .metrics import (
     compute_metrics,
     wall_clock_fmt,
 )
+from .parser import step_token_segments, usable_token_count
 from .patterns import (
     build_structural_phase_segments,
     compute_plan_metrics,
@@ -63,12 +65,7 @@ from .telemetry_quality import data_quality, field_observed, is_otel_step, suppo
 NOISY_ROOT_CAUSE_FORMATS = frozenset({"opencode", "codearts", "codex"})
 
 
-def _prompt_tokens(r: dict) -> int:
-    """The live prompt size a row's LLM call saw (fresh input + cache read)."""
-    return (r.get("tokens_input") or 0) + (r.get("cache_read") or 0)
-
-
-def _top_growth_rows(message_rows: list[dict], limit: int) -> list[dict]:
+def _top_growth_rows(message_rows: list[dict], limit: int, steps: list[dict] | None) -> list[dict]:
     """Steps that grew the live context the most before the agent's next call.
 
     The growth of an assistant step is how much larger the next prompt of
@@ -81,23 +78,48 @@ def _top_growth_rows(message_rows: list[dict], limit: int) -> list[dict]:
     # One reverse pass remembers each agent's next positive-prompt assistant,
     # so a long single-agent trajectory stays linear. A stable sort then keeps
     # equal-growth ties in forward encounter order.
-    successor: dict = {}
+    successor: dict[tuple[str, str], int] = {}
     out: list[dict] = []
-    for r in reversed(message_rows):
+    for position in range(len(message_rows) - 1, -1, -1):
+        r = message_rows[position]
         if r.get("role") != "assistant":
             continue
-        prompt = _prompt_tokens(r)
+        step = steps[position] if steps is not None else None
+        agent = ((step or {}).get("session_id") or "", r.get("agent") or "")
+        total = usable_token_count(r["tokens_total"])
+        components_observed = step is None or all(
+            field_observed(step, f"tokens.{field}") for field in ("input", "output", "cache_read", "cache_write")
+        )
+        if total is None or not components_observed:
+            # An unobserved model call is a gap, not an empty prompt. Do not
+            # assign growth across it to an earlier call.
+            successor.pop(agent, None)
+            continue
+        if step is None:
+            fresh = r.get("non_cache_tokens", r.get("tokens_input"))
+            prompt = (fresh or 0) + (r.get("cache_read") or 0)
+        else:
+            tokens = step.get("tokens") or {}
+            segments = step_token_segments(tokens)
+            if segments["reading"] == "total_only" and "context_window" not in tokens and "prompt_peak" not in tokens:
+                successor.pop(agent, None)
+                continue
+            prompt = step_context_occupancy(step)["occupancy"]
         if prompt <= 0:
             continue
-        agent = r.get("agent")
         nxt = successor.get(agent)
-        successor[agent] = r
+        successor[agent] = prompt
         if nxt is None:
             continue
-        growth = _prompt_tokens(nxt) - prompt
+        growth = nxt - prompt
         if growth <= 0:
             continue
-        own = max(r["tokens_total"] - prompt, 0)
+        if step is None:
+            own = max(total - prompt, 0)
+        else:
+            # A step can aggregate several requests, whereas its occupancy
+            # represents one window. Use the disjoint completion segments.
+            own = segments["output"] + segments["reasoning"]
         row = dict(r)
         row["growth"] = growth
         row["own_completion"] = own
@@ -108,7 +130,7 @@ def _top_growth_rows(message_rows: list[dict], limit: int) -> list[dict]:
     return out[:limit]
 
 
-def hotspots(message_rows: list[dict], limit: int = 5) -> dict[str, list[dict]]:
+def hotspots(message_rows: list[dict], limit: int = 5, *, steps: list[dict] | None = None) -> dict[str, list[dict]]:
     """The steps worth looking at first, from the per-step metrics rows.
 
     ``slowest`` and ``heaviest`` are the *limit* longest and most token-heavy
@@ -134,7 +156,7 @@ def hotspots(message_rows: list[dict], limit: int = 5) -> dict[str, list[dict]]:
             sorted(with_cache, key=lambda r: r["cache_ratio"])[:limit]
             if with_cache and any(r["cache_ratio"] > 0 for r in with_cache) else []
         ),
-        "top_growth": _top_growth_rows(message_rows, limit),
+        "top_growth": _top_growth_rows(message_rows, limit, steps),
     }
 
 
@@ -202,7 +224,7 @@ class Analysis:
 
     @cached_property
     def hotspots(self) -> dict[str, list[dict]]:
-        return hotspots(self.message_rows)
+        return hotspots(self.message_rows, steps=self.steps)
 
     # -- diagnostics ------------------------------------------------------
     @cached_property

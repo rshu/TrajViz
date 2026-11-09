@@ -60,6 +60,15 @@ def text(template: str, **params: Any) -> str:
     return f'<span {_marker(template, params)} style="color:inherit">{html.escape(visible)}</span>'
 
 
+def paired_text(english: str, chinese: str) -> str:
+    """Mark app-authored prose with a translation already composed by its renderer."""
+    return (
+        f'<span data-tv-i18n="" data-tv-i18n-en="{html.escape(english, quote=True)}" '
+        f'data-tv-i18n-zh="{html.escape(chinese, quote=True)}" style="color:inherit">'
+        f'{html.escape(english)}</span>'
+    )
+
+
 def attrs(template: str, *, attribute: str = "title", **params: Any) -> str:
     """Mark a title or accessible label without adding invalid nested markup."""
     if attribute not in ("title", "aria-label", "data-help"):

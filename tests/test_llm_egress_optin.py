@@ -1,11 +1,9 @@
-"""LLM egress boundaries for the dashboard.
+"""Model requests require an explicit action in the dashboard.
 
 TrajViz is offline-by-default analytics over traces that routinely contain
-source code, absolute local paths, shell commands and customer data. The Issues
-judge runs after load when an endpoint is configured (and again on button
-click). The AI sidebar still waits until the user opens the panel. These tests
-read the real Gradio dependency graph of the built dashboard rather than
-source text, so a future rewiring cannot slip past them.
+source code, absolute local paths, shell commands and customer data. These
+tests inspect the dashboard's actual Gradio callbacks, including those chained
+to trajectory loads.
 """
 
 import unittest
@@ -25,17 +23,17 @@ def _deps_for(demo, fn_name):
     return out
 
 
-class IssuesJudgeLoadTests(unittest.TestCase):
-    """The Overview Issues LLM judge runs after load and on an explicit re-run click."""
+class IssuesJudgeOptInTests(unittest.TestCase):
+    """Loading a trajectory leaves the Overview judge idle."""
 
     @classmethod
     def setUpClass(cls):
         cls.demo = build_ui()
 
-    def test_judge_is_bound_to_click_and_load(self):
+    def test_judge_is_only_bound_to_an_explicit_click(self):
         deps = _deps_for(self.demo, "on_suggest_fixes")
         events = [event for bf in deps for _block_id, event in bf.targets]
-        self.assertEqual(sorted(events), ["click", "then"])
+        self.assertEqual(events, ["click"])
 
     def test_judge_button_names_the_egress(self):
         blocks = self.demo.blocks

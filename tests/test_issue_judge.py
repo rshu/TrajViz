@@ -191,7 +191,8 @@ class JudgeMockTests(unittest.TestCase):
         self.assertIn("CLAUDE.md", html)
         self.assertIn("空搜索超过 N 次后停止", html)
         self.assertIn("AI · 置信度：中", html)
-        self.assertIn(">建议<", html)
+        self.assertIn(">Suggestion</span>", html)
+        self.assertIn('data-tv-i18n-zh="建议"', html)
         # The rule-based playbook folds away under 技术细节 as 常规做法.
         self.assertIn("常规做法", html)
         self.assertIn("更换搜索关键词或路径", html)

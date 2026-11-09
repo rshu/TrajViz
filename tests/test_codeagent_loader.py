@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -146,14 +147,16 @@ class CodeAgentLoaderTests(unittest.TestCase):
         self.assertEqual(traj.format, "codeagent")
         self.assertGreaterEqual(len(traj.steps), 4)
 
-    def test_malformed_messages_without_data_are_skipped(self):
-        converted = _convert_codeagent_to_internal({
+    def test_malformed_messages_do_not_prevent_the_export_from_loading(self):
+        document = {
             "session": {
                 "id": "ses_x",
                 "time_created": 1,
                 "time_updated": 2,
                 "messages": [
                     {"id": "bad", "parts": []},
+                    {"id": "bad_list", "data": {"role": []}, "parts": []},
+                    {"id": "bad_object", "data": {"role": {}}, "parts": []},
                     {
                         "id": "ok",
                         "data": {"role": "user", "time": {"created": 1}},
@@ -162,11 +165,14 @@ class CodeAgentLoaderTests(unittest.TestCase):
                 ],
             },
             "child_sessions": [],
-        })
-        self.assertNotIn("_error", converted)
-        roles = [message["info"]["role"] for message in converted["messages"]]
-        self.assertEqual(roles, ["user"])
-        self.assertNotIn("?", roles)
+        }
+        self.assertEqual(detect_format(document), "codeagent")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "mixed-export.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            run = tv.load(path)
+        self.assertEqual([step["role"] for step in run.steps], ["user"])
+        self.assertEqual(run.steps[0]["text_preview"], "hi")
 
     def test_grandchild_session_depth(self):
         converted = _convert_codeagent_to_internal({

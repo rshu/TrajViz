@@ -114,6 +114,18 @@ class TopGrowthRowsTests(unittest.TestCase):
         rows = [_row(1, tokens_input=100, cache_read=1000, tokens_total=1200)]
         self.assertEqual(hotspots(rows)["top_growth"], [])
 
+    def test_step_token_breakdown_keeps_nested_cache_reads_disjoint(self):
+        rows = [
+            _row(1, tokens_input=100, cache_read=40, tokens_total=110),
+            _row(2, tokens_input=110, cache_read=90, tokens_total=118),
+        ]
+        steps = [
+            {"tokens": {"total": 110, "input": 100, "output": 10, "cache_read": 40}},
+            {"tokens": {"total": 118, "input": 110, "output": 8, "cache_read": 90}},
+        ]
+        (growth,) = hotspots(rows, steps=steps)["top_growth"]
+        self.assertEqual((growth["growth"], growth["own_completion"], growth["new_content"]), (10, 10, 0))
+
 
 class HotspotsMarkdownTests(unittest.TestCase):
     def test_growth_table_renders_with_footnote(self):

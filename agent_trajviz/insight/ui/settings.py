@@ -18,7 +18,7 @@ from ..llm_config import (
     request_reply_language,
     resolve_session_settings,
 )
-from ..presenters.issues import build_overview_issues_html
+from ..presenters.issues import build_overview_issues_html, overview_issues_payload, prepare_overview_issues
 from ..session import session_from_run
 from .shared import SharedState
 
@@ -154,8 +154,12 @@ def _test_status_html(result: ConnectionTestResult | None = None, *, testing: bo
             f'aria-busy="{str(testing).lower()}">{content}</div>')
 
 
-def _offline_issues(run) -> str:
-    return build_overview_issues_html(session_from_run(run, "")) if run is not None and run.steps else ""
+def _offline_issues(run) -> tuple[str, list[dict]]:
+    if run is None or not run.steps:
+        return "", []
+    session = session_from_run(run, "")
+    issues = prepare_overview_issues(session)
+    return build_overview_issues_html(session, issues=issues), overview_issues_payload(issues)
 
 
 def bind(refs: SettingsRefs, shared: SharedState, sidebar, overview, app, *, model_events=(), language=None) -> None:
@@ -177,7 +181,8 @@ def bind(refs: SettingsRefs, shared: SharedState, sidebar, overview, app, *, mod
         return tuple(display[name] for name in _FIELDS)
 
     outputs = [state, refs.api_key, refs.clear_api_key, refs.status, refs.browser_state,
-               sidebar.analysis_chatbot, sidebar.analysis_input, sidebar.analysis_status, overview.issues_html]
+               sidebar.analysis_chatbot, sidebar.analysis_input, sidebar.analysis_status,
+               overview.issues_html, shared.state_overview_issues]
 
     def on_test_connection(provider, base_url, model, api_key, clear_api_key, timeout, previous):
         try:
@@ -246,12 +251,12 @@ def bind(refs: SettingsRefs, shared: SharedState, sidebar, overview, app, *, mod
             status += ui_text("Connection incomplete; enter the missing connection fields before requesting analysis.") + " "
         status += ui_text("API keys are session-only. No model request was sent.")
         return (selected, _key_field_update(selected), False, status, remembered, [], "",
-                config_status_html(config=selected.config, loaded_steps=len(steps or [])), _offline_issues(run))
+                config_status_html(config=selected.config, loaded_steps=len(steps or [])), *_offline_issues(run))
 
     def on_reset_settings(steps, run):
         defaults = nonsecret_settings()
         values = (None, _key_field_update(), False, ui_text("Using environment defaults. Remembered connection details cleared."),
-                  {}, [], "", config_status_html(loaded_steps=len(steps or [])), _offline_issues(run))
+                  {}, [], "", config_status_html(loaded_steps=len(steps or [])), *_offline_issues(run))
         return (*values, *_form_updates(defaults), False)
 
     apply_event = refs.apply.click(
@@ -269,6 +274,13 @@ def bind(refs: SettingsRefs, shared: SharedState, sidebar, overview, app, *, mod
     for event in (apply_event, reset_event):
         event.then(fn=reset_connection_test, outputs=[refs.test, refs.test_status],
                    queue=False, show_progress="hidden", api_name=False)
+
+    if export_button := getattr(overview, "export_issues_btn", None):
+        from .overview_tab import prepare_issues_agent_download
+
+        for event in (apply_event, reset_event):
+            event.success(fn=prepare_issues_agent_download, inputs=[shared.state_run, shared.state_overview_issues],
+                          outputs=[export_button], show_progress="hidden", api_name=False, api_visibility="private")
 
     def on_restore_settings(saved):
         defaults = nonsecret_settings()

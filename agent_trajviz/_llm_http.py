@@ -6,6 +6,10 @@ import json
 import logging
 import os
 import re
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from requests import Response
 
 logger = logging.getLogger(__name__)
 
@@ -41,14 +45,32 @@ def env_json_dict(name: str) -> dict[str, str]:
     }
 
 
+def env_headers_for_connection(prefix: str, base_url: str, provider: str) -> dict[str, str]:
+    """Read gateway credentials only for their configured destination."""
+    configured_url = _clean_env_scalar(os.getenv(f"{prefix}_BASE_URL", "")).rstrip("/")
+    configured_provider = _clean_env_scalar(os.getenv(f"{prefix}_PROVIDER", "")).lower() or "openai"
+    if configured_url and configured_url == base_url.rstrip("/") and configured_provider == provider:
+        return env_json_dict(f"{prefix}_HEADERS")
+    return {}
+
+
 def merge_llm_headers(
     extra: dict[str, str] | None = None,
     *,
     auth: dict[str, str],
 ) -> dict[str, str]:
     """Content-Type, optional gateway extras, then *auth* (auth wins on conflict)."""
-    headers = {"Content-Type": "application/json"}
-    if extra:
-        headers.update(extra)
-    headers.update(auth)
+    required = {"Content-Type": "application/json", **auth}
+    reserved = {name.lower() for name in required}
+    headers = {name: value for name, value in (extra or {}).items() if name.lower() not in reserved}
+    headers.update(required)
     return headers
+
+
+def raise_for_llm_status(response: Response) -> None:
+    """Treat an unfollowed redirect as a failure, even if it has a JSON body."""
+    if getattr(response, "is_redirect", False) is True:
+        from requests import HTTPError
+
+        raise HTTPError("Model endpoint returned a redirect.", response=response)
+    response.raise_for_status()

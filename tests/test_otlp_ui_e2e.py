@@ -35,10 +35,11 @@ def test_otlp_issues_panel_never_claims_healthy_empty_state(tmp_path, partial):
     for panel in (build_overview_issues_html(session, issues=[]),
                   build_overview_issues_html(session, issues=[], banner="Provider not configured"),
                   load.do_load(str(directory), session_id="demo-session")["issues_html"]):
-        assert "证据有限" in panel
-        assert "未检测到问题" not in panel
-        assert "未检测到明显的工作流问题" not in panel
-        assert "部分工作流检查对此捕获不可用" in panel
+        assert ">⚠ Limited evidence</span>" in panel
+        assert 'data-tv-i18n-zh="⚠ 证据有限"' in panel
+        assert "No major issues detected" not in panel
+        assert "No major workflow issues detected" not in panel
+        assert "This capture does not contain enough evidence to run every workflow check." in panel
 
 
 def test_observed_issues_remain_visible_with_limited_coverage(tmp_path):

@@ -207,23 +207,21 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                 };
                 // Single consumer: the hidden #tv-issue-ask-btn. Cards pass a
                 // 1-based issue index; the server rebuilds the focused question.
-                // Expand suppresses the automatic whole-run pass while pending.
                 window.tvAnalyzeIssue = function (issueIndex) {
                     if (issueIndex == null || issueIndex === '') return;
-                    window.tvSetGradioText('#tv-issue-ask', String(issueIndex));
-                    window.setTimeout(function () {
-                        const sidebar = document.querySelector('#analysis-sidebar');
-                        if (sidebar && !sidebar.classList.contains('open')) {
-                            const toggle = sidebar.querySelector('.toggle-button');
-                            if (toggle) toggle.click();
+                    const sidebar = document.querySelector('#analysis-sidebar');
+                    if (sidebar && !sidebar.classList.contains('open')) {
+                        sidebar.querySelector('.toggle-button')?.click();
+                    }
+                    document.getElementById('analysis-chat-tab-button')?.click();
+                    window.requestAnimationFrame(function () {
+                        const askBtn = document.querySelector(
+                            'button#tv-issue-ask-btn, #tv-issue-ask-btn button'
+                        );
+                        if (askBtn && window.tvSetGradioText('#tv-issue-ask', String(issueIndex))) {
+                            queueMicrotask(() => askBtn.click());
                         }
-                        window.setTimeout(function () {
-                            const askBtn = document.querySelector(
-                                '#tv-issue-ask-btn button, #tv-issue-ask-btn'
-                            );
-                            if (askBtn) askBtn.click();
-                        }, 250);
-                    }, 80);
+                    });
                 };
                 if (!window.__tvChartUiBound) {
                     window.__tvChartUiBound = true;

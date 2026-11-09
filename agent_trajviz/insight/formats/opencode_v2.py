@@ -70,40 +70,55 @@ def _content(part: dict, message_id: str, position: int) -> dict:
         state["status"] = "error"
         if not state.get("error"):
             state["error"] = "Tool timed out" if metadata.get("timeout") is True else "Tool reported an error"
-    if state.get("status") in {"streaming", "running"}:
+    if _text(state.get("status")) in {"streaming", "running"}:
         metadata["_outcome_observed"] = False
     metadata["opencode_v2_tool"] = deepcopy(part)
     result["state"] = state
     return result
 
 
-def _has_opencode_v2_markers(records: list, info: dict | None = None) -> bool:
-    """True when typed records carry native OpenCode 2 shape, not desktop flat.
+def _uses_native_opencode_records(records: list, info: dict) -> bool:
+    """Choose native v2 for typed records unless desktop fields identify them.
 
-    Desktop / Windows exports also use top-level ``type`` without ``info``, but
-    their tools are named ``tool`` (not ``name``), they lack ``time.streamed``,
-    and they never emit shell/synthetic/skill control records. Claiming those
-    as v2 overwrites flat token totals and tool names.
+    A failed or short native turn may have no version, tools or streaming
+    timestamp. Keep the existing native interpretation when fields overlap.
     """
-    version = _text(_dict(info).get("version"))
+    version = _text(info.get("version"))
     if version.startswith("2."):
         return True
+    desktop = version.startswith("1.")
     for message in records:
         if not isinstance(message, dict) or isinstance(message.get("info"), dict):
             continue
-        kind = message.get("type")
+        kind = _text(message.get("type"))
         if kind in {"shell", "synthetic", "skill"}:
             return True
         if any(key in message for key in ("isSubAgent", "parentSessionID", "sessionDepth")):
             return True
-        time = message.get("time") if isinstance(message.get("time"), dict) else {}
-        if "streamed" in time:
+        if isinstance(message.get("snapshot"), dict) or _error(message.get("error")):
             return True
-        content = message.get("content") if isinstance(message.get("content"), list) else []
-        for part in content:
-            if isinstance(part, dict) and part.get("type") == "tool" and "name" in part:
+        if kind == "user" and isinstance(message.get("files"), list):
+            return True
+        if kind == "idle" and message.get("outcome") in ("failed", "interrupted"):
+            return True
+        if kind == "compaction" and "status" in message:
+            return True
+        if "streamed" in _dict(message.get("time")):
+            return True
+        metadata = _dict(message.get("metadata"))
+        if kind == "user" and ("agent" in metadata or "model" in metadata):
+            desktop = True
+        content = message.get("content")
+        if kind == "assistant" and (isinstance(content, str) or isinstance(message.get("text"), str)):
+            desktop = True
+        for part in content if isinstance(content, list) else []:
+            if not isinstance(part, dict) or part.get("type") != "tool":
+                continue
+            if "name" in part:
                 return True
-    return False
+            if "tool" in part:
+                desktop = True
+    return not desktop
 
 
 def normalize_opencode_v2(raw: dict) -> dict:
@@ -118,7 +133,7 @@ def normalize_opencode_v2(raw: dict) -> dict:
                                                and isinstance(m.get("type"), str) for m in records):
         return raw
     root_info = _dict(raw.get("info"))
-    if not _has_opencode_v2_markers(records, root_info):
+    if not _uses_native_opencode_records(records, root_info):
         return raw
     raw["_opencode_v2_messages"] = deepcopy(records)
     root_id = _text(root_info.get("id"))
@@ -134,7 +149,7 @@ def normalize_opencode_v2(raw: dict) -> dict:
         if isinstance(record.get("info"), dict):
             messages.append(record)
             continue
-        kind = record.get("type")
+        kind = _text(record.get("type"))
         session_id = _text(record.get("sessionID")) or root_id
         if session_id == root_id and kind in {"user", "assistant", "shell", "compaction"}:
             # A resumed turn supersedes the preceding terminal outcome. Keep
@@ -144,10 +159,11 @@ def normalize_opencode_v2(raw: dict) -> dict:
             control_count += 1
             if kind == "idle":
                 outcome_error = None
-                if record.get("outcome") in {"failed", "interrupted"}:
-                    outcome_error = _error(record.get("error")) or f"Session turn {record['outcome']}."
+                outcome = _text(record.get("outcome"))
+                if outcome in {"failed", "interrupted"}:
+                    outcome_error = _error(record.get("error")) or f"Session turn {outcome}."
                     errors.append(outcome_error)
-                    normal_interruption = record["outcome"] == "interrupted" and (
+                    normal_interruption = outcome == "interrupted" and (
                         not record.get("error") or _is_step_interruption(record["error"])
                     )
                     if not normal_interruption:
@@ -191,7 +207,7 @@ def normalize_opencode_v2(raw: dict) -> dict:
                      for i, part in enumerate(record.get("content", []) if isinstance(record.get("content"), list) else [])
                      if isinstance(part, dict)]
         elif kind == "shell":
-            status, exit_code = record.get("status"), record.get("exit")
+            status, exit_code = _text(record.get("status")), record.get("exit")
             has_exit = isinstance(exit_code, (int, float)) and not isinstance(exit_code, bool) and math.isfinite(exit_code)
             observed = status in {"timeout", "killed"} or (status == "exited" and has_exit)
             failed = status in {"timeout", "killed"} or (status == "exited" and has_exit and exit_code != 0)

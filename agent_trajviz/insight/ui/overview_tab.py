@@ -25,10 +25,9 @@ from ..issue_export import write_issues_agent_export
 from ..presenters.label_ui import build_label_ui_payload
 from ..presenters.issues import (
     build_overview_issues_html,
-    collect_overview_issues,
     overview_issue_from_payload,
     overview_issues_payload,
-    rank_issues,
+    prepare_overview_issues,
 )
 from ..presenters.overview import (
     build_chart_outputs,
@@ -41,7 +40,7 @@ from ..presenters.overview import (
 )
 from ..token_explain import build_token_step_panel_html
 from ..issue_judge import JUDGE_ISSUE_CAP, iter_judge_overview_issues
-from ..llm_config import request_reply_language, resolve_analysis_config, resolve_session_settings
+from ..llm_config import request_reply_language, resolve_session_settings
 from ..session import LoadedSession, session_from_run
 from .shared import SharedState, is_latest_run, safe_callback
 from .upload import (
@@ -144,8 +143,7 @@ def layout(overview_kpi_html: gr.HTML) -> OverviewRefs:
         # Debug hero: Issues first; KPI strip lives above the main Tabs.
         issues_html = gr.HTML("")
         # Judging sends trajectory excerpts (prompts, commands, file paths,
-        # tool output) to the configured LLM endpoint. It runs automatically
-        # after load when ANALYZE_*/LABEL_* are set; the button re-runs it.
+        # tool output) to the configured LLM endpoint on this explicit action.
         with gr.Row():
             suggest_fixes_btn = gr.Button(
                 "Suggest fixes with LLM (sends trajectory excerpts to the configured provider)",
@@ -450,10 +448,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
             "per_message_md": "",
         }
 
-    # With AI configured the 任务/结局 rows start as a spinner placeholder
-    # (on_suggest_fixes fills them in right after load); without AI they are
-    # omitted entirely.
-    ov = build_overview_outputs(session, ai_pending=resolve_analysis_config().ready)
+    ov = build_overview_outputs(session)
     ch = build_chart_outputs(session, dark=dark)
     dg = build_diagnostics_outputs(session, dark=dark)
     return {
@@ -541,7 +536,7 @@ def prepare_issues_agent_download(run, issues_rows, request: gr.Request | None =
 
 
 def on_suggest_fixes(run, settings=None, ui_language=None, reply_language=None, request: gr.Request | None = None):
-    """Run the LLM run summary + Issues judge after load (or on button click); stream progress into the panel.
+    """Run the LLM summary and Issues judge on request and stream progress into the panel.
 
     The stream paints the Issues panel across many yields while the run it
     started with may already have been replaced (upload row cleared, another
@@ -567,29 +562,28 @@ def on_suggest_fixes(run, settings=None, ui_language=None, reply_language=None, 
     active = resolve_session_settings(settings)
     cfg = active.config
     session = session_from_run(run, "")
-    # Prefer collect+rank so tests can patch ``collect_overview_issues`` the
-    # same way as upstream; production still gets ranking before judging.
-    ranked = rank_issues(collect_overview_issues(session))
+    ranked = prepare_overview_issues(session)
     payload = overview_issues_payload(ranked)
 
     if not cfg.ready:
         missing = ", ".join(cfg.missing)
-        banner = f"Open Settings or configure {missing} in .env to auto-suggest fixes"
+        banner = (
+            f"Open Settings or configure {missing} in .env to suggest fixes",
+            f"打开设置或在 .env 中配置 {missing}，即可生成修复建议。",
+        )
         if _superseded():
             return
         yield build_overview_issues_html(session, issues=ranked, banner=banner), payload
         return
 
-    # AI run summary first — one call, before issue judging. While it runs
-    # the 任务/结局 rows show a spinner placeholder. Progress line stays empty:
-    # the 任务/结局 spinner is the sole status.
+    # The task/outcome spinner is the sole status during the run summary.
     ai_summary = None
     summary_error = ""
     if _superseded():
         return
     yield build_overview_issues_html(
         session, issues=ranked, ai_pending=True,
-    ), gr.skip()
+    ), payload
     if _superseded():
         return
     try:
@@ -598,14 +592,18 @@ def on_suggest_fixes(run, settings=None, ui_language=None, reply_language=None, 
             language=request_reply_language(active.language, ui_language, reply_language),
         )
     except Exception as exc:  # noqa: BLE001 — rows stay hidden; banner explains
-        summary_error = _judge_error_text(exc)
+        summary_error = _judge_error_text(exc, cfg)
+
+    summary_banner = (
+        f"Run summary failed: {summary_error[:160]}",
+        f"运行摘要失败：{summary_error[:160]}",
+    ) if summary_error else ""
 
     if not ranked:
         if _superseded():
             return
-        banner = f"Run summary failed: {summary_error[:160]}" if summary_error else ""
         yield build_overview_issues_html(
-            session, issues=ranked, ai_summary=ai_summary, banner=banner,
+            session, issues=ranked, ai_summary=ai_summary, banner=summary_banner,
         ), payload
         return
 
@@ -622,20 +620,26 @@ def on_suggest_fixes(run, settings=None, ui_language=None, reply_language=None, 
             if len(short) > 48:
                 short = short[:45] + "…"
             progress_line = (
-                f"Suggesting fixes {progress.current}/{progress.total} — {short}"
+                f"Suggesting fixes {progress.current}/{progress.total} — {short}",
+                f"正在生成修复建议 {progress.current}/{progress.total} — {short}",
             )
-            # Stream HTML only; refresh State once when judgments are final.
             if _superseded():
                 return
             yield build_overview_issues_html(
                 session, issues=judged, progress=progress_line,
                 ai_summary=ai_summary,
-            ), gr.skip()
+            ), overview_issues_payload(judged)
+            # The iterator starts the next provider request when resumed.
+            if _superseded():
+                return
             continue
 
         ok = sum(1 for i in judged if i.judgment is not None)
         if errors and ok == 0:
-            banner = f"Judge failed ({len(errors)}). First: {errors[0][:160]}"
+            banner = (
+                f"Judge failed ({len(errors)}). First: {errors[0][:160]}",
+                f"修复建议生成失败（{len(errors)} 项）。首项：{errors[0][:160]}",
+            )
             if _superseded():
                 return
             yield build_overview_issues_html(
@@ -644,15 +648,18 @@ def on_suggest_fixes(run, settings=None, ui_language=None, reply_language=None, 
             return
 
         banner = ""
-        if summary_error:
-            banner = f"Run summary failed: {summary_error[:160]}"
+        if summary_banner:
+            banner = summary_banner
         elif errors:
             banner = (
-                f"{len(errors)} issue(s) could not be judged"
-                f" ({ok}/{min(len(ranked), JUDGE_ISSUE_CAP)} ok)."
+                f"{len(errors)} issue(s) could not be judged ({ok}/{min(len(ranked), JUDGE_ISSUE_CAP)} ok).",
+                f"{len(errors)} 项问题未生成建议（成功 {ok}/{min(len(ranked), JUDGE_ISSUE_CAP)} 项）。",
             )
         elif len(ranked) > JUDGE_ISSUE_CAP:
-            banner = f"Judged {ok}/{JUDGE_ISSUE_CAP} (capped)."
+            banner = (
+                f"Judged {ok}/{JUDGE_ISSUE_CAP} (capped).",
+                f"已生成 {ok}/{JUDGE_ISSUE_CAP} 项建议（达到上限）。",
+            )
         if _superseded():
             return
         yield build_overview_issues_html(
@@ -723,14 +730,11 @@ def bind(
         show_progress_on=refs.export_issues_btn,
     )
     # Arm the download as soon as load succeeds (heuristic issues already in
-    # State) — same pattern as Export HTML — so a slow/failing judge cannot
-    # leave the button stuck disarmed. Refresh after judge (load path and
-    # button click) so judgments land in the file when available.
-    # Without ANALYZE_*/LABEL_* configured, judge only shows the setup banner.
+    # State). An explicit judge request refreshes the file with its judgments.
     for _ev in load_events:
         _ev.success(**export_event)
-        _ev.then(**judge_event).then(**export_event)
-    judge_dependency = refs.suggest_fixes_btn.click(**judge_event).then(**export_event)
+    judge_dependency = refs.suggest_fixes_btn.click(**judge_event)
+    judge_dependency.success(**export_event)
 
     @safe_callback("Context utilization")
     def _rebuild_utilization(agent_key, window_limit, snapshot_key, steps, raw, dark):

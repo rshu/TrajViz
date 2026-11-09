@@ -42,6 +42,11 @@ def layout() -> SidebarRefs:
         gr.HTML(
             "<div class='analysis-panel-title'>🤖 AI Trajectory Analysis</div>"
         )
+        # Keep the issue bridge mounted independently of the selected sidebar tab.
+        issue_ask_box = gr.Textbox(
+            value="", elem_id="tv-issue-ask", show_label=False, container=False,
+        )
+        issue_ask_btn = gr.Button("Analyze issue", elem_id="tv-issue-ask-btn")
         with gr.Tabs(elem_id="analysis-tabs"):
             with gr.Tab("Analysis", elem_id="analysis-chat-tab"):
                 analysis_status = gr.HTML(config_status_html(loaded_steps=0))
@@ -73,21 +78,6 @@ def layout() -> SidebarRefs:
                         elem_id="analysis-input",
                     )
                 analysis_clear = gr.Button("Clear chat", size="sm", variant="secondary")
-                # Gradio omits visible=False from the DOM; keep mounted and hide with CSS
-                # (same bridge pattern as #wf-filter-hidden). Filled by Overview
-                # "AI 深入分析"; the hidden button is the sole consumer.
-                issue_ask_box = gr.Textbox(
-                    value="",
-                    visible=True,
-                    elem_id="tv-issue-ask",
-                    show_label=False,
-                    container=False,
-                )
-                issue_ask_btn = gr.Button(
-                    "Analyze issue",
-                    visible=True,
-                    elem_id="tv-issue-ask-btn",
-                )
             with gr.Tab("Settings", elem_id="analysis-settings-tab"):
                 settings_refs = settings_ui.layout()
     return SidebarRefs(
@@ -148,15 +138,10 @@ def bind(refs: SidebarRefs, shared: SharedState, load_events, *, language: gr.Ra
             outputs=[state_analysis_brief, refs.analysis_chatbot, refs.analysis_status],
         )
 
-    def on_sidebar_expand(steps, brief, history, pending_q=None, settings=None):
-        # Tests (and older callers) omit pending_q and pass settings in that slot.
-        if isinstance(pending_q, AnalysisSettings) and settings is None:
-            settings = pending_q
-            pending_q = None
+    def on_sidebar_expand(steps, brief, history, settings=None):
         active = resolve_session_settings(settings)
         # Opening the panel also exposes Settings, so it must never start analysis.
         # Pending issue asks are handled by issue_ask_btn.
-        del pending_q
         return (
             _brief_text(brief),
             history or [],
@@ -169,7 +154,6 @@ def bind(refs: SidebarRefs, shared: SharedState, load_events, *, language: gr.Ra
             shared.state_steps,
             state_analysis_brief,
             refs.analysis_chatbot,
-            refs.issue_ask_box,
             *settings_inputs,
         ],
         outputs=[
@@ -240,5 +224,7 @@ def bind(refs: SidebarRefs, shared: SharedState, load_events, *, language: gr.Ra
             refs.analysis_status,
             refs.issue_ask_box,
         ],
+        api_name=False,
+        api_visibility="private",
     ))
     return tuple(model_events)

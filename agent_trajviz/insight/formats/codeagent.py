@@ -26,7 +26,7 @@ def _messages_have_data_wrapped_typed_part(messages: object) -> bool:
             continue
         data = message.get("data")
         parts = message.get("parts")
-        if not isinstance(data, dict) or data.get("role") not in _ROLES:
+        if not isinstance(data, dict) or as_text(data.get("role")) not in _ROLES:
             continue
         if not isinstance(parts, list):
             continue

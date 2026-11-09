@@ -203,3 +203,70 @@ SECTION_GUIDES: dict[str, SectionGuide] = {
         ),
     ),
 }
+
+SECTION_GUIDES_EN: dict[str, SectionGuide] = {
+    "performance_section": SectionGuide(
+        summary="Review how many tokens each step used and how long it took.",
+        charts=(
+            ("Token Usage by Step", "Bars separate fresh input, cache reads, output, and reasoning. Agent panels share the global Workflow step numbers. Click a bar to inspect its token breakdown."),
+            ("Step Duration", "Bars show time spent in each step after subtracting subagent wait. Dashed lines show each agent's mean. Amber marks system errors and red marks tool errors. Click a bar to open its Workflow step."),
+        ),
+        example="Open the tallest duration bar in Workflow and compare its token usage. A large prompt may explain slow inference. Inspect tool timings if token usage looks typical.",
+    ),
+    "tools_section": SectionGuide(
+        summary="See which tools the agents called, how long they took, and where they failed.",
+        charts=(
+            ("Behavioral Diagnostics", "Summary measures include cache hit rate, share of time waiting for tools, and 95th-percentile tool duration. Red highlights a measure outside its suggested range."),
+            ("Tool Call Frequency", "Counts calls per tool, grouped by agent when there are several."),
+            ("Tool Call Duration", "Each segment is one invocation. Hover for the step number and click to jump to it."),
+            ("Tool Outcome Timeline", "Each marker is a tool call. Dots indicate success and crosses indicate failure."),
+            ("Skill Calls by Agent", "Thicker connections show more calls from an agent to a skill."),
+        ),
+        example="Look for clustered failures on the outcome timeline. If searches and reads greatly outnumber edits, check whether the instructions gave the agent enough context to find the right files.",
+    ),
+    "agents_section": SectionGuide(
+        summary="See when the main agent and subagents worked and how much each used.",
+        charts=(
+            ("Agent Cards", "Summarizes steps, tokens, duration, tool calls, failures, and cache hits. A subagent card can link to its spawn step."),
+            ("Agent Swimlane", "Each lane tracks one agent's activity across steps, with user messages in the top lane."),
+            ("Token Breakdown by Agent", "Compares each agent's fresh input, cache reads, output, and reasoning."),
+        ),
+        example="Find the highest token user and inspect its activity in the swimlane. A subagent repeating its parent's searches may have received too little context at delegation.",
+    ),
+    "context_section": SectionGuide(
+        summary="See what fills the context window and how its usage changes over time.",
+        charts=(
+            ("Context Composition", "Breaks down estimated context use across prompts, tools, rules, skills, conversation, and tool results."),
+            ("Context Window Pressure", "Tracks occupancy by step. The dashed line marks the configured limit, and diamonds mark compaction. The single-agent view highlights occupancy above 70% and 90%."),
+            ("Controls", "Choose an agent, inspect a pre-compaction snapshot, or adjust the assumed window limit."),
+        ),
+        example="If the agent starts repeating work, look for high occupancy followed by compaction. When tool results dominate, inspect whether the agent read more of the files or logs than it needed.",
+    ),
+    "diagnostics_section": SectionGuide(
+        summary="Inspect file interactions, likely error causes, and plan progress.",
+        charts=(
+            ("File Interaction Timeline", "The horizontal axis is step number and each row is a file. Circles are reads, squares are writes, triangles are searches, and stars are skill calls."),
+            ("Root Cause Candidates", "Groups failures by type. A step link opens the first matching event."),
+            ("Plan Progress Timeline", "Each row tracks a plan item from its start through completion. Red indicates a stalled item."),
+        ),
+        example="When an edit lands in the wrong place, look for repeated reads and searches around that write. Compare those steps with the plan to see where the agent lost direction.",
+    ),
+    "deep_dive_section": SectionGuide(
+        summary="Inspect run totals, unusually slow or expensive steps, and per-message measurements.",
+        charts=(
+            ("Timing, Tokens, and Efficiency", "Summarizes duration, token distribution, and generation speed."),
+            ("Message Hotspots", "Ranks the largest durations, token loads, and context growth, along with the lowest cache hits. Click a step number to inspect it in Workflow."),
+            ("Per-Message Diagnostics", "Lists duration, tokens, generation speed, cache hits, and tool calls for up to 80 steps."),
+        ),
+        example="When investigating cost, check the lowest cache hits. See whether they follow a context compaction or a switch between agents.",
+    ),
+    "labels_section": SectionGuide(
+        summary="Upload a *_labeled.json sidecar to group steps by phase and action.",
+        charts=(
+            ("Step Count by Phase / Action", "Shows the number of labeled steps by phase and action."),
+            ("Duration by Phase / Action", "Shows the cumulative time spent in each phase and action."),
+            ("Step Timeline", "Each bar is a step. Length shows duration, color shows phase, and the label names the action."),
+        ),
+        example="Compare time spent understanding the task with time spent implementing it. The timeline shows whether implementation repeatedly returned to debugging.",
+    ),
+}

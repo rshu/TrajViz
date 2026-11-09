@@ -130,11 +130,14 @@ class LabelerTests(unittest.TestCase):
 
         sent = {}
 
-        def post(url, json=None, headers=None, timeout=None):
+        def post(url, json=None, headers=None, timeout=None, allow_redirects=True):
             sent["headers"] = headers
+            assert allow_redirects is False
             return FakeResp()
 
         env = {
+            "LABEL_BASE_URL": "https://llm.example.com/v1",
+            "LABEL_PROVIDER": "openai",
             "LABEL_HEADERS": '{"X-HW-ID": "com.huawei.ocean_maas", "X-HW-APPKEY": "xxxx"}',
         }
         with patch.dict(os.environ, env, clear=False), patch("requests.post", post):

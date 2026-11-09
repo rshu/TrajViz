@@ -12,8 +12,10 @@ import pytest
 import requests
 from urllib3.exceptions import ReadTimeoutError
 
+from agent_trajviz.insight.assistant import complete_chat
 from agent_trajviz.insight.connection_test import ConnectionTestResult, check_connection
-from agent_trajviz.insight.llm_config import AnalysisLLMConfig
+from agent_trajviz.insight.llm_config import AnalysisLLMConfig, build_session_settings, resolve_analysis_config
+from agent_trajviz.labeling.llm import call_llm
 
 
 _KEY = "private-probe-key-not-real"
@@ -264,3 +266,63 @@ def test_result_is_a_small_immutable_public_value():
     assert dataclasses.asdict(result) == {"ok": True, "message": "Connection successful."}
     with pytest.raises(dataclasses.FrozenInstanceError):
         result.ok = False
+
+
+def test_gateway_headers_are_bound_to_the_connection_through_test_and_analysis(endpoint, monkeypatch):
+    base_url, state = endpoint
+    gateway = f"{base_url}/gateway/v1"
+    extra = '{"X-Gateway-Key":"synthetic-gateway-secret","authorization":"ignored","content-type":"ignored"}'
+    for name, value in {
+        "ANALYZE_BASE_URL": gateway + "/",
+        "ANALYZE_PROVIDER": "openai",
+        "ANALYZE_API_KEY": _KEY,
+        "ANALYZE_MODEL": _MODEL,
+        "ANALYZE_HEADERS": extra,
+        "LABEL_BASE_URL": gateway,
+        "LABEL_PROVIDER": "openai",
+        "LABEL_HEADERS": '{"X-Label-Key":"synthetic-label-secret"}',
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    def settings(url, provider="openai"):
+        return build_session_settings(base_url=url, api_key=_KEY, model=_MODEL, provider=provider,
+                                      temperature=None, max_tokens=16, timeout=5, language="English").config
+
+    def request(config):
+        assert check_connection(config).ok
+        assert complete_chat(config, "system", [{"role": "user", "content": "synthetic test"}]) == "OK"
+        return [requests.structures.CaseInsensitiveDict(call["headers"]) for call in state["calls"][-2:]]
+
+    for headers in request(settings(gateway)):
+        assert headers["X-Gateway-Key"] == "synthetic-gateway-secret"
+        assert headers["Authorization"] == f"Bearer {_KEY}"
+        assert headers["Content-Type"] == "application/json"
+        assert "X-Label-Key" not in headers
+
+    other_url = f"{base_url}/other/v1"
+    for headers in request(settings(other_url)):
+        assert "X-Gateway-Key" not in headers and "X-Label-Key" not in headers
+
+    state["payload"] = _ANTHROPIC
+    for headers in request(settings(gateway, "anthropic")):
+        assert "X-Gateway-Key" not in headers and "X-Label-Key" not in headers
+        assert headers["x-api-key"] == _KEY
+
+    monkeypatch.delenv("ANALYZE_HEADERS")
+    assert resolve_analysis_config().extra_headers == {"X-Label-Key": "synthetic-label-secret"}
+    monkeypatch.setenv("ANALYZE_BASE_URL", other_url)
+    assert resolve_analysis_config().extra_headers == {}
+    state["payload"] = _OPENAI
+    assert call_llm(other_url, _KEY, _MODEL, "system", "user") == "OK"
+    assert "X-Label-Key" not in state["calls"][-1]["headers"]
+
+
+def test_model_completions_do_not_forward_gateway_headers_on_redirect(endpoint):
+    base_url, state = endpoint
+    state.update(status=307, headers={"Location": f"{base_url}/redirected"})
+    config = _config(base_url, extra_headers={"X-Gateway-Key": "synthetic-gateway-secret"})
+    with pytest.raises(requests.HTTPError, match="returned a redirect"):
+        complete_chat(config, "system", [{"role": "user", "content": "synthetic test"}])
+    with pytest.raises(requests.HTTPError, match="returned a redirect"):
+        call_llm(base_url, _KEY, _MODEL, "system", "user", headers=config.extra_headers)
+    assert [call["path"] for call in state["calls"]] == ["/chat/completions", "/chat/completions"]

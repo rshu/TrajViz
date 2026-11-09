@@ -678,18 +678,14 @@ def _dsh_export_dir_names(session_id: str) -> list[str]:
     return ordered
 
 
-def _dsh_read_text(path: str) -> str:
-    with open(path, "rb") as handle:
-        return decode_session_text(handle.read())
-
-
 def _dsh_jsonl_session_id(path: str) -> str:
     """Session id from the first JSONL line, or empty if it is not a DSH header."""
     try:
         with open(path, "rb") as handle:
-            blob = handle.read(65536)
-        lines = decode_session_text(blob).splitlines()
-        payload = json.loads(lines[0] if lines else "")
+            encoding = "utf-16" if handle.peek(2).startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8-sig"
+            with io.TextIOWrapper(handle, encoding=encoding) as text:
+                line = text.readline(65536)
+        payload = json.loads(line)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
         return ""
     if isinstance(payload, dict) and payload.get("type") == "session":
@@ -795,7 +791,7 @@ def _dsh_read_event_list(path: str, *, source_hashes: dict[str, str] | None = No
 
         with open(path, "rb") as handle:
             data = handle.read()
-        text = decode_dsh_native_bytes(data, path).decode("utf-8-sig")
+        text = decode_session_text(decode_dsh_native_bytes(data, path))
         if source_hashes is not None:
             source_hashes[path] = hashlib.sha256(data).hexdigest()
     except (OSError, UnicodeDecodeError, LoadError) as exc:

@@ -72,6 +72,18 @@ def test_standalone_autodetection_and_explicit_format_agree(tmp_path):
     assert detected.raw["_otel"]["spans"][0]["start_time_unix_nano"] == BASE + 10_000
 
 
+def test_partial_usage_does_not_create_context_growth(tmp_path):
+    source = _write(tmp_path, [
+        _span(f"{1:032x}", f"{index + 1:016x}", "llm_request", "partial",
+              offset=index * 10_000, input_tokens=count, output_tokens=5)
+        for index, count in enumerate((10, 20))
+    ])
+    trajectory = tv.load(source)
+    rows = trajectory.view("steps").data
+    assert [(row["tokens_input"], row["tokens_total"]) for row in rows] == [(10, None), (20, None)]
+    assert trajectory.view("hotspots").data["top_growth"] == []
+
+
 def test_format_gate_rejects_otlp_as_native(tmp_path):
     source = _write(tmp_path, _session(1))
     with pytest.raises(tv.LoadError) as caught:

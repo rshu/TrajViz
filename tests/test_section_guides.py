@@ -4,7 +4,7 @@ import unittest
 
 import gradio as gr
 
-from agent_trajviz.insight.help import SECTION_GUIDES
+from agent_trajviz.insight.help import SECTION_GUIDES, SECTION_GUIDES_EN
 from agent_trajviz.insight.presenters.overview import render_section_guide
 from agent_trajviz.insight.ui import overview_tab
 
@@ -15,22 +15,22 @@ class SectionGuideTests(unittest.TestCase):
             {attr for _, attr in overview_tab.OVERVIEW_SECTIONS},
             set(SECTION_GUIDES),
         )
+        self.assertEqual(set(SECTION_GUIDES), set(SECTION_GUIDES_EN))
 
     def test_guide_renders_summary_charts_and_example(self):
         for section, guide in SECTION_GUIDES.items():
             with self.subTest(section=section):
                 self.assertTrue(guide.charts)
                 html = render_section_guide(section)
-                self.assertIn(guide.summary, html)
+                self.assertIn(f'data-tv-i18n-zh="{guide.summary}"', html)
+                self.assertIn(SECTION_GUIDES_EN[section].summary, html)
                 for name, desc in guide.charts:
-                    self.assertIn(
-                        f"<span class='section-guide-chart-name'>{name}</span>：{desc}",
-                        html,
-                    )
+                    self.assertIn(f'data-tv-i18n-zh="{name}"', html)
+                    self.assertIn(desc, html)
                 self.assertIn(guide.example, html)
                 self.assertIn("ⓘ 图表说明与调试示例", html)
-                self.assertIn(">本页图表<", html)
-                self.assertIn(">调试示例<", html)
+                self.assertIn(">Charts<", html)
+                self.assertIn(">Debugging example<", html)
                 self.assertIn("class='section-guide-tip' tabindex='0'", html)
                 self.assertIn("role='tooltip'", html)
 

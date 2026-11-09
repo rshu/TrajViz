@@ -1,7 +1,7 @@
 """A replaced load must stop the still-streaming LLM Issues judge.
 
-Loading a trajectory auto-starts the judge, which paints the Issues panel
-across many yields (one LLM call per issue). If the user clears the upload or
+The requested judge paints the Issues panel across many yields (one LLM call
+per issue). If the user clears the upload or
 loads another trajectory while that stream is running, the old stream would
 keep overwriting the new trace's panel with the old one's content. Every load
 records the run its browser session displays (``shared.record_latest_run``);
@@ -12,10 +12,14 @@ from __future__ import annotations
 
 import os
 import unittest
+import weakref
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import agent_trajviz as tv
+from agent_trajviz.insight.issue_judge import JudgeProgress
+from agent_trajviz.insight.issues import OverviewIssue
 from agent_trajviz.insight.ui.load import do_load
 from agent_trajviz.insight.ui.overview_tab import on_suggest_fixes
 from agent_trajviz.insight.ui.shared import (
@@ -34,13 +38,15 @@ _ANALYZE_ENV = ("ANALYZE_BASE_URL", "ANALYZE_API_KEY", "ANALYZE_MODEL", "ANALYZE
 class LatestRunRegistryTests(unittest.TestCase):
     def tearDown(self):
         drop_latest_run("s1")
-        drop_latest_run(None)
+        drop_latest_run("s2")
 
-    def test_no_record_means_current(self):
-        self.assertTrue(is_latest_run("never-loaded", object()))
+    def test_untracked_browser_is_stale_but_direct_callers_work(self):
+        run = tv.Trajectory("codeagent", [])
+        self.assertFalse(is_latest_run("never-loaded", run))
+        self.assertTrue(is_latest_run(None, run))
 
     def test_recorded_run_is_current_until_replaced(self):
-        run_a, run_b = object(), object()
+        run_a, run_b = tv.Trajectory("codeagent", []), tv.Trajectory("codeagent", [])
         record_latest_run("s1", run_a)
         self.assertTrue(is_latest_run("s1", run_a))
         self.assertFalse(is_latest_run("s1", run_b))
@@ -49,16 +55,29 @@ class LatestRunRegistryTests(unittest.TestCase):
         self.assertTrue(is_latest_run("s1", run_b))
 
     def test_cleared_upload_supersedes_every_run(self):
-        run = object()
+        run = tv.Trajectory("codeagent", [])
         record_latest_run("s1", run)
         record_latest_run("s1", None)
         self.assertFalse(is_latest_run("s1", run))
 
     def test_sessions_are_independent(self):
-        run_a = object()
+        run_a, run_b = tv.Trajectory("codeagent", []), tv.Trajectory("codeagent", [])
         record_latest_run("s1", run_a)
-        record_latest_run("s2", object())
+        record_latest_run("s2", run_b)
         self.assertTrue(is_latest_run("s1", run_a))
+
+    def test_registry_does_not_keep_an_evicted_run_alive(self):
+        run = tv.Trajectory("codeagent", [])
+        reference = weakref.ref(run)
+        record_latest_run("s1", run)
+        del run
+        self.assertIsNone(reference())
+
+    def test_unloaded_session_stays_stale(self):
+        run = tv.Trajectory("codeagent", [])
+        record_latest_run("s1", run)
+        drop_latest_run("s1")
+        self.assertFalse(is_latest_run("s1", run))
 
 
 class DoLoadRecordsTests(unittest.TestCase):
@@ -120,7 +139,8 @@ class SupersededJudgeStreamTests(unittest.TestCase):
         # run's pending spinner over the new panel.
         run = tv.load(DJANGO)
         request = SimpleNamespace(session_hash="s1")
-        record_latest_run("s1", tv.load(ASTROPY))
+        replacement = tv.load(ASTROPY)
+        record_latest_run("s1", replacement)
         stream = on_suggest_fixes(run, request=request)
         with self.assertRaises(StopIteration):
             next(stream)
@@ -134,6 +154,37 @@ class SupersededJudgeStreamTests(unittest.TestCase):
         record_latest_run("s1", None)
         with self.assertRaises(StopIteration):
             next(stream)
+
+    def test_stream_stops_after_browser_unload(self):
+        run = tv.load(DJANGO)
+        request = SimpleNamespace(session_hash="s1")
+        record_latest_run("s1", run)
+        stream = on_suggest_fixes(run, request=request)
+        next(stream)
+        drop_latest_run("s1")
+        with self.assertRaises(StopIteration):
+            next(stream)
+
+    def test_superseded_progress_does_not_resume_the_provider_iterator(self):
+        run = tv.load(DJANGO)
+        request = SimpleNamespace(session_hash="s1")
+        record_latest_run("s1", run)
+        issue = OverviewIssue("error", "Issue", "Detail", "Why", (1,))
+
+        def progress(*_args, **_kwargs):
+            yield JudgeProgress([issue], [], 1, 1, issue.title, False)
+            self.fail("The obsolete issue stream tried to start another provider request")
+
+        with (patch("agent_trajviz.insight.issue_judge.judge_run_summary", return_value=("task", "outcome")),
+              patch("agent_trajviz.insight.ui.overview_tab.prepare_overview_issues", return_value=[issue]),
+              patch("agent_trajviz.insight.ui.overview_tab.iter_judge_overview_issues", side_effect=progress)):
+            stream = on_suggest_fixes(run, request=request)
+            next(stream)
+            html_out, _ = next(stream)
+            self.assertIn("Suggesting fixes 1/1", html_out)
+            drop_latest_run("s1")
+            with self.assertRaises(StopIteration):
+                next(stream)
 
     def test_stream_continues_while_its_run_is_still_current(self):
         run = tv.load(DJANGO)
