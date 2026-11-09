@@ -585,13 +585,17 @@ def _issue_card(issue: OverviewIssue, number: int, *, workflow_links: bool = Tru
             "<summary>技术细节</summary>"
             f"{''.join(tech_parts)}</details>"
         )
-    analyze_html = (
-        f"<button type='button' class='overview-issue-analyze' "
-        f"data-issue-index=\"{number}\" "
-        f"onclick=\"if(window.tvAnalyzeIssue)"
-        f"{{window.tvAnalyzeIssue(this.getAttribute('data-issue-index'));}}\">"
-        f"AI 深入分析</button>"
-    )
+    # Live dashboard only: static/exported reports keep evidence without
+    # Gradio onclick handlers (see workflow_links=False / passive reports).
+    analyze_html = ""
+    if workflow_links:
+        analyze_html = (
+            f"<button type='button' class='overview-issue-analyze' "
+            f"data-issue-index=\"{number}\" "
+            f"onclick=\"if(window.tvAnalyzeIssue)"
+            f"{{window.tvAnalyzeIssue(this.getAttribute('data-issue-index'));}}\">"
+            f"AI 深入分析</button>"
+        )
     return (
         f"<div class='overview-issue-card' style='border-left-color:{border};'>"
         f"<div class='overview-issue-head'>"

@@ -195,7 +195,8 @@ class JudgeMockTests(unittest.TestCase):
         # The rule-based playbook folds away under 技术细节 as 常规做法.
         self.assertIn("常规做法", html)
         self.assertIn("更换搜索关键词或路径", html)
-        self.assertIn("已为 1 个问题生成修复建议", html)
+        # Upstream i18n marker (English fallback); zh catalog: "{count} 项附有模型修复建议".
+        self.assertIn("1 with LLM fix", html)
 
     def test_iter_judge_yields_before_each_and_finished(self):
         session = _session(steps=[{"index": 1, "role": "assistant", "tool_calls": []}])

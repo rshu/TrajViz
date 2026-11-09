@@ -2,6 +2,8 @@
 
 import unittest
 
+from i18n_test_helpers import unmark_html
+
 from agent_trajviz.insight.parser import parse_steps
 from agent_trajviz.insight.rendering import (
     _format_tool_call_detail,
@@ -150,7 +152,7 @@ class ToolOutputFullTextTests(unittest.TestCase):
         self.assertIn("x" * 5000, detail)
 
     def test_short_output_keeps_char_count_summary(self):
-        detail = _format_tool_call_detail(self._tool_step("ok")["parts"][0])
+        detail = unmark_html(_format_tool_call_detail(self._tool_step("ok")["parts"][0]))
         self.assertIn("Output (2 chars)", detail)
         self.assertIn("ok", detail)
 

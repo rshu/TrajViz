@@ -133,7 +133,9 @@ def test_passive_issues_hint_and_fix_details_preserve_evidence(judged):
     elements = _Elements(output)
     assert not elements.handlers
     assert "Workflow" not in output
-    assert "#7" in output and "#12" in output
+    # Issue cards use the fork's Chinese step chips (not upstream "#{n}").
+    assert "第7步" in output and "第12步" in output
+    assert "insight-step-index" in elements.classes
     assert "step numbers refer to the recorded trajectory" in output
     if judged:
         assert "Check the recorded failure" in output and "fixture.py:7" in output
