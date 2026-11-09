@@ -160,7 +160,7 @@ class Trajectory:
         return {"stats": context_pressure_stats(series), "series": series}
 
     def views(self, *, only: Iterable[str] | None = None) -> dict[str, View]:
-        """Every chart and table as a JSON-serializable :class:`View`, keyed by id.
+        """Public chart and table data as JSON-serializable :class:`View` objects, keyed by id.
 
         *only* restricts the result to those ids (see :data:`VIEW_CATALOG`);
         an unknown id raises :class:`KeyError`. Results are computed once per

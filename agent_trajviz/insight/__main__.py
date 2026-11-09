@@ -1,4 +1,4 @@
-"""``agent-trajviz``: the Insight dashboard, every chart and table as JSON with
+"""``agent-trajviz``: the Insight dashboard, trajectory views as JSON with
 ``--json``, or a standalone HTML report with ``--report``."""
 
 from __future__ import annotations
@@ -14,25 +14,28 @@ from .._extras import require_or_exit
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="agent-trajviz", description="TrajViz dashboard and HTML report")
+    parser = argparse.ArgumentParser(
+        prog="agent-trajviz", description="TrajViz Insight dashboard, JSON views, and HTML reports",
+    )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     _serve.add_server_arguments(parser, default_port=7860)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
         "--json",
         metavar="TRAJECTORY",
-        help="Write every chart and table of TRAJECTORY as JSON files and exit (no dashboard; "
-        "needs no extra). -o names the directory (default: ./<name>.views); prints it",
+        help="Write trajectory views as JSON files and print the output directory. "
+        "Use -o to set the directory (default: ./<name>.views)",
     )
     mode.add_argument(
         "--report",
         metavar="TRAJECTORY",
-        help="Write a standalone HTML report for TRAJECTORY and exit (no dashboard)",
+        help="Write a standalone HTML report for TRAJECTORY (requires the charts extra)",
     )
     mode.add_argument("--list-sessions", metavar="CAPTURE",
                       help="List the selectable sessions of a saved OTLP capture as JSON and exit")
     parser.add_argument("--format", metavar="FORMAT", help="Require a trajectory format, for example otlp")
-    parser.add_argument("--session-id", metavar="ID", help="Select one session from a saved OTLP capture")
+    parser.add_argument("--session-id", metavar="ID",
+                        help="With --json or --report, select one session from a saved OTLP capture")
     mode.add_argument("--list-views", action="store_true", help="List the view ids --json can write, and exit")
     mode.add_argument(
         "--schemas",
@@ -163,7 +166,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.format or args.session_id:
-        parser.error("--format and --session-id apply to --json, --report or --list-sessions")
+        parser.error("Use --format with --json, --report or --list-sessions and --session-id with --json or --report")
 
     require_or_exit("app", "The dashboard", "agent-trajviz")
     try:

@@ -71,6 +71,14 @@ For example, some sources count cache reads inside input or reasoning inside
 output. TrajViz accounts for those overlaps; adding the raw components again
 can double-count usage. Estimated tokens remain estimates.
 
+The [`token_usage`](data/views.html#token_usage) view separates fresh input,
+cache reads, cache writes, output, and reasoning when the source provides a
+breakdown. A source can also report only a total. The
+[`hotspots`](data/views.html#hotspots) view ranks context growth by comparing
+consecutive observed prompts in the same agent session. Growth measures the
+change in prompt size and can include the previous reply, tool results, and
+new messages.
+
 ## Schema versions
 
 Trajectory exports and view documents have separate schema versions:

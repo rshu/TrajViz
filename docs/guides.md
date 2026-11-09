@@ -6,10 +6,9 @@ same task. Replace them with your session files. See the
 
 ## Choose a captured session
 
-[`list_sessions`](api/agent_trajviz.html#list_sessions) currently discovers
-sessions in saved Claude Code OTLP captures. It is not a native JSONL session
-browser: native session files and supported subagent bundles load directly
-with `load`.
+[`list_sessions`](api/agent_trajviz.html#list_sessions) discovers sessions in
+saved Claude Code OpenTelemetry (OTLP) captures. Load native session files and
+supported subagent bundles directly with `load`.
 
 For a saved capture bundle containing multiple sessions, inspect the IDs and
 choose one explicitly:
@@ -22,12 +21,19 @@ sessions = tv.list_sessions("sessions.zip")
 for session in sessions:
     print(session["id"])
 
-selected = tv.load("sessions.zip", session_id=sessions[0]["id"])
+# Replace docs-first with the ID of the run you want to analyze.
+selected = tv.load("sessions.zip", session_id="docs-first")
 ```
 
 Loading an ambiguous capture without a selection raises
-`LoadError(code="ambiguous_session")`. Do not pick the first ID blindly in an
-unattended pipeline; select the run you intend to analyze.
+`LoadError(code="ambiguous_session")`. In the dashboard, choose the ID under
+**Captured session**. From the CLI, list the IDs and pass the one you want to
+`--session-id`.
+
+```bash
+agent-trajviz --list-sessions sessions.zip
+agent-trajviz --json sessions.zip --session-id docs-first -o analysis/
+```
 
 ## Compare runs of the same task
 
@@ -185,6 +191,11 @@ config = llm.config_from_env(load_dotenv=True)
 history = llm.ask(reference, "Which steps are the main bottlenecks?", config=config)
 ```
 
-Calling `ask` sends a redacted statistics brief to the configured provider.
-Use `chat=` for your own client. Dashboard Settings are session overrides;
-they do not rewrite environment variables or the Python API's configuration.
+Calling `ask` sends the question and statistics brief to the configured
+provider after redaction. Use `chat=` for your own client. If your provider
+requires extra gateway headers, set `ANALYZE_HEADERS` to a JSON object in the
+environment. TrajViz uses those headers only when the base URL and provider
+match the configured `ANALYZE_BASE_URL` and `ANALYZE_PROVIDER`.
+
+Dashboard Settings apply to the current browser session. Set the Python API's
+connection separately with `config=` or the environment.

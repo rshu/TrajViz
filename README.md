@@ -50,8 +50,8 @@ print(run.view("tool_usage").data)
 tv.export_json(run, "out/")
 ```
 
-Formats are detected from file contents. `run.views()` exposes every chart and
-table as JSON data; `tv.view_schema("tool_usage")` returns its JSON Schema.
+Formats are detected from file contents. `run.views()` exposes the public chart
+and table data as JSON. `tv.view_schema("tool_usage")` returns its JSON Schema.
 Reload `out/trajectory.json` with `tv.load()` to continue an analysis.
 
 View exports use **schema version 2**: unavailable measurements can be `null`,
@@ -73,14 +73,17 @@ agent-trajviz --json trajectory.json -o out/
 agent-trajviz --report trajectory.json -o report.html --inline-plotly
 ```
 
-Open `http://127.0.0.1:7860` and upload a `.json`, `.jsonl`, `.zstd` or `.zip`
-file. **Export HTML** saves an Overview, charts and Patterns snapshot.
-`--inline-plotly` embeds the chart runtime for offline reports.
+Open `http://127.0.0.1:7860`, upload a `.json`, `.jsonl`, `.zstd` or `.zip` file,
+and select **Load Trajectory**. Compressed DeepSeek Harness logs need the
+`zstd` extra on Python 3.11–3.13. **Export HTML** saves an Overview, charts and
+Patterns snapshot that loads Plotly from a CDN. Use `--inline-plotly` with
+`--report` to embed the chart runtime for offline viewing.
 
 Use **EN | 中** in the header to switch between English and Simplified Chinese. The
 browser remembers the choice and sets the default AI reply language. In
-**AI Trajectory Analysis → Settings**, choose **English** or **简体中文** under
-**Reply language** for the next analysis, answer or suggested fix.
+**AI Trajectory Analysis → Settings → Request options**, choose **English** or
+**简体中文** under **Reply language** for the next analysis, answer or suggested
+fix.
 
 Use `--port 8080` to change ports. Set `TRAJVIZ_AUTH=user:password` before
 exposing the dashboard with `--host 0.0.0.0` or `--share`; remote visitors can
@@ -104,13 +107,16 @@ use `agent-trajviz-converge --help`. Every command provides `--help`.
 |---|---|
 | Claude Code | Native session JSONL under `~/.claude/projects/`, including associated subagent logs |
 | Cursor | CLI `stream-json`, or a consolidated Agent transcript family with Composer metadata |
-| OpenCode | Native v1/v2 session JSON, including parent/child families from the collector |
+| OpenCode | Native v1/v2, desktop and Windows session JSON, including parent/child families from the collector |
 | Codex CLI | Persisted `rollout-*.jsonl` under `~/.codex/sessions/`, or a collected session family |
 | Pi | Native JSONL under `~/.pi/agent/sessions/`, using the active history branch |
-| DeepSeek Harness | Native session directories, `session.vN.jsonl[.zstd]`, or legacy session exports |
+| DeepSeek Harness | Native session directories, `session.jsonl`, `session.vN.jsonl[.zstd]`, or legacy session exports |
 | CodeArts | AgentKernel session exports from its `opencode.db` store |
 | CodeAgent | Session JSON exports with `session` + `child_sessions` (data-wrapped messages/parts) |
 | ICode | Chrys expanded-session JSON with nested subagent sessions |
+
+Session files with a UTF-16 byte order mark are supported. For OpenTelemetry
+files, see [Saved OTLP captures](#saved-otlp-captures).
 
 ### Collect sessions and subagents
 
@@ -123,12 +129,13 @@ agent-trajviz-collect codex SESSION_ID -o codex.json
 agent-trajviz-collect codearts /path/to/opencode.db --session-id SESSION_ID --output codearts.json
 ```
 
-Use `agent-trajviz-collect TOOL --help` for listing sessions, database paths and
-other options. OpenCode also provides root-session exports:
+Use `agent-trajviz-collect TOOL --help` for each collector's options. Set
+`OPENCODE_DATABASE` if the OpenCode database is outside its default location.
+OpenCode also provides root-session exports:
 
 ```bash
-opencode session export SESSION_ID --standalone > opencode.json  # OpenCode 2
-opencode export SESSION_ID > opencode.json                       # OpenCode 1
+opencode session export SESSION_ID > opencode.json  # OpenCode 2
+opencode export SESSION_ID > opencode.json          # OpenCode 1
 ```
 
 Claude Code needs no exporter. Loading its parent JSONL locally discovers
@@ -269,24 +276,25 @@ usage analyses.
 
 ## Optional LLM features
 
-The **AI Trajectory Analysis** sidebar starts closed; open it from the labeled
-control on the right edge. It answers follow-up questions using the same
-dashboard statistics (health verdicts, bottlenecks, failures, fruitless
-streaks). Select **Analyze issue with AI** on an Overview issue to open the sidebar
-and ask a focused question about that issue. Select **Suggest fixes with LLM**
-to summarize the run and get recommendations for ranked issues.
+Trajectory loading and opening the **AI Trajectory Analysis** sidebar run
+locally. Select **Analyze trajectory**, submit a question, select **Analyze
+issue with AI** on an Overview issue, or select **Suggest fixes with LLM** to
+send relevant trajectory excerpts to the configured provider. **Export issues
+into JSON** saves the ranked findings and their supporting evidence locally.
 
 Open **AI Trajectory Analysis → Settings** to configure the provider, API key,
-base URL, model and request options. Use **Analyze trajectory** on the Analysis
-tab to start analysis. **Test API key** checks the entered connection with a small
-model request before you apply settings. Connection details can be remembered in this browser;
-API keys stay in the current session. You can also set `ANALYZE_BASE_URL`,
+base URL, model and request options. **Test API key** sends a small model
+request without trajectory data. Select **Apply settings** to use the entered
+connection. The form masks the active API key, which stays in the current
+server-side session. Only non-secret connection details can be remembered in
+the browser. You can also set `ANALYZE_BASE_URL`,
 `ANALYZE_API_KEY` and `ANALYZE_MODEL` in `.env`. See
 [.env.example](https://github.com/rshu/TrajViz/blob/main/.env.example) for provider,
-language and timeout options. Reasoning models spend output tokens on hidden
+language, timeout, and optional gateway headers. Headers apply only to the
+configured base URL and provider. Reasoning models spend output tokens on hidden
 thinking; if a reply comes back empty or cut off, raise Max output tokens
 (default 8192). Anthropic-style endpoints accept the base URL with or without
-`/v1`. Analysis sends trajectory excerpts to the configured provider.
+`/v1`.
 
 For step labeling, set `LABEL_BASE_URL`, `LABEL_API_KEY` and `LABEL_MODEL`, then:
 
@@ -294,16 +302,18 @@ For step labeling, set `LABEL_BASE_URL`, `LABEL_API_KEY` and `LABEL_MODEL`, then
 agent-trajviz-label trajectory.json --output labels.json
 ```
 
-Upload the label sidecar alongside its trajectory to enable phase-aware views.
-Failure attribution uses the bundled evaluation engine and canonical reference
-data; see the
-[attribution API](https://github.com/rshu/TrajViz/blob/main/agent_trajviz/attribution.py).
+Upload the label sidecar alongside its trajectory and select **Load Labels** to
+enable phase-aware views.
 
-The **AWE** tab inspects the loaded trajectory directly, with evidence linked to
-Workflow steps. Reference-based attribution is optional. **Saved runs & evaluation**
-provides provenance graphs, symptoms, recommendations and reports.
-Evaluation settings configure explicit operations and optional model connections. See the
-[AWE guide](https://github.com/rshu/TrajViz/blob/main/docs/awe.md) for the Python API and CLI.
+## AWE inspection and evaluation
+
+The **AWE** tab inspects the loaded trajectory locally, with evidence linked to
+Workflow steps. Optional failure attribution uses the bundled evaluation engine
+and canonical reference data. **Saved runs & evaluation** provides provenance
+graphs, symptoms, recommendations and reports. Evaluation settings configure
+explicit operations and optional model connections. See the
+[AWE guide](https://github.com/rshu/TrajViz/blob/main/docs/awe.md) for the Python
+API and CLI.
 
 ## Development
 

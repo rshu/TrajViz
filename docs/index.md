@@ -21,8 +21,8 @@ before interpreting missing measurements or consuming exported JSON.
   with an explicit model connection or your own client.
 - [Failure attribution](api/agent_trajviz/attribution.html): check availability
   and diagnose a run against reference data.
-- [AWE guide](awe.md) and [API](api/agent_trajviz/awe.html): import full saved
-  analyses, inspect evidence and graphs, export reports, and run built-in evaluation.
+- [AWE guide](awe.md) and [API](api/agent_trajviz/awe.html): inspect a loaded
+  trajectory, import saved analyses, export reports, and run built-in evaluation.
 
 Use the released documentation for an installed PyPI version. Development
 reference pages can describe changes that have not been released.

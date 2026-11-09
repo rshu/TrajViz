@@ -41,7 +41,7 @@ def _table(view: tv.View) -> tuple[list[str], list[list]]:
 
 
 def inspect_sessions(upload):
-    """Offer an explicit choice when an uploaded capture contains sessions."""
+    """List saved OpenTelemetry sessions, selecting a sole session automatically."""
     path = _upload_path(upload)
     try:
         sessions = tv.list_sessions(path, format="otlp") if path else []

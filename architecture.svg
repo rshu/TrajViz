@@ -23,7 +23,7 @@
 
   <rect x="276" y="140" width="216" height="42" rx="8" fill="#ffffff" stroke="#bcd0f0" stroke-width="1.5"/>
   <text x="292" y="157" font-size="14" font-weight="700" fill="#0f172a">OpenCode</text>
-  <text x="292" y="174" font-size="11" fill="#64748b">export · agent-trajviz-collect</text>
+  <text x="292" y="174" font-size="11" fill="#64748b">native · desktop · Windows</text>
 
   <rect x="512" y="140" width="216" height="42" rx="8" fill="#ffffff" stroke="#bcd0f0" stroke-width="1.5"/>
   <text x="528" y="157" font-size="14" font-weight="700" fill="#0f172a">CodeArts</text>
@@ -32,6 +32,10 @@
   <rect x="748" y="140" width="216" height="42" rx="8" fill="#ffffff" stroke="#bcd0f0" stroke-width="1.5"/>
   <text x="764" y="157" font-size="14" font-weight="700" fill="#0f172a">ICode</text>
   <text x="764" y="174" font-size="11" fill="#64748b">chrys expanded session</text>
+
+  <rect x="984" y="140" width="216" height="42" rx="8" fill="#ffffff" stroke="#bcd0f0" stroke-width="1.5"/>
+  <text x="1000" y="157" font-size="14" font-weight="700" fill="#0f172a">CodeAgent</text>
+  <text x="1000" y="174" font-size="11" fill="#64748b">session JSON · nested subagents</text>
 
   <!-- Event-stream formats (normalized on load) -->
   <rect x="40" y="188" width="216" height="42" rx="8" fill="#eff4ff" stroke="#5b8def" stroke-width="1.5"/>
@@ -49,12 +53,11 @@
   <!-- Cursor: a consolidated object export (transcripts + Composer DB) -->
   <rect x="748" y="188" width="216" height="42" rx="8" fill="#ffffff" stroke="#bcd0f0" stroke-width="1.5"/>
   <text x="764" y="205" font-size="14" font-weight="700" fill="#0f172a">Cursor</text>
-  <text x="764" y="222" font-size="11" fill="#64748b">Composer DB · collect</text>
+  <text x="764" y="222" font-size="11" fill="#64748b">CLI stream · Composer DB</text>
 
-  <rect x="984" y="140" width="216" height="90" rx="10" fill="#fff7ec" stroke="#e0913a" stroke-width="1.8"/>
-  <text x="1000" y="169" font-size="15" font-weight="700" fill="#0f172a">LLM features · [llm]</text>
-  <text x="1000" y="191" font-size="11.5" fill="#64748b">agent-trajviz-label → labels</text>
-  <text x="1000" y="208" font-size="11.5" fill="#64748b">llm.ask · suggest_fixes</text>
+  <rect x="984" y="188" width="216" height="42" rx="8" fill="#fff7ec" stroke="#e0913a" stroke-width="1.8"/>
+  <text x="1000" y="205" font-size="14" font-weight="700" fill="#0f172a">LLM features · [llm]</text>
+  <text x="1000" y="222" font-size="11" fill="#64748b">step labels · on-demand analysis</text>
 
   <!-- collector bus: sources -> loaders -->
   <polyline points="148,230 148,272" fill="none" stroke="#2563eb" stroke-width="2"/>
@@ -62,6 +65,7 @@
   <polyline points="620,230 620,272" fill="none" stroke="#2563eb" stroke-width="2"/>
   <polyline points="932,182 932,272" fill="none" stroke="#2563eb" stroke-width="2"/>
   <polyline points="824,230 824,272" fill="none" stroke="#2563eb" stroke-width="2"/>
+  <polyline points="984,161 973,161 973,272 932,272" fill="none" stroke="#2563eb" stroke-width="2"/>
   <polyline points="148,272 932,272" fill="none" stroke="#2563eb" stroke-width="2"/>
   <polyline points="148,272 148,308" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#ah-blue)"/>
   <rect x="331" y="256" width="106" height="17" fill="#ffffff"/><text x="384" y="269" font-size="12" fill="#2563eb" font-style="italic" text-anchor="middle">native / OTLP</text>
@@ -161,7 +165,7 @@
   <rect x="40" y="866" width="1160" height="120" rx="10" fill="#ffffff" stroke="#8b5cf6" stroke-width="1.5"/>
   <text x="60" y="891" font-size="14" font-weight="700" fill="#6b3fd4">AWE · bundled engine</text>
   <text x="400" y="891" font-size="12" fill="#64748b">agent-trajviz-awe</text>
-  <text x="650" y="891" font-size="11.5" fill="#64748b">native + refs · optional judging</text>
+  <text x="650" y="891" font-size="11.5" fill="#64748b">native inspection · optional references and judging</text>
   <rect x="60" y="904" width="268" height="62" rx="8" fill="#fbfaff" stroke="#cbb8ee" stroke-width="1.3"/>
   <text x="76" y="929" font-size="14" font-weight="700" fill="#0f172a">Saved analyses</text>
   <text x="76" y="950" font-size="11.5" fill="#64748b">load_run · fingerprints</text>
@@ -216,7 +220,7 @@
     <text x="1036" y="1015" font-size="11" fill="#64748b">register_view · figures</text>
     <text x="1036" y="1032" font-size="11" fill="#64748b">load_plugins()</text>
   </g>
-  <text x="40" y="1064" font-size="11.5" fill="#64748b">Dashboards share public views; AWE retains complete saved evidence in SavedRun.</text>
+  <text x="40" y="1064" font-size="11.5" fill="#64748b">Dashboards and public views share trajectory data. AWE retains complete saved evidence in SavedRun.</text>
 
   <!-- public API -> optional layers -->
   <polyline points="210,1074 210,1114" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#ah-blue)"/>
@@ -242,15 +246,14 @@
   <rect x="400" y="1160" width="440" height="160" rx="10" fill="#ffffff" stroke="#e07b39" stroke-width="1.5"/>
   <text x="420" y="1186" font-size="14" font-weight="700" fill="#c25f1f">Insight dashboard · [app]</text>
   <g font-size="12.5">
-    <rect x="420" y="1200" width="92" height="30" rx="15" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="466" y="1220" text-anchor="middle" fill="#0f172a">Overview</text>
-    <rect x="520" y="1200" width="92" height="30" rx="15" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="566" y="1220" text-anchor="middle" fill="#0f172a">Patterns</text>
-    <rect x="620" y="1200" width="92" height="30" rx="15" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="666" y="1220" text-anchor="middle" fill="#0f172a">Attribution</text>
-    <rect x="720" y="1200" width="92" height="30" rx="15" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="766" y="1220" text-anchor="middle" fill="#0f172a">AWE</text>
-    <rect x="420" y="1238" width="124" height="30" rx="15" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="482" y="1258" text-anchor="middle" fill="#0f172a">Comparison</text>
-    <rect x="554" y="1238" width="124" height="30" rx="15" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="616" y="1258" text-anchor="middle" fill="#0f172a">Workflow</text>
-    <rect x="688" y="1238" width="124" height="30" rx="15" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="750" y="1258" text-anchor="middle" fill="#0f172a">Raw Data</text>
+    <rect x="420" y="1200" width="124" height="30" rx="15" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="482" y="1220" text-anchor="middle" fill="#0f172a">Overview</text>
+    <rect x="554" y="1200" width="124" height="30" rx="15" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="616" y="1220" text-anchor="middle" fill="#0f172a">AWE</text>
+    <rect x="688" y="1200" width="124" height="30" rx="15" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="750" y="1220" text-anchor="middle" fill="#0f172a">Comparison</text>
+    <rect x="420" y="1238" width="124" height="30" rx="15" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="482" y="1258" text-anchor="middle" fill="#0f172a">Workflow</text>
+    <rect x="554" y="1238" width="124" height="30" rx="15" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="616" y="1258" text-anchor="middle" fill="#0f172a">Raw Data</text>
+    <rect x="688" y="1238" width="124" height="30" rx="15" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="750" y="1258" text-anchor="middle" fill="#0f172a">Views (optional)</text>
   </g>
-  <text x="420" y="1289" font-size="11.5" fill="#64748b">Settings · optional Views tab for extensions</text>
+  <text x="420" y="1289" font-size="11.5" fill="#64748b">AI Trajectory Analysis sidebar · Settings</text>
   <text x="420" y="1308" font-size="11.5" fill="#64748b">agent-trajviz · 127.0.0.1:7860</text>
 
   <!-- Converge standalone -->

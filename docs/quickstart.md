@@ -16,6 +16,9 @@ pip install "agent-trajviz[charts]"
 # Or: pip install "agent-trajviz[app]"
 ```
 
+On Python 3.11–3.13, install the `zstd` extra to read compressed DeepSeek
+Harness sessions. Python 3.14 and newer can read them with the core package.
+
 For the dashboards and CLI, Homebrew includes Python and the app dependencies:
 
 ```bash
@@ -100,15 +103,29 @@ report_path = tv.write_report(run, "report.html", inline_plotly=True)
 ## Open the dashboard
 
 With the `app` extra installed through pip, or with Homebrew, run
-`agent-trajviz` and open the local URL it prints. Load the same session there.
-Open **AI Trajectory Analysis → Settings** to configure the model
-connection and request options. The **Reply language** dropdown selects English
-or Simplified Chinese for the next response; **EN | 中** updates its default.
-Use **Analyze trajectory** on
-the Analysis tab when you are ready. **Test API key** checks the entered connection
-with a small model request without applying settings or sending trajectory data. Connection details can be
-remembered in the browser; entered API keys remain in that session. Applying
-settings sends no model request.
+`agent-trajviz` and open the local URL it prints. Upload the session and select
+**Load Trajectory**. Use **EN | 中** in the header to switch between English and
+Simplified Chinese. The browser remembers the interface language.
+
+In **Overview**, follow issue links to their evidence in **Workflow**, or select
+**Export issues into JSON** to save the findings. Under **Summary**, click a bar
+in **Token Usage** to inspect its recorded token breakdown. The **Execution
+Timeline** skips idle gaps by default. Choose **True wall-clock** to include
+the elapsed gaps.
+
+Loading a trajectory computes the dashboard locally. To request model assistance,
+open **AI Trajectory Analysis → Settings**, enter the provider details, and select
+**Apply settings**. **Test API key** is an optional connection check. It sends a
+small model request with no trajectory data and leaves the current settings in
+place. The browser can remember connection details, and entered keys remain in
+the session. A masked key indicates an active key for the selected endpoint.
+
+On the **Analysis** tab, select **Analyze trajectory** or submit a question.
+In **Overview**, **Analyze issue with AI** focuses on one issue, while **Suggest
+fixes with LLM** summarizes the run and suggests fixes. These actions send
+relevant trajectory excerpts to the configured provider. Under **Settings →
+Request options → Reply language**, choose **English** or **简体中文** for the
+next response. Switching **EN | 中** updates the reply language choice.
 
 Continue with the [task guides](guides.md), or browse the
 [Python reference](api/agent_trajviz.html).

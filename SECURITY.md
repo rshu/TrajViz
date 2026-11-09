@@ -27,7 +27,7 @@ print. It is built to keep them on your machine.
   service; standalone reports load plotly.js from its CDN unless built with
   `--inline-plotly`.
 - **Model assistance uses the configured endpoint.** Select **Analyze trajectory**,
-  submit a question, select **Suggest fixes** or **Analyze issue with AI**, or run
+  submit a question, select **Suggest fixes with LLM** or **Analyze issue with AI**, or run
   `agent-trajviz-label` to request model assistance. These actions can send a
   statistics brief and relevant step text to the configured provider. **Test API
   key** sends a small prompt without trajectory data. Gateway headers apply only
@@ -37,9 +37,13 @@ print. It is built to keep them on your machine.
   assignments -- is replaced with `[REDACTED]`. That is a safety net for
   credentials an agent happened to print, not a guarantee: review what you
   send to a third-party endpoint.
-- **Dashboards are local by default.** Both bind to `127.0.0.1`. Exposing
-  one (`--host 0.0.0.0` or `--share`) lets anyone who can reach it upload
-  files and spend the LLM key configured on your machine. Set
+- **Evaluation requires explicit permission for network use.** Fresh model
+  requests in AWE require network permission for that operation. Official
+  evaluation also requires confirmation before it pulls images or runs
+  Docker trials.
+- **Dashboards are local by default.** Both bind to `127.0.0.1`. If you expose
+  a dashboard (`--host 0.0.0.0` or `--share`) without a login, anyone who can
+  reach it can upload files and use the LLM key configured on your machine. Set
   `TRAJVIZ_AUTH=user:password` first; TrajViz warns at startup if you do not.
   An exposed Insight dashboard drops its server-path inputs, Converge
   resolves manifest paths inside `--data-root` only, uploads are capped by
@@ -48,6 +52,7 @@ print. It is built to keep them on your machine.
 - **API keys are not remembered in the browser.** Keys can come from
   environment variables, a local `.env` (only `ANALYZE_*` and `LABEL_*` keys
   are read from it), or dashboard Settings. Keys entered in Settings stay in
-  the current server-side session; optional remembered browser preferences
-  exclude API keys. Settings do not write keys to `.env`. Keys are never
-  logged or included in errors shown to a user.
+  the current server-side session and the input displays a mask once applied.
+  Optional remembered browser preferences exclude API keys. Settings do not
+  write keys to `.env`. Keys are never logged or included in errors shown to
+  a user.

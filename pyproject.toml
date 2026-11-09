@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 name = "agent-trajviz"
 # Single source: agent_trajviz/__init__.py (see [tool.hatch.version]).
 dynamic = ["version"]
-description = "Parse and analyze LLM agent trajectories (Claude Code, Cursor, OpenCode, CodeArts, ICode, Codex CLI, Pi, DeepSeek Harness): every metric and chart as JSON, with optional figures and dashboards"
+description = "Analyze Claude Code, Cursor, OpenCode, CodeAgent, CodeArts, ICode, Codex CLI, Pi, and DeepSeek Harness sessions and saved Claude Code OpenTelemetry captures. Export metrics and charts as JSON or explore them in optional dashboards."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -62,8 +62,8 @@ dev = [
 ]
 
 [project.scripts]
-# Every command carries the distribution's prefix. The Converge dashboard has
-# no script of its own: `python -m agent_trajviz.converge` launches it.
+# The Converge script runs comparisons. Launch its dashboard with
+# `python -m agent_trajviz.converge`.
 agent-trajviz = "agent_trajviz.insight.__main__:main"
 agent-trajviz-converge = "agent_trajviz.converge.cli:main"
 agent-trajviz-collect = "agent_trajviz.collect.__main__:main"

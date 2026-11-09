@@ -1,14 +1,16 @@
-"""TrajViz, rebuilt on the public agent_trajviz API.
+"""An example dashboard built on the public agent_trajviz API.
 
     pip install "agent-trajviz[app]"
     python examples/trajviz_app/app.py           # http://127.0.0.1:7870
 
-This app reproduces the TrajViz dashboard -- KPI strip, Overview sections,
-Patterns, Attribution, Comparison, Workflow, Raw Data and the AI sidebar --
-using only the library's public API: `agent_trajviz` for loading and every
-view, `agent_trajviz.figures` for the charts, `agent_trajviz.llm` for the AI
-features and `agent_trajviz.attribution` for failure attribution. It is what another
-project would write on top of the library; nothing here imports internals.
+The example includes an Overview, Patterns, Attribution, Comparison,
+Workflow, Raw Data, and an AI sidebar. It uses `agent_trajviz` to load runs
+and read views, `agent_trajviz.figures` for charts, `agent_trajviz.llm` for
+AI analysis, and `agent_trajviz.attribution` for failure attribution.
+
+With a model connection configured through environment variables, opening
+the AI sidebar for a loaded run with an empty chat sends trajectory excerpts
+to the configured provider.
 """
 
 from __future__ import annotations
@@ -65,7 +67,7 @@ class Refs:
 def build_app() -> gr.Blocks:  # noqa: C901 - one layout, read top to bottom
     r = Refs()
     with gr.Blocks(title="TrajViz", analytics_enabled=False) as app:
-        state = gr.State(None)  # {"run", "views", "name", "labels"}
+        state = gr.State(None)  # Loaded run, views, labels, and display state.
 
         with gr.Sidebar(label="AI Trajectory Analysis", open=False, position="right") as sidebar:
             gr.Markdown("### 🤖 AI Trajectory Analysis")
@@ -550,7 +552,7 @@ def _wire(app: gr.Blocks, r: Refs, state: gr.State, sidebar: Any) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="TrajViz rebuilt on the public agent_trajviz API")
+    parser = argparse.ArgumentParser(description="Example TrajViz dashboard built on the public API")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=7870)
     args = parser.parse_args(argv)

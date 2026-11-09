@@ -3,8 +3,8 @@
     >>> import agent_trajviz as tv
     >>> run = tv.load("trajectory.json")
     >>> run.format_label, len(run.steps), run.metrics["tokens"]["total"]
-    >>> run.view("tool_usage").data           # any chart or table, as JSON data
-    >>> tv.export_json(run, "out/")             # all of them, one file each
+    >>> run.view("tool_usage").data             # JSON-ready tool usage data
+    >>> tv.export_json(run, "out/")             # one file per public view
 
 The names below are the public API; the core needs only the standard
 library. Optional modules: :mod:`agent_trajviz.figures` (Plotly figures,

@@ -1,7 +1,7 @@
 # Sanitized DSH native v4 excerpts
 
 These excerpts come from an isolated coding benchmark run on 2026-10-26 with
-DeepSeek Harness 0.2.1-rc.2 (npm latest), using deepseek-flash. The complete run
+DeepSeek Harness 0.2.1-rc.2, using deepseek-flash. The complete run
 finished successfully with a parent and two reviewer sessions. Each excerpt
 keeps its first model request, measured tool events, native token counters,
 header lineage, and child catalog entries. Content, tool arguments, identifiers,

@@ -1,33 +1,29 @@
-# Vendored ATTRIBUTION verdict caches
+# Recorded attribution verdicts
 
-Two LLM verdicts — one judge, one arbiter — for
-`claude_code / django__django-11477`, vendored so the attribution integration
-tests run hermetically: no developer-local caches, no API key, no network, and
-no dependence on ATTRIBUTION's own (gitignored) cache directories.
+This directory contains historical judge and arbiter verdicts for
+`claude_code / django__django-11477`. The schema-20 records preserve the inputs
+for legacy contract checks. Current provenance tests generate matching
+fingerprints from the fixture inputs.
 
-`conftest.py` points ATTRIBUTION's judge and arbiter cache directories here, forces the
-judge-model namespace to `deepseek-v4-pro` (the namespace these files live
-under), and points `config.PROJECT_DATA` at this directory so ATTRIBUTION's local
-inputs (`pertest/`, `overrides/`) resolve as absent instead of reaching outside
-the fixture tree.
+[`tests/conftest.py`](../../conftest.py) points the bundled engine's judge and
+arbiter cache directories at these fixtures and sets the `deepseek-v4-pro`
+namespace. It directs `config.PROJECT_DATA` and writable caches to a fresh
+temporary directory for each test process. The tests run offline without
+developer-local data or credentials.
 
 ## Provenance
 
-`attribution._verdict_verifies` trusts a cached verdict only when its full prompt
-provenance matches the current inputs: `trajectory_sha256`,
-`requirements_sha256`, `prompt_version` and `evidence_schema`. A verdict whose
-provenance cannot be verified is ignored and its layer is disabled — that refusal
-is the security property, so the stamps in these files must never be edited just
-to make a test pass.
+TrajViz trusts a cached verdict only when its provenance matches the current
+inputs. It checks `trajectory_sha256`, `requirements_sha256`, `prompt_version`,
+and `evidence_schema`. A mismatch disables the corresponding layer. Preserve
+the original stamps in these recorded verdicts.
 
-Both verdicts were produced by `deepseek-v4-pro` with ATTRIBUTION's own `judge_one` and
-`verify_one`, run against this fixture tree exactly as the tests configure it
-(fixture `data/`, empty `PROJECT_DATA`), so every stamp is the one ATTRIBUTION wrote
-for the bytes the model saw. The arbiter was asked about the single claim ATTRIBUTION's
-blame step submits for this case (`code_editing` / `relevant_change_omitted`)
-and refuted it.
+The historical engine used `deepseek-v4-pro` with `judge_one` and `verify_one`
+against the fixture reference data and an empty `PROJECT_DATA` directory. The
+arbiter refuted the `code_editing` / `relevant_change_omitted` claim. The
+recorded stamps describe the bytes supplied to the model at that time.
 
-If the fixture's bytes, the prompt or `SCHEMA_VERSION` change, regenerate both
-verdicts the same way, or let the layers be refused and adjust the tests to
-expect refusal. Re-stamping is sound only when rendering `build_messages` for
-this case before and after the change gives byte-identical prompts.
+To add fresh recorded verdicts, run the current judge and arbiter against the
+sanitized fixture and retain their generated provenance. Tests that exercise
+rejection can keep using recorded verdicts with a deliberately mismatched
+fingerprint.

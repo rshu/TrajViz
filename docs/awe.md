@@ -41,11 +41,13 @@ the original session files.
 
 ## Inspect a saved analysis
 
-In **AWE → Saved runs & evaluation**, upload a run ZIP or JSON artifact, or select a
-local run folder. AWE's immutable `data/runs/<run-id>/` directory is the best
-source for a complete analysis. Current `data/dossier/` outputs and their
-sibling reports also work. A local `faults.json` or `manifest.json` selects its
-sibling artifacts; a portable TrajViz run JSON contains the whole imported run.
+In **AWE → Saved runs & evaluation**, upload a run ZIP or JSON artifact and
+select **Import saved run**. In a local dashboard launch, you can also enter a
+path in **Saved run folder**. AWE's `data/runs/<run-id>/` directory contains the
+complete recorded analysis. Current `data/dossier/` outputs and their sibling
+reports also work. When loading from a local path, a `faults.json` or
+`manifest.json` selects its sibling artifacts. For uploads, a ZIP or portable
+TrajViz run JSON can carry the complete analysis in one file.
 
 The viewer provides:
 
@@ -121,7 +123,7 @@ agent-trajviz-awe export portable-run.json --output original-artifacts.zip
 agent-trajviz-awe export portable-run.json --output report.html
 ```
 
-`python -m agent_trajviz.awe` provides the same commands. An `.html` output
+`python -m agent_trajviz.awe` provides the same commands. An `.html` or `.htm` output
 produces a self-contained TrajViz report; `.zip` preserves the original
 artifacts, and other export suffixes write the versioned JSON envelope.
 
@@ -165,8 +167,8 @@ under `overrides/`. A benchmark profile supplies file roles and evaluator policy
 Declared execution context supplies model, scaffold revision, languages and
 runtime capabilities. Missing declarations remain unknown.
 
-Native Claude Code, Codex, Cursor, OpenCode, Pi and DeepSeek Harness sessions use
-TrajViz's loaders inside isolated workers. Their projection preserves recorded
+Native Claude Code, Codex, Cursor, OpenCode, Pi, DeepSeek Harness, CodeArts and
+ICode sessions use TrajViz's loaders inside isolated workers. Their projection preserves recorded
 tool inputs/results, exit codes, reasoning visibility and child thread identity.
 Evidence references identify TrajViz workflow rows and parts; a native record
 offset is included only when known. Parent and child fingerprints, adapter
