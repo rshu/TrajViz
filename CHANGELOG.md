@@ -7,36 +7,34 @@ change the public API (the names exported from `agent_trajviz`).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-09
+
 ### Added
 
-- Load CodeAgent session exports (`session` + `child_sessions` with
-  data-wrapped messages and parts), including parent/child hierarchy, tools,
-  reasoning, tokens and timing.
-- Switch the dashboards between English and Simplified Chinese, remembering
-  the browser's choice while preserving loaded trajectories and session settings.
-- Use **Suggest fixes with LLM** to summarize a run and suggest fixes for
-  ranked issues, or **Analyze issue with AI** for a focused follow-up.
+- Switch Insight and Converge between English and Simplified Chinese and
+  choose the language for AI replies.
+- Load CodeAgent session exports, including nested subagent sessions.
+- Export grouped Overview issues as JSON and request AI analysis for an
+  individual issue or the entire run.
+- Inspect execution timelines, context growth, compaction, and per-step
+  token use.
 
 ### Changed
 
-- Group related Overview issues and collapse duplicate failure cascades.
+- Group related Overview issues, collapse duplicate failure cascades, and keep
+  their evidence links and AI actions aligned across Settings changes.
+- Support custom gateway headers for model requests and connection tests.
 
 ### Fixed
 
-- OpenCode desktop and Windows session exports (flat `type` / `text` / `content`
-  messages, directory under `location`) load as turns. Workflow steps keep
-  their text, tokens, model, and timing. `idle` heartbeats are omitted.
-  SQLite consolidator exports (`info` + `parts`) are unchanged.
-- Session files saved by Windows PowerShell (`Out-File` / `Set-Content`,
-  UTF-16 with a BOM) load. A `0xFF` byte that is not that BOM is still rejected.
-- Translate comparison scorecards, coverage tables, explanations and chart
-  labels consistently, including results refreshed after switching languages.
-- Preserve readable badge and status colors when switching dashboard languages.
-- Translate built-in phase and action labels in charts, timelines and label summaries.
-- Add English and Simplified Chinese reply-language choices for AI analyses,
-  follow-up answers and suggested fixes, defaulting to the dashboard language.
-- Keep routine OpenCode interruptions in the recorded history without showing
-  them as global import warnings.
+- Load OpenCode desktop and Windows exports, including UTF-16 session files
+  with a BOM. Preserve attachments and provider errors in native sessions.
+- Read UTF-16 DeepSeek Harness sessions and preserve subagent discovery in
+  exports containing multibyte text.
+- Count cached tokens and reasoning correctly and handle incomplete telemetry
+  without crashing the Overview or Hotspots views.
+- Keep trajectory loading offline. Scope gateway credentials to the configured
+  connection and mask the active API key after applying settings.
 
 ## [0.4.2] - 2026-11-04
 
