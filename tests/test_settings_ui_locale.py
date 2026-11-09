@@ -44,8 +44,10 @@ def make_settings():
                 provider="openai", base_url="https://active.example.test/v1", api_key="active-private-key",
                 model="active-model", temperature=.2, max_tokens=1024, timeout=30, language="French",
             )
-            shared = SharedState(gr.State([]), gr.State({}), gr.State(False), gr.State("evidence"),
-                                 gr.State(None), gr.State(previous))
+            shared = SharedState(
+                gr.State([]), gr.State({}), gr.State(False), gr.State("evidence"),
+                gr.State(None), gr.State([]), gr.State(previous),
+            )
             sidebar = SimpleNamespace(analysis_chatbot=gr.Chatbot(value=[{"role": "assistant", "content": "old reply"}]),
                                       analysis_input=gr.Textbox(value="draft question"), analysis_status=gr.HTML("ready"))
             overview = SimpleNamespace(issues_html=gr.HTML("recorded issues"))

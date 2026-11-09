@@ -17,7 +17,8 @@ def panel():
     with gr.Blocks(analytics_enabled=False) as app:
         shared = SharedState(
             state_steps=gr.State([]), state_raw=gr.State({}), state_dark=gr.State(False),
-            state_analysis_brief=gr.State(""), state_run=gr.State(None), state_settings=gr.State(None),
+            state_analysis_brief=gr.State(""), state_run=gr.State(None),
+            state_overview_issues=gr.State([]), state_settings=gr.State(None),
         )
         refs = sidebar.layout()
         load_event = gr.Button("Fixture load").click(fn=lambda: None)
@@ -94,7 +95,8 @@ def test_explicit_analyze_is_a_click_using_current_session_settings(panel, selec
     trigger = handlers["on_analyze_trajectory"]
     assert trigger.targets == [(refs.analysis_run._id, "click")]
     assert trigger.inputs[-1] is shared.state_settings
-    assert len(model_events) == 2
+    # Analyze, follow-up ask, and CodeAgent "AI 深入分析" from an Overview issue card.
+    assert len(model_events) == 3
     result = trigger.fn([{"index": 0}], "packed evidence", selected)
     request.assert_called_once_with(
         [{"index": 0}], brief="packed evidence", config=selected.config, language="German",

@@ -26,8 +26,10 @@ class OverviewIssuesTests(unittest.TestCase):
         self.assertIn("overview-issues", html)
         self.assertIn("<details", html)
         self.assertIn("overview-issues-summary", html)
-        self.assertIn("未检测到明显的工作流问题", html)
-        self.assertIn("未检测到问题", html)
+        # Verdict stays Chinese (CodeAgent); panel chrome uses upstream i18n markers.
+        self.assertIn("未检测到明显问题", html)
+        self.assertIn("none detected", html)
+        self.assertIn("No major workflow issues detected", html)
         self.assertNotIn("insight-step-link", html)
         self.assertNotIn("<details class='overview-issues-panel' id='overview-issues' open", html)
 
@@ -42,7 +44,7 @@ class OverviewIssuesTests(unittest.TestCase):
             )
         ])
         self.assertIn("<details class='overview-issues-panel' id='overview-issues' open>", html)
-        self.assertIn("1 个问题", html)
+        self.assertIn("1 issue", html)
         self.assertIn("overview-issue-index", html)
         self.assertIn("#1", html)
         self.assertIn("错误", html)
@@ -149,12 +151,12 @@ class OverviewIssuesTests(unittest.TestCase):
             progress="Suggesting fixes 1/3 — Bash: exit 1 (1×)",
         )
         self.assertIn("overview-issues-progress", html)
-        self.assertIn("思考中…", html)
+        self.assertIn("Thinking…", html)
         self.assertIn("overview-issues-progress-spinner", html)
         self.assertIn("animateTransform", html)
         self.assertIn("currentColor", html)
         self.assertIn("Suggesting fixes 1/3", html)
-        self.assertIn("正在 AI 分析…", html)
+        self.assertIn("suggesting fixes…", html)
         self.assertNotIn("修改位置", html)
 
     def test_step_chips_without_fix_or_change(self):
@@ -239,7 +241,7 @@ class OverviewIssuesTests(unittest.TestCase):
         shown = rank_issues(issues)
         self.assertEqual(len(shown), 12)
         html = render_overview_issues_html(shown)
-        self.assertIn("12 个问题", html)
+        self.assertIn("12 issues", html)
         self.assertNotIn("Show all", html)
         self.assertNotIn("overview-issues-remainder", html)
         for i in range(12):
@@ -399,7 +401,7 @@ class OverviewIssuesTests(unittest.TestCase):
         self.assertIn("搜索浪费", html)
         for i in range(1, len(issues) + 1):
             self.assertIn(f'data-issue-index="{i}"', html)
-        self.assertIn(f"{len(issues)} 个问题", html)
+        self.assertIn(f"{len(issues)} issues", html)
         payload = overview_issues_payload(issues)
         self.assertEqual(len(payload), len(issues))
         self.assertIsNotNone(issue_analysis_question_from_payload(payload, 1))

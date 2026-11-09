@@ -101,6 +101,30 @@ def _issue_action_zh(issue: OverviewIssue) -> str:
     return _ISSUE_ACTION_FALLBACK_ZH.get(issue.kind, "")
 
 
+def _issue_title_html(title: str) -> str:
+    """Mark authored issue title templates while leaving error/file names intact.
+
+    Used by i18n surface tests and any caller that needs English titles with
+    client-side localization. Dashboard cards still go through
+    :func:`_localize_issue_text` for the CodeAgent Chinese presentation.
+    """
+    for pattern, template, names in (
+        (r"Context/cache bottleneck at #(\d+) \(([\d.]+)s\)",
+         "Context/cache bottleneck at #{step} ({seconds}s)", ("step", "seconds")),
+        (r"Inference bottleneck at #(\d+) \(([\d.]+)s\)",
+         "Inference bottleneck at #{step} ({seconds}s)", ("step", "seconds")),
+        (r"Idle/queue bottleneck before #(\d+) \(([\d.]+)s gap\)",
+         "Idle/queue bottleneck before #{step} ({seconds}s gap)", ("step", "seconds")),
+        (r"Tool bottleneck: (.+) \(([\d.]+)s\)",
+         "Tool bottleneck: {tool} ({seconds}s)", ("tool", "seconds")),
+        (r"Failure cascade \((\d+) steps\)",
+         "Failure cascade ({count} steps)", ("count",)),
+    ):
+        if match := re.fullmatch(pattern, title):
+            return ui_text(template, **dict(zip(names, match.groups(), strict=True)))
+    return html.escape(title)
+
+
 def _with_count(label_zh: str, title_en: str) -> str:
     """Keep the English ``(N×)`` suffix from ``issues._count_label`` titles."""
     m = re.search(r" \((\d+)×\)$", title_en)
@@ -862,10 +886,24 @@ def build_run_summary_html(
     return "<div class='ov-run-summary'>" + "".join(rows) + "</div>"
 
 
-def _verdict_banner_html(issues: list[OverviewIssue]) -> str:
+def _verdict_banner_html(
+    issues: list[OverviewIssue], *, limited_evidence: bool = False
+) -> str:
     """One-glance health verdict above the Issues panel: overall status plus
-    the single most important issue in plain language."""
+    the single most important issue in plain language.
+
+    Limited-evidence captures (OTLP / incomplete tool outcomes) must not claim
+    a healthy empty state — the available checks cannot prove the run is clean.
+    """
     if not issues:
+        if limited_evidence:
+            return (
+                "<div class='ov-verdict' style='border-left-color:var(--ov-warn);'>"
+                "<div class='ov-verdict-head' style='color:var(--ov-warn);'>"
+                "⚠ 证据有限</div>"
+                "<div class='ov-verdict-text'>部分工作流检查对此捕获不可用；"
+                "现有证据不能证明运行没有问题。</div></div>"
+            )
         return (
             "<div class='ov-verdict' style='border-left-color:var(--ov-success);'>"
             "<div class='ov-verdict-head' style='color:var(--ov-success);'>"
@@ -938,7 +976,7 @@ def render_overview_issues_html(
             if limited_evidence else "No major workflow issues detected."
         )
         return (
-            _verdict_banner_html(issues)
+            _verdict_banner_html(issues, limited_evidence=limited_evidence)
             + run_summary
             + "<details class='overview-issues-panel' id='overview-issues'>"
             "<summary class='overview-issues-summary'>"
@@ -985,7 +1023,7 @@ def render_overview_issues_html(
             f"{ui_text(hint)}</div>"
         )
     return (
-        _verdict_banner_html(issues)
+        _verdict_banner_html(issues, limited_evidence=limited_evidence)
         + run_summary
         + "<details class='overview-issues-panel' id='overview-issues' open>"
         "<summary class='overview-issues-summary'>"
