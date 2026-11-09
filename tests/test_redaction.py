@@ -124,7 +124,8 @@ class EgressTests(unittest.TestCase):
                 return {"choices": [{"message": {"content": "ok"}}],
                         "content": [{"type": "text", "text": "ok"}]}
 
-        def post(url, json=None, headers=None, timeout=None):
+        def post(url, json=None, headers=None, timeout=None, allow_redirects=True):
+            assert allow_redirects is False
             sent["body"] = json
             sent["headers"] = headers
             return _Resp()

@@ -30,11 +30,30 @@
     "data": {
       "type": "object",
       "required": [
+        "agents",
         "format",
         "has_breakdown",
         "steps"
       ],
       "properties": {
+        "agents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "label"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            }
+          }
+        },
         "format": {
           "type": "string"
         },
@@ -49,6 +68,7 @@
           "items": {
             "type": "object",
             "required": [
+              "agent",
               "cache_read",
               "cache_write",
               "fresh_input",
@@ -61,6 +81,9 @@
               "usable_total"
             ],
             "properties": {
+              "agent": {
+                "type": "string"
+              },
               "cache_read": {
                 "type": [
                   "integer",

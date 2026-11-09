@@ -488,6 +488,40 @@ class AnalysisChatTests(unittest.TestCase):
         self.assertEqual(body["messages"][0], {"role": "system", "content": "SYS"})
         self.assertEqual(body["model"], "demo-model")
 
+    def test_analyze_headers_merge_into_openai_request(self):
+        class FakeResp:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"choices": [{"message": {"content": "ok"}}]}
+
+        cfg = _cfg(extra_headers={
+            "X-HW-ID": "com.huawei.ocean_maas",
+            "X-HW-APPKEY": "app-secret",
+            "Authorization": "Bearer should-not-win",
+        })
+        with patch.object(assistant.requests, "post", return_value=FakeResp()) as post:
+            assistant.complete_chat(cfg, "SYS", [{"role": "user", "content": "q"}])
+        headers = post.call_args.kwargs["headers"]
+        self.assertEqual(headers["X-HW-ID"], "com.huawei.ocean_maas")
+        self.assertEqual(headers["X-HW-APPKEY"], "app-secret")
+        self.assertEqual(headers["Authorization"], "Bearer sk-test")
+
+    def test_resolve_reads_analyze_headers_json(self):
+        env = {
+            "ANALYZE_BASE_URL": "https://api.example.com/v1",
+            "ANALYZE_API_KEY": "sk-x",
+            "ANALYZE_MODEL": "m",
+            "ANALYZE_HEADERS": (
+                '{"X-HW-ID": "com.huawei.ocean_maas", "X-HW-APPKEY": "xxxx"}'
+            ),
+        }
+        with patch.dict(os.environ, env, clear=True):
+            cfg = resolve_analysis_config()
+        self.assertEqual(cfg.extra_headers["X-HW-ID"], "com.huawei.ocean_maas")
+        self.assertEqual(cfg.extra_headers["X-HW-APPKEY"], "xxxx")
+
     def test_anthropic_request_goes_to_the_v1_messages_endpoint(self):
         # The base without /v1, as the official SDKs take it, must not 404 (DeepSeek serves both).
         cfg = _cfg(provider="anthropic", base_url="https://api.deepseek.com/anthropic")
@@ -728,6 +762,8 @@ class AnalysisUiTests(unittest.TestCase):
         self.assertIn("🤖 AI Trajectory Analysis", source)
         self.assertIn("analyze_loaded_trajectory", source)
         self.assertIn("answer_question", source)
+        self.assertIn("tv-issue-ask", source)
+        self.assertIn("on_issue_ask", source)
         self.assertNotIn("suggest_btns", source)
         self.assertNotIn("Where did it go wrong?", source)
         self.assertNotIn("analysis-panel-sub", source)
@@ -738,6 +774,7 @@ class AnalysisUiTests(unittest.TestCase):
         self.assertIn("color-scheme: light", APP_CSS)
         self.assertNotIn("resizable-chart .plotly-graph-div", APP_CSS)
         self.assertIn("max-height: none !important", APP_CSS)
+        self.assertIn(".overview-issue-analyze", APP_CSS)
         self.assertIn("position=\"right\"", source)
         self.assertIn("open=False", source)
         self.assertIn('width="min(560px, calc(100vw - 40px))"', source)
@@ -751,3 +788,5 @@ class AnalysisUiTests(unittest.TestCase):
         self.assertIn("on_trajectory_loaded", source)
         self.assertIn("on_analyze_trajectory", source)
         self.assertIn("analysis_run.click", source)
+        from agent_trajviz.insight import insight as insight_mod
+        self.assertIn("tvAnalyzeIssue", inspect.getsource(insight_mod))

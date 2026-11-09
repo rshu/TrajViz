@@ -590,13 +590,15 @@ const accessible = new Element('button', attributes('aria-label', 3), [new Text(
 const help = new Element('span', attributes('data-help', 3), [new Text('raw help text')]);
 const raw = new Element('span', {title: 'Reference', 'aria-label': 'Reference', 'data-help': 'Reference'},
     [new Text('Reference')]);
+const paired = new Element('span', {'data-tv-i18n': '', 'data-tv-i18n-en': 'Needs attention',
+    'data-tv-i18n-zh': '需要关注'}, [new Text('Needs attention')]);
 const protectedMarkers = ['pre', 'code', 'textarea', 'analysis-chatbot', 'wf-preview'].map(kind => {
     const marker = new Element('span', attributes('title', 3), [new Text('Load complete: 3 steps')]);
     const wrapper = ['pre', 'code', 'textarea'].includes(kind)
         ? new Element(kind, {}, [marker]) : new Element('div', {class: kind}, [marker]);
     return {marker, wrapper};
 });
-const body = new Element('body', {}, [title, accessible, help, raw, ...protectedMarkers.map(item => item.wrapper)]);
+const body = new Element('body', {}, [title, accessible, help, raw, paired, ...protectedMarkers.map(item => item.wrapper)]);
 const document = {body, readyState: 'complete', documentElement: {lang: 'en'},
     createElement: tag => new Element(tag), querySelector: () => null, dispatchEvent: () => {}};
 const window = {__tvTranslations: {[key]: '加载完成：{count} 个步骤', Reference: '参考'}};
@@ -621,13 +623,16 @@ vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), {
 });
 assert.equal(observerOptions.attributes, true);
 assert.equal(JSON.stringify(observerOptions.attributeFilter), JSON.stringify([
-    'data-tv-i18n', 'data-tv-i18n-args', 'data-tv-i18n-en', 'data-tv-i18n-attr',
+    'data-tv-i18n', 'data-tv-i18n-args', 'data-tv-i18n-en', 'data-tv-i18n-zh', 'data-tv-i18n-attr',
     'title', 'aria-label', 'data-help']));
 const settle = () => {
     for (let batch = 0; pending.length && batch < 20; batch++) observerCallback(pending.splice(0));
     assert.equal(pending.length, 0, 'translated attributes must settle without an observer loop');
 };
 window.tvSetLanguage('zh-CN'); settle();
+assert.equal(paired.textContent, '需要关注');
+paired.setAttribute('data-tv-i18n-zh', '需要检查'); settle();
+assert.equal(paired.textContent, '需要检查');
 assert.equal(title.getAttribute('title'), '加载完成：3 个步骤');
 assert.equal(child.textContent, '加载完成：3 个步骤');
 assert.equal(accessible.getAttribute('aria-label'), '加载完成：3 个步骤');
@@ -675,6 +680,7 @@ for (const {marker} of protectedMarkers) {
     assert.equal(marker.textContent, 'Load complete: 3 steps');
 }
 window.tvSetLanguage('en'); settle();
+assert.equal(paired.textContent, 'Needs attention');
 assert.equal(title.getAttribute('title'), 'Load complete: 7 steps');
 assert.equal(child.textContent, 'Reference');
 assert.equal(raw.getAttribute('title'), 'Load complete: 9 steps');

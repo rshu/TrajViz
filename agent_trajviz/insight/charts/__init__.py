@@ -7,6 +7,7 @@ from .activity import (
     build_file_interaction_chart,
     build_plan_timeline_chart,
 )
+from .gantt import build_execution_gantt_chart
 from .label_charts import (
     build_label_action_count_chart,
     build_label_action_duration_chart,
@@ -36,6 +37,7 @@ __all__ = [
     "build_agent_token_chart",
     "build_context_pressure_chart",
     "build_duration_chart",
+    "build_execution_gantt_chart",
     "build_file_interaction_chart",
     "build_label_action_count_chart",
     "build_label_action_duration_chart",

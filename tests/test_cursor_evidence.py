@@ -56,8 +56,8 @@ class CursorEvidenceTests(unittest.TestCase):
         session = session_from_run(run)
         self.assertEqual(session.fruitless_streaks, [])
         html = build_overview_issues_html(session)
-        self.assertIn("limited evidence", html)
-        self.assertNotIn("No major workflow issues detected", html)
+        self.assertIn("证据有限", html)
+        self.assertNotIn("未检测到明显的工作流问题", html)
         self.assertNotIn("Fruitless search streak", html)
 
     def test_confirmed_empty_results_remain_an_observed_fruitless_streak(self):
@@ -103,6 +103,21 @@ class CursorEvidenceTests(unittest.TestCase):
         self.assertEqual(run.metrics["wall_clock"], 4)
         self.assertEqual(wall_clock_fmt(run.metrics), (4, "4s"))
         self.assertIsNone(run.metrics["p95_duration"])
+
+    def test_wall_clock_card_uses_human_duration_for_long_sessions(self):
+        from agent_trajviz.insight.metrics import format_duration_seconds
+
+        self.assertEqual(format_duration_seconds(45), "45s")
+        self.assertEqual(format_duration_seconds(125), "2m 5s")
+        self.assertEqual(format_duration_seconds(3725), "1h 02m")
+        self.assertEqual(wall_clock_fmt({"wall_clock": 5400, "total_duration": 5400}), (5400, "1h 30m"))
+        kpis = build_overview_kpi_html(
+            {"total_steps": 1, "assistant_steps": 1, "user_steps": 0, "tokens": {"total": 0},
+             "p95_duration": 125, "tool_call_count": 0, "tool_fail": 0},
+            "1h 30m",
+        )
+        self.assertIn("1h 30m", kpis)
+        self.assertIn("P95 2m 5s", kpis)
 
     def test_observed_zero_duration_remains_zero(self):
         raw = capture()

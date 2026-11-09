@@ -66,6 +66,7 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
             state_raw=gr.State({}),
             state_analysis_brief=gr.State(""),
             state_run=gr.State(None),
+            state_overview_issues=gr.State([]),
             state_settings=gr.State(None),
         )
 
@@ -184,6 +185,44 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                     btn.setAttribute('aria-label', 'AI Trajectory Analysis');
                     btn.setAttribute('title', 'AI Trajectory Analysis');
                 }
+                window.tvSetGradioText = function (rootSel, value) {
+                    const el = document.querySelector(
+                        rootSel + ' textarea, ' + rootSel + ' input'
+                    );
+                    if (!el) return false;
+                    const proto = el.tagName === 'TEXTAREA'
+                        ? window.HTMLTextAreaElement.prototype
+                        : window.HTMLInputElement.prototype;
+                    const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+                    if (descriptor && descriptor.set) {
+                        descriptor.set.call(el, value);
+                    } else {
+                        el.value = value;
+                    }
+                    el.dispatchEvent(new InputEvent('input', {
+                        bubbles: true, composed: true, inputType: 'insertText', data: null
+                    }));
+                    el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+                    return true;
+                };
+                // Single consumer: the hidden #tv-issue-ask-btn. Cards pass a
+                // 1-based issue index; the server rebuilds the focused question.
+                window.tvAnalyzeIssue = function (issueIndex) {
+                    if (issueIndex == null || issueIndex === '') return;
+                    const sidebar = document.querySelector('#analysis-sidebar');
+                    if (sidebar && !sidebar.classList.contains('open')) {
+                        sidebar.querySelector('.toggle-button')?.click();
+                    }
+                    document.getElementById('analysis-chat-tab-button')?.click();
+                    window.requestAnimationFrame(function () {
+                        const askBtn = document.querySelector(
+                            'button#tv-issue-ask-btn, #tv-issue-ask-btn button'
+                        );
+                        if (askBtn && window.tvSetGradioText('#tv-issue-ask', String(issueIndex))) {
+                            queueMicrotask(() => askBtn.click());
+                        }
+                    });
+                };
                 if (!window.__tvChartUiBound) {
                     window.__tvChartUiBound = true;
                     const ROW = __TV_ROW__, CHROME = __TV_CHROME__, MIN = __TV_MIN__;
@@ -426,12 +465,69 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                         });
                     };
                     /* __TV_BIND_JUMPS_END__ */
+                    /* Click a Token Usage bar -> reveal that step's pre-rendered
+                       token decomposition (one hidden div per step). */
+                    window.tvBindTokenStepExplain = function () {
+                        const root = document.getElementById('token-chart');
+                        if (!root) return;
+                        const gd = root.querySelector('.js-plotly-plot')
+                            || root.querySelector('[data-testid="plotly"]');
+                        if (!gd || typeof gd.on !== 'function') return;
+                        if (gd.__tvTokenExplainHandler && typeof gd.removeListener === 'function') {
+                            gd.removeListener('plotly_click', gd.__tvTokenExplainHandler);
+                        }
+                        const handler = function (data) {
+                            const pt = data && data.points && data.points[0];
+                            if (!pt) return;
+                            const n = Number(pt.x);
+                            if (!Number.isFinite(n)) return;
+                            const panel = document.querySelector('.token-step-explain');
+                            if (!panel) return;
+                            if (panel.__tvShown) panel.__tvShown.style.display = 'none';
+                            const hint = panel.querySelector('.tv-token-hint');
+                            if (hint) hint.style.display = 'none';
+                            const target = panel.querySelector(
+                                '[data-step="' + Math.trunc(n) + '"]'
+                            );
+                            if (target) {
+                                target.style.display = '';
+                                panel.__tvShown = target;
+                            } else {
+                                panel.__tvShown = null;
+                            }
+                        };
+                        gd.__tvTokenExplainHandler = handler;
+                        gd.on('plotly_click', handler);
+                        gd.style.cursor = 'pointer';
+                    };
+                    // Markdown tables (Deep Dive hotspots) link steps as
+                    // #tv-step-N anchors: the client-side markdown sanitizer
+                    // (DOMPurify) strips onclick attributes, so the jump goes
+                    // through this document-level delegation instead. Bound
+                    // once; delegation survives every markdown re-render.
+                    if (!window.__tvStepLinkHandler) {
+                        window.__tvStepLinkHandler = function (e) {
+                            const a = e.target && e.target.closest
+                                ? e.target.closest("a[href^='#tv-step-']") : null;
+                            if (!a) return;
+                            const m = /^#tv-step-(\\d+)$/.exec(
+                                a.getAttribute('href') || ''
+                            );
+                            if (!m) return;
+                            e.preventDefault();
+                            if (typeof window.tvGotoWorkflowStep === 'function') {
+                                window.tvGotoWorkflowStep(Number(m[1]));
+                            }
+                        };
+                        document.addEventListener('click', window.__tvStepLinkHandler);
+                    }
                     let timer = null;
                     const schedule = () => {
                         if (timer) clearTimeout(timer);
                         timer = setTimeout(() => {
                             window.tvExpandFileTimeline();
                             window.tvBindChartWorkflowJumps();
+                            window.tvBindTokenStepExplain();
                         }, 60);
                     };
                     new MutationObserver(schedule).observe(document.documentElement, {

@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import json
 import re
 from bisect import bisect_right
 from collections import Counter
 
+from agent_trajviz.insight.diagnostics import _extract_bash_paths
 from agent_trajviz.insight.formats.common import as_text
 from agent_trajviz.insight.parser import spawned_child_session_id
-from agent_trajviz.insight.shell_cmd import shell_runs_search
+from agent_trajviz.insight.shell_cmd import shell_runs_search, tool_call_hint
+from agent_trajviz.insight.token_explain import (
+    CJK_CHARS_PER_TOKEN,
+    _est_tokens,
+)
 from agent_trajviz.insight.tool_failure import step_has_success, tool_call_failed
 from agent_trajviz.tool_vocab import (
     BASH_TOOL_NAMES,
+    WRITE_PATH_KEYS,
     WRITE_TOOL_NAMES as _WRITE_TOOL_NAMES,
     write_target_path,
 )
@@ -58,7 +65,59 @@ _VALIDATION_COMMAND_PATTERNS = (
     "ruff check", "cargo check", "npm run lint", "pnpm lint", "yarn lint",
     "make lint", "make check", "golangci-lint", "pre-commit run",
     "tsc --noemit", "git diff --check",
+    # Builds compile the code, so they validate it too. Only unambiguous
+    # spellings are listed: a bare "make" is a substring of "cat Makefile".
+    "npm run build", "pnpm build", "yarn build", "cargo build", "go build",
+    "tsc", "cmake --build", "make -j", "ninja",
 )
+
+
+# ``python -m`` modules that install/bootstrap tooling — not a smoke run of
+# the agent's own code.
+_PYTHON_TOOLING_MODULES = frozenset({
+    "pip", "pip3", "venv", "ensurepip", "virtualenv", "build", "installer",
+    "pip._internal", "pip._vendor",
+})
+_PYTHON_VALUE_FLAGS = frozenset({
+    "-W", "-X", "-Q", "--check-hash-based-pycs",
+})
+
+
+def _smoke_runs_command(command: str) -> bool:
+    """True when a shell command executes a project entrypoint.
+
+    Counts ``python3 app.py``, ``python -m pkg.main``, and ``./build/run``.
+    Version probes, bare interpreters, ``-c`` one-liners, and tooling modules
+    (``pip`` / ``venv`` / …) do not count — they never exercise the written code.
+    """
+    lowered = " ".join(str(command).lower().split())
+    if not lowered:
+        return False
+    tokens = lowered.split()
+    first = tokens[0]
+    if first.startswith("./") or first.startswith(".\\"):
+        return True
+    if not first.startswith("python"):
+        return False
+    if "--version" in tokens or "-V" in tokens:
+        return False
+    i = 1
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok == "-c":
+            return False
+        if tok == "-m":
+            if i + 1 >= len(tokens):
+                return False
+            return tokens[i + 1] not in _PYTHON_TOOLING_MODULES
+        if tok in _PYTHON_VALUE_FLAGS:
+            i += 2
+            continue
+        if tok.startswith("-"):
+            i += 1
+            continue
+        return True  # positional script path
+    return False  # bare ``python3``
 
 
 def _is_plan_tool(tool_name: object) -> bool:
@@ -1007,4 +1066,416 @@ def detect_repeated_searches(steps: list[dict]) -> list[dict]:
         })
 
     out.sort(key=lambda r: (-r["count"], r["steps"][0], r["signature"]))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Oversized single tool outputs
+# ---------------------------------------------------------------------------
+
+# A tool result stays in the conversation history, so one oversized output is
+# paid for again on every later step until a compaction drops it. Absolute
+# floor: any single output this big is noise whatever the window size.
+# Relative rule: smaller outputs still hurt when they fill a chunk of the
+# window the agent actually has.
+_OVERSIZED_ABS_TOKENS = 5000
+_OVERSIZED_REL_TOKENS = 2000
+_OVERSIZED_REL_SHARE = 0.15
+_OVERSIZED_MAX_REPORTED = 5
+# All-CJK text yields the most tokens per character; below this length the
+# relative floor (_OVERSIZED_REL_TOKENS) is unreachable, so skip _est_tokens.
+_OVERSIZED_MIN_CHARS = int(_OVERSIZED_REL_TOKENS * CJK_CHARS_PER_TOKEN)
+
+
+def detect_oversized_outputs(steps: list[dict]) -> list[dict]:
+    """Find single tool outputs big enough to tax every later step.
+
+    Flags one output when it estimates to ≥5k tokens, or ≥2k tokens while
+    covering ≥15% of the next step's context occupancy (input + cache read —
+    the prompt the output lands in).
+    Typical sources: whole-file ``cat``, unbounded ``find``, verbose test runs.
+
+    Returns
+    -------
+    list[dict]
+        ``{"step", "tool", "tokens", "share" (int % or None), "title"}``,
+        largest first, capped at ``_OVERSIZED_MAX_REPORTED`` entries.
+    """
+    # Occupancy per step index: the context a step's prompt occupied. A tool
+    # output lands in the *next* prompt, so shares are computed against the
+    # next step that reports tokens, not the step that produced the output.
+    occupancy_by_index: dict[int, int] = {}
+    for s in steps[:_MAX_STEPS]:
+        tokens = s.get("tokens") or {}
+        occupancy = int(tokens.get("input") or 0) + int(tokens.get("cache_read") or 0)
+        if occupancy > 0:
+            occupancy_by_index[int(s.get("index", 0))] = occupancy
+    ordered_indices = sorted(occupancy_by_index)
+
+    def _next_occupancy(index: int) -> int | None:
+        pos = bisect_right(ordered_indices, index)
+        if pos >= len(ordered_indices):
+            return None
+        return occupancy_by_index[ordered_indices[pos]]
+
+    out: list[dict] = []
+    for s in steps[:_MAX_STEPS]:
+        idx = int(s.get("index", 0))
+        for tc in s.get("tool_calls") or []:
+            output = as_text(tc.get("output"))
+            if not output or output == "(no output)":
+                continue
+            if len(output) < _OVERSIZED_MIN_CHARS:
+                continue
+            est = _est_tokens(output)
+            nxt = _next_occupancy(idx)
+            share = round(est / nxt * 100) if nxt else None
+            big_absolute = est >= _OVERSIZED_ABS_TOKENS
+            big_relative = (
+                est >= _OVERSIZED_REL_TOKENS
+                and share is not None
+                and share >= _OVERSIZED_REL_SHARE * 100
+            )
+            if not (big_absolute or big_relative):
+                continue
+            out.append({
+                "step": idx,
+                "tool": str(tc.get("tool_name") or "tool"),
+                "tokens": est,
+                "share": share,
+                "title": str(tc.get("title") or tc.get("tool_name") or "")[:80],
+            })
+
+    out.sort(key=lambda r: (-r["tokens"], r["step"]))
+    return out[:_OVERSIZED_MAX_REPORTED]
+
+
+# ---------------------------------------------------------------------------
+# Blind retries (identical call repeated after a failure)
+# ---------------------------------------------------------------------------
+
+
+def _retry_input_key(tc: dict) -> str:
+    """Comparison key for "the same call": tool name plus normalized input."""
+    inp = tc.get("input")
+    if isinstance(inp, (dict, list)):
+        body = json.dumps(inp, sort_keys=True, default=str, ensure_ascii=False)
+    else:
+        body = as_text(inp)
+    return f"{as_text(tc.get('tool_name'))}:{body}"
+
+
+def detect_blind_retries(steps: list[dict]) -> list[dict]:
+    """Find a failed call retried verbatim — and failing again.
+
+    Only consecutive identical calls count (same tool, same input, nothing in
+    between): that is the agent resubmitting the exact call. A retry that
+    *succeeds* is exempt — transient errors (timeouts, races) deserve one
+    verbatim shot. What is flagged is the wasted pattern: unchanged input in
+    an unchanged environment fails the same way twice.
+
+    Returns
+    -------
+    list[dict]
+        ``{"tool", "attempts", "failed", "steps": [int], "display"}``,
+        one entry per qualifying run.
+    """
+    # Flatten calls in execution order: steps in order, calls within a step.
+    flat: list[tuple[int, dict]] = []
+    for s in steps[:_MAX_STEPS]:
+        idx = int(s.get("index", 0))
+        for tc in s.get("tool_calls") or []:
+            flat.append((idx, tc))
+    keys = [_retry_input_key(tc) for _idx, tc in flat]
+
+    out: list[dict] = []
+    i = 0
+    while i < len(flat):
+        key = keys[i]
+        j = i + 1
+        while j < len(flat) and keys[j] == key:
+            j += 1
+        run = flat[i:j]
+        if len(run) >= 2:
+            failures = [k for k, (_idx, tc) in enumerate(run) if tool_call_failed(tc)]
+            # First attempt failed and at least one verbatim retry failed too.
+            if failures and failures[0] == 0 and len(failures) >= 2:
+                tc0 = run[0][1]
+                display = (
+                    as_text(tc0.get("title"))
+                    or tool_call_hint(tc0)
+                    or key
+                )[:80]
+                out.append({
+                    "tool": as_text(tc0.get("tool_name")) or "tool",
+                    "attempts": len(run),
+                    "failed": len(failures),
+                    "steps": sorted({idx for idx, _tc in run}),
+                    "display": display,
+                })
+        i = j
+
+    out.sort(key=lambda r: (-r["attempts"], r["steps"][0]))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# User repeated messages
+# ---------------------------------------------------------------------------
+
+
+def _user_typed_text(step: dict) -> str:
+    """The text a human actually typed.
+
+    Frameworks inject synthetic user messages (e.g. OpenCode's
+    "Continue if you have next steps..." after compaction). Those parts are
+    marked ``synthetic`` and must not count as the user speaking.
+    """
+    saw_text_part = False
+    for p in step.get("parts") or []:
+        if not isinstance(p, dict) or p.get("type") != "text":
+            continue
+        saw_text_part = True
+        if p.get("synthetic"):
+            continue
+        text = as_text(p.get("text"))
+        if text:
+            return text
+    if saw_text_part:
+        return ""  # synthetic-/empty-only: the framework, not the user
+    return as_text(step.get("text_preview"))
+
+
+def detect_user_repeats(steps: list[dict]) -> list[dict]:
+    """Find user messages sent verbatim two or more times.
+
+    The exact same text re-sent is the most direct evidence available that the
+    previous attempt did not satisfy the user — no inference required. Only
+    whitespace is normalized (line wraps and indentation should not hide a
+    repeat); anything else — "继续" vs "请继续" — is a different message and
+    stays out, keeping the rule explainable in one sentence. Synthetic
+    (framework-injected) messages never count as the user speaking.
+
+    Returns
+    -------
+    list[dict]
+        ``{"message", "count", "steps": [int]}``, most repeated first.
+    """
+    by_message: dict[str, list[int]] = {}
+    for s in steps[:_MAX_STEPS]:
+        if s.get("role") != "user":
+            continue
+        text = re.sub(r"\s+", " ", _user_typed_text(s)).strip()
+        if not text:
+            continue
+        by_message.setdefault(text, []).append(int(s.get("index", 0)))
+
+    out = [
+        {"message": text, "count": len(idxs), "steps": sorted(idxs)}
+        for text, idxs in by_message.items()
+        if len(idxs) >= 2
+    ]
+    out.sort(key=lambda r: (-r["count"], r["steps"][0]))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Code changes without any validation
+# ---------------------------------------------------------------------------
+
+# Only writes to code files count: a session that edits docs or config has
+# nothing a test run would catch, so flagging it would be noise.
+_CODE_EXTENSIONS = (
+    ".py", ".pyi", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+    ".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".hh",
+    ".java", ".go", ".rs", ".rb", ".php", ".cs", ".swift",
+    ".kt", ".kts", ".scala", ".sh", ".bash", ".vue", ".svelte",
+    ".m", ".mm", ".sql",
+)
+
+
+def detect_unvalidated_writes(steps: list[dict]) -> list[dict]:
+    """Code files written by write tools while nothing checked the result.
+
+    Flags a session whose write tools successfully changed code files but in
+    which no shell command ran a test/build/lint (the
+    ``_VALIDATION_COMMAND_PATTERNS`` whitelist) or executed the program
+    itself (``python3 app.py`` — a smoke run checks the result too). Writes
+    through shell redirection (``sed -i``, ``echo >``) are not counted — the
+    rule stays "write tools touched code, nothing checked the result".
+
+    Returns
+    -------
+    list[dict]
+        ``{"files", "steps": [int]}`` — one entry, or empty when the run is
+        clean (no code writes, or validation ran at least once).
+    """
+    write_steps: list[int] = []
+    paths: set[str] = set()
+    for s in steps[:_MAX_STEPS]:
+        idx = int(s.get("index", 0))
+        for tc in s.get("tool_calls") or []:
+            name = as_text(tc.get("tool_name"))
+            inp = tc.get("input")
+            if name in _WRITE_TOOL_NAMES:
+                if tool_call_failed(tc):
+                    continue
+                path = write_target_path(inp if isinstance(inp, dict) else {})
+                if path and path.lower().endswith(_CODE_EXTENSIONS):
+                    write_steps.append(idx)
+                    paths.add(path)
+            elif isinstance(inp, dict):
+                command = as_text(inp.get("command"))
+                if _is_validation_command(command) or _smoke_runs_command(command):
+                    return []
+
+    if not write_steps:
+        return []
+    return [{"files": len(paths), "steps": sorted(set(write_steps))}]
+
+
+# ---------------------------------------------------------------------------
+# Redundant re-reads (same file, same range, nothing changed in between)
+# ---------------------------------------------------------------------------
+
+# WebFetch is excluded: a URL's content can change behind the agent's back,
+# so re-fetching is never provably redundant.
+_FILE_READ_TOOLS = _READ_TOOL_NAMES - {"WebFetch"}
+
+# Shell rewrites that change file content without going through write tools.
+# Mirrors the Codex / converge in-place edit recognition (sed -i, redirects).
+_SED_IN_PLACE_RE = re.compile(r"(?:^|\s)(?:-i\S*|--in-place\b)")
+_AWK_IN_PLACE_RE = re.compile(r"(?:^|\s)(?:-i\s+inplace\b|--in-place\b)")
+_SHELL_REDIRECT_WRITE_RE = re.compile(
+    r"(?:^|[;&|]\s*)(?:cat|echo|printf)\b[^;&|]*?(?:>>|>)",
+    re.IGNORECASE,
+)
+
+
+def _is_compaction_step(step: dict) -> bool:
+    """True when this step is (or contains) a compaction checkpoint."""
+    if step.get("is_compaction_checkpoint") or step.get("role") == "compaction":
+        return True
+    return any(
+        isinstance(p, dict) and p.get("type") == "compaction"
+        for p in (step.get("parts") or [])
+    )
+
+
+def _shell_rewrite_paths(command: str) -> list[str] | None:
+    """Paths a bash command rewrote, or ``None`` if it is not a rewrite.
+
+    Returns an empty list when the command looks like a rewrite but no path
+    tokens could be extracted — callers should invalidate every live read in
+    that conversation rather than keep false-positive re-reads.
+    """
+    text = str(command or "")
+    if not text.strip():
+        return None
+    lowered = text.lower()
+    is_rewrite = False
+    if "sed" in lowered and _SED_IN_PLACE_RE.search(text) or ("awk" in lowered or "gawk" in lowered) and _AWK_IN_PLACE_RE.search(text) or "tee " in lowered or "git apply" in lowered or "patch " in lowered or _SHELL_REDIRECT_WRITE_RE.search(text):
+        is_rewrite = True
+    if not is_rewrite:
+        return None
+    return _extract_bash_paths(text)
+
+
+def _paths_match_rewrite(tracked: str, rewritten: str) -> bool:
+    """True when a tracked read path is the same file a shell rewrite touched."""
+    a = tracked.replace("\\", "/").rstrip("/")
+    b = rewritten.replace("\\", "/").rstrip("/")
+    if not a or not b:
+        return False
+    return a == b or a.endswith("/" + b) or b.endswith("/" + a)
+
+
+def _invalidate_reads(
+    last_valid: dict[str, dict[str, dict[str, int]]],
+    conv: str,
+    path: str | None,
+) -> None:
+    """Drop live read signatures for *path*, or the whole conversation if None."""
+    if path is None:
+        last_valid.pop(conv, None)
+        return
+    by_path = last_valid.get(conv)
+    if by_path is None:
+        return
+    if path in by_path:
+        by_path.pop(path, None)
+        return
+    for tracked in [p for p in by_path if _paths_match_rewrite(p, path)]:
+        by_path.pop(tracked, None)
+
+
+def detect_redundant_re_reads(steps: list[dict]) -> list[dict]:
+    """The same file read again while nothing could have changed it.
+
+    A re-read is redundant only when, since the previous read of the *same
+    path with the same parameters* (offset/limit — a different range is
+    different content) *in the same conversation*, no successful write
+    touched the file (write tool *or* shell rewrite like ``sed -i`` /
+    redirects) and no compaction dropped it from context. Sub-agents hold
+    separate contexts, so their reads are judged independently. Those events
+    are exactly the cases where re-reading is justified, which keeps this
+    card the honest opposite of the post-compaction thin-read signal.
+
+    Returns
+    -------
+    list[dict]
+        ``{"path", "count", "steps": [int]}`` per path, most redundant first.
+    """
+    # Nested so invalidation is O(signatures for that path), not O(all).
+    # conversation -> path -> params-json -> last still-valid read step.
+    last_valid: dict[str, dict[str, dict[str, int]]] = {}
+    rows: dict[str, dict] = {}
+    for s in steps[:_MAX_STEPS]:
+        conv = as_text(s.get("session_id"))
+        if _is_compaction_step(s):
+            last_valid.pop(conv, None)
+            continue
+        idx = int(s.get("index", 0))
+        for tc in s.get("tool_calls") or []:
+            name = as_text(tc.get("tool_name"))
+            inp = tc.get("input")
+            inp = inp if isinstance(inp, dict) else {}
+            if name in _WRITE_TOOL_NAMES:
+                if tool_call_failed(tc):
+                    continue
+                path = write_target_path(inp)
+                if path:
+                    _invalidate_reads(last_valid, conv, path)
+            elif name in BASH_TOOL_NAMES:
+                if tool_call_failed(tc):
+                    continue
+                rewritten = _shell_rewrite_paths(as_text(inp.get("command")))
+                if rewritten is None:
+                    continue
+                if not rewritten:
+                    # Rewrite shape, unknown target — drop all live reads.
+                    _invalidate_reads(last_valid, conv, None)
+                else:
+                    for path in rewritten:
+                        _invalidate_reads(last_valid, conv, path)
+            elif name in _FILE_READ_TOOLS:
+                path = write_target_path(inp)
+                if not path:
+                    continue
+                params = json.dumps(
+                    {k: v for k, v in inp.items() if k not in WRITE_PATH_KEYS},
+                    sort_keys=True,
+                    default=str,
+                )
+                by_params = last_valid.setdefault(conv, {}).setdefault(path, {})
+                if params in by_params:
+                    row = rows.setdefault(
+                        path, {"path": path, "count": 0, "steps": []}
+                    )
+                    row["count"] += 1
+                    row["steps"].append(idx)
+                by_params[params] = idx
+
+    out = list(rows.values())
+    out.sort(key=lambda r: (-r["count"], r["steps"][0]))
     return out

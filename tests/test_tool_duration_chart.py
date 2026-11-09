@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import unittest
 
-from agent_trajviz.insight.charts.usage import build_tool_duration_chart
+from agent_trajviz.insight.charts._layout import _fmt_duration
+from agent_trajviz.insight.charts.usage import (
+    _tool_duration_axis_max,
+    build_tool_duration_chart,
+)
 from agent_trajviz.insight.palette import SESSION_COLORS
 
 
@@ -66,8 +70,8 @@ class ToolDurationChartTests(unittest.TestCase):
         for trace in fig.data:
             by_tool.setdefault(trace.y[0], []).append(trace)
 
-        self.assertEqual(set(by_tool), {"Read", "git", "run_eval.py"})
-        read = by_tool["Read"]
+        self.assertEqual(set(by_tool), {"Read (2×)", "git (1×)", "run_eval.py (1×)"})
+        read = by_tool["Read (2×)"]
         self.assertEqual(len(read), 2)
         bases = sorted(float(t.base[0]) for t in read)
         self.assertEqual(bases, [0.0, 1.0])
@@ -75,9 +79,11 @@ class ToolDurationChartTests(unittest.TestCase):
         self.assertEqual(steps, {0, 3})
         for trace in fig.data:
             self.assertIn("Step %{customdata}", trace.hovertemplate)
-            # Bake segment secs into the template — %{x} with base is cumulative end.
-            self.assertRegex(trace.hovertemplate, r"<br>\d+\.\d+s")
+            # Bake human duration into the template — %{x} with base is cumulative end.
+            self.assertRegex(trace.hovertemplate, r"<br>\d+(?:\.\d+)?s")
             self.assertNotIn("%{x", trace.hovertemplate)
+        labels = {ann.text.strip() for ann in fig.layout.annotations}
+        self.assertTrue(any("1.5s" in label or "2s" in label for label in labels))
 
     def test_windows_python_exe_labels_script_basename(self):
         fig = build_tool_duration_chart([
@@ -92,7 +98,7 @@ class ToolDurationChartTests(unittest.TestCase):
                 ),
             ]),
         ])
-        self.assertEqual({t.y[0] for t in fig.data}, {"main.py"})
+        self.assertEqual({t.y[0] for t in fig.data}, {"main.py (1×)"})
 
     def test_cmd_c_labels_inner_command(self):
         fig = build_tool_duration_chart([
@@ -100,7 +106,7 @@ class ToolDurationChartTests(unittest.TestCase):
                 _tc("Bash", ms=3000, command='cmd /c "timeout /t 300 /nobreak"'),
             ]),
         ])
-        self.assertEqual({t.y[0] for t in fig.data}, {"timeout"})
+        self.assertEqual({t.y[0] for t in fig.data}, {"timeout (1×)"})
 
     def test_powershell_command_labels_inner_cmdlet(self):
         fig = build_tool_duration_chart([
@@ -112,7 +118,7 @@ class ToolDurationChartTests(unittest.TestCase):
                 ),
             ]),
         ])
-        self.assertEqual({t.y[0] for t in fig.data}, {"start-sleep"})
+        self.assertEqual({t.y[0] for t in fig.data}, {"start-sleep (1×)"})
 
     def test_missing_index_falls_back_to_enumerate(self):
         steps = [
@@ -150,9 +156,27 @@ class ToolDurationChartTests(unittest.TestCase):
             ]),
         ])
         labels = {t.y[0] for t in fig.data}
-        self.assertEqual(labels, {"Read", "git"})
-        self.assertNotIn("task", labels)
-        self.assertNotIn("Agent", labels)
+        self.assertEqual(labels, {"Read (1×)", "git (1×)"})
+        self.assertTrue(all("task" not in label for label in labels))
+        self.assertTrue(all("Agent" not in label for label in labels))
+
+    def test_soft_caps_axis_when_one_tool_dominates(self):
+        fig = build_tool_duration_chart([
+            _step(0, tools=[_tc("Read", ms=1_000)]),
+            _step(1, tools=[_tc("Bash", ms=600_000, command="sleep 600")]),
+        ])
+        # Runner-up is 1s → soft max 2s; long bar is clipped and annotated.
+        self.assertAlmostEqual(fig.layout.xaxis.range[1], 2.0 * 1.02, places=5)
+        texts = [ann.text for ann in fig.layout.annotations]
+        self.assertTrue(any("10m" in text and "→" in text for text in texts))
+        self.assertEqual(_tool_duration_axis_max([1.0, 600.0]), 2.0)
+        self.assertEqual(_tool_duration_axis_max([10.0, 20.0]), 20.0)
+
+    def test_human_duration_labels(self):
+        self.assertEqual(_fmt_duration(0.5), "0.5s")
+        self.assertEqual(_fmt_duration(45), "45s")
+        self.assertEqual(_fmt_duration(125), "2m 5s")
+        self.assertEqual(_fmt_duration(3725), "1h 02m")
 
 
 if __name__ == "__main__":

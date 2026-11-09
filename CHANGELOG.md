@@ -9,11 +9,26 @@ change the public API (the names exported from `agent_trajviz`).
 
 ### Added
 
+- Load CodeAgent session exports (`session` + `child_sessions` with
+  data-wrapped messages and parts), including parent/child hierarchy, tools,
+  reasoning, tokens and timing.
 - Switch the dashboards between English and Simplified Chinese, remembering
   the browser's choice while preserving loaded trajectories and session settings.
+- Use **Suggest fixes with LLM** to summarize a run and suggest fixes for
+  ranked issues, or **Analyze issue with AI** for a focused follow-up.
+
+### Changed
+
+- Group related Overview issues and collapse duplicate failure cascades.
 
 ### Fixed
 
+- OpenCode desktop and Windows session exports (flat `type` / `text` / `content`
+  messages, directory under `location`) load as turns. Workflow steps keep
+  their text, tokens, model, and timing. `idle` heartbeats are omitted.
+  SQLite consolidator exports (`info` + `parts`) are unchanged.
+- Session files saved by Windows PowerShell (`Out-File` / `Set-Content`,
+  UTF-16 with a BOM) load. A `0xFF` byte that is not that BOM is still rejected.
 - Translate comparison scorecards, coverage tables, explanations and chart
   labels consistently, including results refreshed after switching languages.
 - Preserve readable badge and status colors when switching dashboard languages.

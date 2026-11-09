@@ -10,6 +10,7 @@ import re
 from typing import Any
 
 from ...errors import LoadError
+from .common import decode_session_text
 from .parse import _normalize_payload, _parse_trajectory_text
 
 _GENERATION = re.compile(r"session(?:\.v([1-9][0-9]*))?\.jsonl(?:\.zstd)?\Z")
@@ -95,9 +96,10 @@ def decode_dsh_native_bytes(data: bytes, path: str) -> bytes:
 def native_events(data: bytes, path: str) -> list[dict[str, Any]]:
     decoded = decode_dsh_native_bytes(data, path)
     try:
-        payload, error = _parse_trajectory_text(decoded.decode("utf-8-sig"), path.removesuffix(".zstd"))
+        payload, error = _parse_trajectory_text(decode_session_text(decoded), path.removesuffix(".zstd"))
     except UnicodeDecodeError:
-        raise LoadError("DeepSeek session is not UTF-8 JSONL", code="invalid_json", path=path) from None
+        raise LoadError("DeepSeek session is not UTF-8 or BOM-marked UTF-16 JSONL",
+                        code="invalid_json", path=path) from None
     if error:
         raise LoadError(error, code="invalid_json", path=path)
     events = _normalize_payload(payload, path.removesuffix(".zstd"))

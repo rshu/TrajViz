@@ -1,10 +1,9 @@
-"""The LLM surfaces must never send trajectory content without a user action.
+"""Model requests require an explicit action in the dashboard.
 
 TrajViz is offline-by-default analytics over traces that routinely contain
-source code, absolute local paths, shell commands and customer data. Any
-outbound LLM call therefore needs an explicit, declinable user action. These
-tests read the real Gradio dependency graph of the built dashboard rather than
-source text, so a future rewiring cannot slip past them.
+source code, absolute local paths, shell commands and customer data. These
+tests inspect the dashboard's actual Gradio callbacks, including those chained
+to trajectory loads.
 """
 
 import unittest
@@ -25,32 +24,30 @@ def _deps_for(demo, fn_name):
 
 
 class IssuesJudgeOptInTests(unittest.TestCase):
-    """The Overview Issues LLM judge is opt-in (regression: auto-fired on load)."""
+    """Loading a trajectory leaves the Overview judge idle."""
 
     @classmethod
     def setUpClass(cls):
         cls.demo = build_ui()
 
-    def test_judge_is_bound_exactly_once(self):
-        self.assertEqual(len(_deps_for(self.demo, "on_suggest_fixes")), 1)
+    def test_judge_is_only_bound_to_an_explicit_click(self):
+        deps = _deps_for(self.demo, "on_suggest_fixes")
+        events = [event for bf in deps for _block_id, event in bf.targets]
+        self.assertEqual(events, ["click"])
 
-    def test_judge_is_never_chained_to_a_load_event(self):
-        # `.then(...)` on the load events is what made every opened file ship
-        # trajectory excerpts to a third-party endpoint with no consent.
-        for bf in _deps_for(self.demo, "on_suggest_fixes"):
-            events = [event for _block_id, event in bf.targets]
-            self.assertNotIn("then", events)
-            self.assertEqual(set(events), {"click"})
-
-    def test_judge_trigger_is_a_button_that_names_the_egress(self):
+    def test_judge_button_names_the_egress(self):
         blocks = self.demo.blocks
+        click_triggers = []
         for bf in _deps_for(self.demo, "on_suggest_fixes"):
-            for block_id, _event in bf.targets:
-                trigger = blocks[block_id]
-                self.assertIsInstance(trigger, gr.Button)
-                label = (trigger.value or "").lower()
-                self.assertIn("llm", label)
-                self.assertIn("sends", label)
+            for block_id, event in bf.targets:
+                if event == "click":
+                    click_triggers.append(blocks[block_id])
+        self.assertTrue(click_triggers, "expected a click binding for re-run")
+        for trigger in click_triggers:
+            self.assertIsInstance(trigger, gr.Button)
+            label = (trigger.value or "").lower()
+            self.assertIn("llm", label)
+            self.assertIn("sends", label)
 
 
 class SidebarAnalysisOptInTests(unittest.TestCase):

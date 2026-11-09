@@ -11,6 +11,7 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
+from .common import decode_session_text
 from .parse import _normalize_payload, _parse_trajectory_text
 from .sniff import _looks_like_claude_code_events
 
@@ -66,7 +67,7 @@ def _session_id(events: list) -> str:
 
 def _events_from_bytes(data: bytes, label: str) -> tuple[list, str | None]:
     try:
-        text = data.decode("utf-8-sig")
+        text = decode_session_text(data)
         payload, error = _parse_trajectory_text(text, label)
         if error:
             return [], error

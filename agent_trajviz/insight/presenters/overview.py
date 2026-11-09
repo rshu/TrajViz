@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING
 
 import plotly.graph_objects as go
 
-from ...i18n import text as ui_text
+from ...i18n import paired_text, text as ui_text
 from ..formats.common import as_text
-from ..context_usage import PRESSURE_ALL_AGENTS
+from ..context_usage import PRESSURE_ALL_AGENTS, _explicit_compaction_events, step_context_occupancy
 from ..formatting import (
     format_banner_html,
     format_behavioral_md,
@@ -20,37 +20,66 @@ from ..formatting import (
     _build_hotspots_md,
     _build_per_message_md,
 )
-from ..help import HELP_TEXT
+from ..help import HELP_TEXT, SECTION_GUIDES, SECTION_GUIDES_EN
 from ..loaders import tokens_are_estimates
 from ...plugins import format_label
-from ..metrics import extract_agent_info
+from ..metrics import extract_agent_info, format_duration_seconds
 from ..palette import AGENT_COLORS
+from ..parser import step_token_segments, usable_token_count
 from ..rendering import (
     build_root_cause_html,
     render_agent_summary_cards,
 )
+from ..charts import build_execution_gantt_chart
 from .issues import (
     ISSUE_KIND_COLORS,
     OverviewIssue,
+    _fmt_k,
     build_overview_issues_html,
-    collect_overview_issues,
-    rank_issues,
+    overview_issues_payload,
+    prepare_overview_issues,
 )
 
 from ..session import MAX_STEPS, LoadedSession
+from ..telemetry_quality import field_observed
 
 if TYPE_CHECKING:
     from ...api import Trajectory
-
 
 
 def _rate_text(rate: float | None) -> str:
     """A percentage for a KPI card, or "n/a" when there is nothing to rate."""
     return f"{rate}%" if isinstance(rate, (int, float)) else "n/a"
 
+
 def trajectory_format_label(fmt: str | None) -> str:
     """Return a human-readable trajectory format label (registered formats included)."""
     return format_label(fmt) if fmt else "Unknown"
+
+
+def render_section_guide(section: str) -> str:
+    """Header for an Overview Contents section: summary line plus a hover/focus
+    panel describing each chart and a debugging example."""
+    guide, guide_zh = SECTION_GUIDES_EN[section], SECTION_GUIDES[section]
+    charts = "".join(
+        "<li class='section-guide-chart'>"
+        f"<span class='section-guide-chart-name'>{paired_text(name, name_zh)}</span>"
+        f"{paired_text(': ' + desc, '：' + desc_zh)}</li>"
+        for (name, desc), (name_zh, desc_zh) in zip(guide.charts, guide_zh.charts, strict=True)
+    )
+    return (
+        "<div class='section-guide'>"
+        f"<span class='section-guide-summary'>{paired_text(guide.summary, guide_zh.summary)}</span>"
+        "<div class='section-guide-tip' tabindex='0'>"
+        f"<span class='section-guide-trigger'>{paired_text('ⓘ Charts and debugging example', 'ⓘ 图表说明与调试示例')}</span>"
+        "<div class='section-guide-pop' role='tooltip'>"
+        "<div class='section-guide-panel'>"
+        f"<div class='section-guide-heading'>{paired_text('Charts', '本页图表')}</div>"
+        f"<ul class='section-guide-charts'>{charts}</ul>"
+        f"<div class='section-guide-heading'>{paired_text('Debugging example', '调试示例')}</div>"
+        f"<p class='section-guide-example'>{paired_text(guide.example, guide_zh.example)}</p>"
+        "</div></div></div></div>"
+    )
 
 
 def _build_sparkline_svg(values: list[float], width: int = 100, height: int = 20) -> str:
@@ -128,6 +157,7 @@ def _build_session_detail_html(
 
 _ISSUE_KIND_LABELS = (
     ("error", "error"),
+    ("risk", "risk"),
     ("antipattern", "pattern"),
     ("bottleneck", "bottleneck"),
 )
@@ -282,7 +312,11 @@ def build_overview_kpi_html(
         throughput_sub += " · " + ui_text("{timed}/{total} timed", timed=timed_steps, total=throughput_steps)
 
     p95 = metrics.get("p95_duration")
-    p95_sub = ui_text("P95 {seconds}s", seconds=p95) if isinstance(p95, (int, float)) else "P95 N/A"
+    p95_sub = (
+        f"P95 {format_duration_seconds(p95)}"
+        if isinstance(p95, (int, float)) and not isinstance(p95, bool)
+        else "P95 N/A"
+    )
     user_steps = metrics.get("user_steps", 0)
     agent_breakdown = _agent_steps_breakdown(agent_summaries)
     cards = [
@@ -393,7 +427,80 @@ def build_summary_outputs(session: LoadedSession) -> dict:
     }
 
 
-def build_overview_outputs(session: LoadedSession, *, workflow_links: bool = True) -> dict:
+def build_token_summary_html(session: LoadedSession) -> str:
+    """One-line takeaway above the Token Usage chart: cache hit rate, tokens
+    dropped by compaction, the biggest step, and the peak context — the
+    numbers that used to need a bar click to see.
+
+    Every value is generated (counts, percentages); no export text enters, so
+    the line needs no escaping.
+    """
+    steps = session.steps
+    if not steps:
+        return ""
+    cache_read = fresh = peak = 0
+    max_total = 0
+    max_idx = None
+    prompt_covered = True
+    total_covered = True
+    for i, s in enumerate(steps):
+        if s.get("role") != "assistant" or s.get("is_compaction_checkpoint"):
+            continue
+        tokens = s.get("tokens") or {}
+        if all(field_observed(s, f"tokens.{field}") and usable_token_count(tokens.get(field, 0)) is not None
+               for field in ("input", "cache_read", "cache_write")):
+            segments = step_token_segments(tokens)
+            if segments["reading"] == "total_only":
+                prompt_covered = False
+            else:
+                cache_read += segments["cache_read"]
+                fresh += segments["fresh"] + segments["cache_write"]
+                peak = max(peak, step_context_occupancy(s)["occupancy"])
+        else:
+            prompt_covered = False
+        total = usable_token_count(tokens.get("total", 0)) if field_observed(s, "tokens.total") else None
+        if total is None:
+            total_covered = False
+        elif total > max_total:
+            max_total = total
+            max_idx = i
+
+    parts = []
+    if prompt_covered and cache_read + fresh > 0:
+        pct = round(cache_read / (cache_read + fresh) * 100)
+        parts.append(paired_text(
+            f"{pct}% cache hit ({_fmt_k(cache_read)} cached / {_fmt_k(fresh)} fresh)",
+            f"缓存命中 {pct}%（命中 {_fmt_k(cache_read)} / 新算 {_fmt_k(fresh)}）",
+        ))
+    compactions = _explicit_compaction_events(steps)
+    if compactions:
+        dropped = sum(int(e.get("dropped") or 0) for e in compactions)
+        if dropped > 0:
+            parts.append(paired_text(
+                f"{_fmt_k(dropped)} tokens dropped ({len(compactions)} compactions)",
+                f"压缩丢弃 {_fmt_k(dropped)} token（{len(compactions)} 次）",
+            ))
+        else:
+            parts.append(paired_text(f"{len(compactions)} compactions", f"压缩 {len(compactions)} 次"))
+    if total_covered and max_idx is not None and max_total > 0:
+        parts.append(paired_text(
+            f"Largest step: {_fmt_k(max_total)} tokens (step {max_idx})",
+            f"最大单步 {_fmt_k(max_total)}（第 {max_idx} 步）",
+        ))
+    if prompt_covered and peak > 0:
+        parts.append(paired_text(f"Peak context: {_fmt_k(peak)} tokens", f"上下文峰值 {_fmt_k(peak)}"))
+    if not parts:
+        return ""
+    return (
+        "<div class='token-summary-line'>"
+        + "<span class='token-summary-sep'> · </span>".join(
+            f"<span>{p}</span>" for p in parts
+        )
+        + "</div>"
+    )
+
+
+def build_overview_outputs(session: LoadedSession, *, ai_pending: bool = False, workflow_links: bool = True) -> dict:
     """Compute overview-related outputs: banner, KPI, metadata, and metrics markdown."""
     steps = session.steps
     raw = session.raw
@@ -403,7 +510,7 @@ def build_overview_outputs(session: LoadedSession, *, workflow_links: bool = Tru
     wfmt = session.wall_clock
 
     summary = build_summary_outputs(session)
-    ranked_issues = rank_issues(collect_overview_issues(session))
+    ranked_issues = prepare_overview_issues(session)
     kpi_html = build_overview_kpi_html(
         metrics,
         wfmt,
@@ -413,11 +520,14 @@ def build_overview_outputs(session: LoadedSession, *, workflow_links: bool = Tru
         agent_summaries=session.agent_summaries,
         tokens_estimated=tokens_are_estimates(session.raw),
     )
-    issues_html = build_overview_issues_html(session, issues=ranked_issues, workflow_links=workflow_links)
+    issues_html = build_overview_issues_html(
+        session, issues=ranked_issues, ai_pending=ai_pending, workflow_links=workflow_links,
+    )
+    issues_payload = overview_issues_payload(ranked_issues)
     metrics_text = format_performance_md(metrics, wfmt)
 
     behavior_text = format_behavioral_md(metrics, diag_metrics=session.diagnostic_metrics)
-    hotspots_text = _build_hotspots_md(message_rows)
+    hotspots_text = _build_hotspots_md(message_rows, steps=steps)
     per_message_text = _build_per_message_md(message_rows)
 
     def _d(k):
@@ -436,6 +546,7 @@ def build_overview_outputs(session: LoadedSession, *, workflow_links: bool = Tru
         **summary,
         "kpi_html": kpi_html,
         "issues_html": issues_html,
+        "issues_payload": issues_payload,
         "session_detail": session_detail,
         "metrics_text": metrics_text,
         "behavior_text": behavior_text,
@@ -478,7 +589,11 @@ CHART_VIEWS = {
 def build_chart_outputs(session: LoadedSession, dark: bool = False, *, workflow_links: bool = True) -> dict:
     """Build Overview chart figures, each from the session's public view."""
     charts = {slot: view_figure(session, view_id, dark=dark) for slot, view_id in CHART_VIEWS.items()}
-    return {**charts, "agent_cards_html": render_agent_summary_cards(session.agent_summaries, workflow_links=workflow_links)}
+    return {
+        **charts,
+        "gantt_fig": build_execution_gantt_chart(session.steps, dark=dark) or empty_plotly_fig(),
+        "agent_cards_html": render_agent_summary_cards(session.agent_summaries, workflow_links=workflow_links),
+    }
 
 
 def build_diagnostics_outputs(session: LoadedSession, dark: bool = False, *, workflow_links: bool = True) -> dict:

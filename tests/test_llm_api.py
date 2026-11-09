@@ -34,7 +34,8 @@ def _fake_post(reply: str, sent: list):
         def json(self):
             return {"choices": [{"message": {"content": reply}}]}
 
-    def post(url, json=None, headers=None, timeout=None):
+    def post(url, json=None, headers=None, timeout=None, allow_redirects=True):
+        assert allow_redirects is False
         sent.append(json)
         return _Resp()
 

@@ -12,7 +12,7 @@ from datetime import datetime, UTC
 from typing import Any
 
 from ...errors import LoadError
-from .common import as_text
+from .common import as_text, decode_session_text
 from .parse import _JSONL_LINE_RE, _normalize_payload, _parse_trajectory_text
 
 # DeepSeek Harness tools are lowercase with JSON-string arguments. Map them
@@ -681,8 +681,10 @@ def _dsh_export_dir_names(session_id: str) -> list[str]:
 def _dsh_jsonl_session_id(path: str) -> str:
     """Session id from the first JSONL line, or empty if it is not a DSH header."""
     try:
-        with open(path, encoding="utf-8-sig") as handle:
-            line = handle.readline()
+        with open(path, "rb") as handle:
+            encoding = "utf-16" if handle.peek(2).startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8-sig"
+            with io.TextIOWrapper(handle, encoding=encoding) as text:
+                line = text.readline(65536)
         payload = json.loads(line)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
         return ""
@@ -789,7 +791,7 @@ def _dsh_read_event_list(path: str, *, source_hashes: dict[str, str] | None = No
 
         with open(path, "rb") as handle:
             data = handle.read()
-        text = decode_dsh_native_bytes(data, path).decode("utf-8-sig")
+        text = decode_session_text(decode_dsh_native_bytes(data, path))
         if source_hashes is not None:
             source_hashes[path] = hashlib.sha256(data).hexdigest()
     except (OSError, UnicodeDecodeError, LoadError) as exc:
@@ -1214,7 +1216,7 @@ def _parse_zip_member_events(archive: zipfile.ZipFile, member: str) -> list[dict
     except (KeyError, RuntimeError, zipfile.BadZipFile, OSError, EOFError):
         return []
     try:
-        text = raw.decode("utf-8-sig")
+        text = decode_session_text(raw)
     except UnicodeDecodeError:
         return []
     payload, err = _parse_trajectory_text(text, member)
@@ -1231,7 +1233,7 @@ def _parse_zip_child_events(archive: zipfile.ZipFile, member: str) -> tuple[list
     label = _dsh_child_label(member)
     try:
         raw = archive.read(member)
-        text = raw.decode("utf-8-sig")
+        text = decode_session_text(raw)
     except (KeyError, RuntimeError, zipfile.BadZipFile, OSError, EOFError, UnicodeDecodeError) as exc:
         return [], f"Sub-agent log {label} could not be read ({type(exc).__name__}); it is missing from this view."
     return _dsh_child_events_from_text(text, label)

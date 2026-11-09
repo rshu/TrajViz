@@ -158,7 +158,13 @@ class ICodeLoaderTests(unittest.TestCase):
     def test_token_chart_falls_back_to_total_without_breakdown(self):
         steps = parse_steps(load_trajectory(str(FIXTURE)))
         figure = build_token_chart(steps, format="icode")
-        self.assertEqual([trace.name for trace in figure.data], ["Total"])
+        # iCode has no per-category breakdown — Total only. Multi-agent
+        # exports get one Total series per agent panel; legend shows it once.
+        self.assertTrue(all(trace.name == "Total" for trace in figure.data))
+        self.assertEqual(
+            [trace.name for trace in figure.data if trace.showlegend is not False],
+            ["Total"],
+        )
 
     def test_context_utilization_per_step_tokens_and_compaction(self):
         # Chrys ``_group.token_count`` is each message's own window

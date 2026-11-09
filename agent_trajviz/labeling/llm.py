@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .._endpoints import anthropic_messages_url
+from .._llm_http import env_headers_for_connection, merge_llm_headers, raise_for_llm_status
 from .._redact import redact
 
 logger = logging.getLogger(__name__)
@@ -113,6 +114,7 @@ def call_llm(
     temperature: float | None = None,
     max_tokens: int | None = None,
     timeout: int = 120,
+    headers: dict[str, str] | None = None,
 ) -> str:
     """Send one system + user message pair and return the model's text answer.
 
@@ -121,21 +123,26 @@ def call_llm(
     redacted first (see :mod:`agent_trajviz._redact`): step text can carry
     credentials the agent printed. Raises :class:`LabelBudgetExhausted` when the
     model reached the token limit before writing any answer text.
+
+    *headers* are extra gateway HTTP headers. When omitted, ``LABEL_HEADERS``
+    applies only to its configured base URL and provider.
     """
     system_prompt, in_system = redact(system_prompt)
     user_message, in_user = redact(user_message)
     if in_system + in_user:
         logger.info("redacted %d credential-shaped string(s) from the LLM request", in_system + in_user)
+    extra = headers if headers is not None else env_headers_for_connection("LABEL", base_url, provider)
     if provider == "anthropic":
         return _call_anthropic(base_url, api_key, model, system_prompt, user_message,
-                               temperature, max_tokens, timeout)
+                               temperature, max_tokens, timeout, extra)
     return _call_openai(base_url, api_key, model, system_prompt, user_message,
-                        temperature, max_tokens, timeout)
+                        temperature, max_tokens, timeout, extra)
 
 
 def _call_openai(
     base_url: str, api_key: str, model: str, system_prompt: str, user_message: str,
     temperature: float | None, max_tokens: int | None, timeout: int,
+    extra_headers: dict[str, str],
 ) -> str:
     import requests
 
@@ -153,10 +160,11 @@ def _call_openai(
     resp = requests.post(
         f"{base_url.rstrip('/')}/chat/completions",
         json=body,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        headers=merge_llm_headers(extra_headers, auth={"Authorization": f"Bearer {api_key}"}),
         timeout=timeout,
+        allow_redirects=False,
     )
-    resp.raise_for_status()
+    raise_for_llm_status(resp)
     choice = resp.json()["choices"][0]
     content = choice["message"]["content"]
     if content is not None and not isinstance(content, str):
@@ -170,6 +178,7 @@ def _call_openai(
 def _call_anthropic(
     base_url: str, api_key: str, model: str, system_prompt: str, user_message: str,
     temperature: float | None, max_tokens: int | None, timeout: int,
+    extra_headers: dict[str, str],
 ) -> str:
     import requests
 
@@ -184,10 +193,14 @@ def _call_anthropic(
     resp = requests.post(
         anthropic_messages_url(base_url),
         json=body,
-        headers={"Content-Type": "application/json", "x-api-key": api_key, "anthropic-version": "2023-06-01"},
+        headers=merge_llm_headers(
+            extra_headers,
+            auth={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
+        ),
         timeout=timeout,
+        allow_redirects=False,
     )
-    resp.raise_for_status()
+    raise_for_llm_status(resp)
     data = resp.json()
     texts = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
     text = "\n".join(texts).strip()

@@ -221,6 +221,96 @@ class TokenChartTests(unittest.TestCase):
         for tr in build_token_chart(steps).data:
             self.assertTrue(tr.name, "a drawn token series has no legend label")
 
+    def test_cache_series_stack_at_the_base(self):
+        steps = [balanced(0, inp=100, output=10, cache_read=20, reasoning=5)]
+        names = [t.name for t in build_token_chart(steps).data]
+        self.assertEqual(names[0], "Cache Read")
+        self.assertLess(names.index("Cache Read"), names.index("Fresh Input"))
+
+    def test_multi_agent_splits_into_one_panel_per_agent(self):
+        steps = [
+            balanced(0, inp=100, output=10, agent="build", session_id="s-main"),
+            balanced(1, inp=200, output=20, agent="explore", session_id="s-explore"),
+            balanced(2, inp=300, output=30, agent="explore", session_id="s-explore"),
+            balanced(3, inp=150, output=15, agent="build", session_id="s-main"),
+        ]
+        fig = build_token_chart(steps, format="opencode")
+        xaxes = {getattr(tr, "xaxis", None) or "x" for tr in fig.data}
+        self.assertEqual(len(xaxes), 2)
+        titles = [ann.text for ann in (fig.layout.annotations or []) if getattr(ann, "text", None)]
+        self.assertTrue(any("build" in t for t in titles))
+        self.assertTrue(any("explore" in t for t in titles))
+        legend = [t.name for t in fig.data if t.showlegend is not False]
+        self.assertEqual(
+            legend,
+            ["Cache Read", "Fresh Input", "Reasoning", "Output"],
+        )
+
+    def test_multi_agent_panel_stack_equals_that_agents_step_totals(self):
+        steps = [
+            balanced(0, inp=100, output=10, agent="build", session_id="s-main"),
+            balanced(1, inp=200, output=20, agent="explore", session_id="s-explore"),
+            balanced(2, inp=300, output=30, agent="explore", session_id="s-explore"),
+        ]
+        fig = build_token_chart(steps, format="opencode")
+        per_axis: dict[str, dict[int, int]] = {}
+        for tr in fig.data:
+            axis = getattr(tr, "xaxis", None) or "x"
+            bucket = per_axis.setdefault(axis, {})
+            for x, y in zip(tr.x or [], tr.y or [], strict=True):
+                bucket[x] = bucket.get(x, 0) + (y or 0)
+        stacks = sorted(per_axis.values(), key=lambda d: max(d.values(), default=0))
+        self.assertEqual(stacks[0], {0: 110})
+        self.assertEqual(stacks[1], {1: 220, 2: 330})
+
+    def test_multi_agent_x_values_are_workflow_step_indices(self):
+        steps = [
+            balanced(0, inp=100, output=10, agent="build", session_id="s-main"),
+            balanced(5, inp=200, output=20, agent="explore", session_id="s-explore"),
+            balanced(9, inp=150, output=15, agent="build", session_id="s-main"),
+        ]
+        fig = build_token_chart(steps, format="opencode")
+        xs = sorted({x for tr in fig.data for x in (tr.x or [])})
+        self.assertEqual(xs, [0, 5, 9])
+
+    def test_sparse_agent_panel_keeps_fixed_bar_width(self):
+        # Compaction-like panel: two steps far apart on a shared Workflow
+        # x-range. Without an explicit width Plotly sizes bars from the
+        # panel's own gaps and the sparse panel balloons.
+        steps = [
+            balanced(0, inp=100, output=10, agent="build", session_id="s-main"),
+            balanced(1, inp=110, output=10, agent="build", session_id="s-main"),
+            balanced(2, inp=120, output=10, agent="build", session_id="s-main"),
+            balanced(5, inp=200, output=20, agent="compaction", session_id="s-comp"),
+            balanced(15, inp=8000, output=30, agent="compaction", session_id="s-comp"),
+        ]
+        from agent_trajviz.insight.charts.usage import _STEP_BAR_WIDTH
+
+        fig = build_token_chart(steps, format="opencode")
+        widths = {tr.width for tr in fig.data if tr.type == "bar"}
+        self.assertEqual(widths, {_STEP_BAR_WIDTH})
+
+    def test_single_agent_stays_one_panel(self):
+        steps = [balanced(i, inp=100, output=10) for i in range(3)]
+        fig = build_token_chart(steps)
+        self.assertIsNone(getattr(fig, "_grid_ref", None))
+        xaxes = {getattr(tr, "xaxis", None) or "x" for tr in fig.data}
+        self.assertEqual(xaxes, {"x"})
+
+    def test_multi_agent_legend_claims_series_from_later_panels(self):
+        # Cache only on the second agent: legend must still list Cache Read.
+        steps = [
+            balanced(0, inp=100, output=10, agent="build", session_id="s-main"),
+            balanced(
+                1, inp=50, output=20, cache_read=200,
+                agent="explore", session_id="s-explore",
+            ),
+        ]
+        fig = build_token_chart(steps)
+        legend = [t.name for t in fig.data if t.showlegend is not False]
+        self.assertIn("Cache Read", legend)
+        self.assertIn("Fresh Input", legend)
+
 
 # --------------------------------------------------------------------------
 # Step Duration
@@ -284,6 +374,35 @@ class DurationChartTests(unittest.TestCase):
         steps = [step(7, duration=1.0), step(8, duration=2.0)]
         normal = next(t for t in build_duration_chart(steps).data if t.name == "Normal")
         self.assertEqual([cd[0] for cd in normal.customdata], [7, 8])
+        self.assertEqual(list(normal.x), [7, 8])
+
+    def test_multi_agent_splits_into_one_panel_per_agent(self):
+        steps = [
+            step(0, duration=1.0, agent="build", session_id="s-main"),
+            step(1, duration=2.0, agent="explore", session_id="s-explore"),
+            step(2, duration=3.0, agent="explore", session_id="s-explore"),
+            step(3, duration=4.0, agent="build", session_id="s-main"),
+        ]
+        fig = build_duration_chart(steps)
+        xaxes = {getattr(tr, "xaxis", None) or "x" for tr in fig.data if tr.type == "bar"}
+        self.assertEqual(len(xaxes), 2)
+        titles = [ann.text for ann in (fig.layout.annotations or []) if getattr(ann, "text", None)]
+        self.assertTrue(any("build" in t for t in titles))
+        self.assertTrue(any("explore" in t for t in titles))
+
+    def test_multi_agent_bars_use_workflow_step_indices(self):
+        steps = [
+            step(0, duration=1.0, agent="build", session_id="s-main"),
+            step(5, duration=2.0, agent="explore", session_id="s-explore"),
+            step(9, duration=3.0, agent="build", session_id="s-main"),
+        ]
+        fig = build_duration_chart(steps)
+        xs = sorted({x for tr in fig.data if tr.type == "bar" for x in (tr.x or [])})
+        self.assertEqual(xs, [0, 5, 9])
+        per = self._bars_by_x(fig)
+        self.assertAlmostEqual(per[0], 1.0)
+        self.assertAlmostEqual(per[5], 2.0)
+        self.assertAlmostEqual(per[9], 3.0)
 
 
 # --------------------------------------------------------------------------
@@ -340,16 +459,16 @@ class ToolDurationChartTests(unittest.TestCase):
             step(1, tool_calls=[tc("Read", ms=750)]),
         ]
         rows = self._row_totals(build_tool_duration_chart(steps))
-        self.assertAlmostEqual(rows["Read"], 1.0, places=6)
-        self.assertAlmostEqual(rows["pytest"], 4.0, places=6)
+        self.assertAlmostEqual(rows["Read (2×)"], 1.0, places=6)
+        self.assertAlmostEqual(rows["pytest (1×)"], 4.0, places=6)
 
     def test_delegation_wall_clock_is_not_charted_as_tool_time(self):
         # A `task` call's duration is the child agent's whole run; charting it
         # double-counts work the child's own calls already show.
         steps = [step(0, tool_calls=[tc("Task", ms=600_000), tc("Read", ms=500)])]
         rows = self._row_totals(build_tool_duration_chart(steps))
-        self.assertEqual(set(rows), {"Read"})
-        self.assertAlmostEqual(rows["Read"], 0.5, places=6)
+        self.assertEqual(set(rows), {"Read (1×)"})
+        self.assertAlmostEqual(rows["Read (1×)"], 0.5, places=6)
 
     def test_untimed_calls_report_no_timing_instead_of_zero_bars(self):
         # "This export records no per-tool timing" is not "the tools took 0s".
@@ -630,6 +749,15 @@ class AgentTokenChartTests(unittest.TestCase):
         fig = build_agent_token_chart(self.SUMMARIES)
         for tr in fig.data:
             self.assertEqual(list(tr.x), ["main", "explore"])
+
+    def test_grouped_bars_leave_width_unset(self):
+        # An explicit width (used by stacked step charts) makes every series
+        # claim most of the category slot and overlap under barmode=group.
+        fig = build_agent_token_chart(self.SUMMARIES)
+        self.assertEqual(fig.layout.barmode, "group")
+        for tr in fig.data:
+            self.assertTrue(tr.type == "bar")
+            self.assertTrue(tr.width is None)
 
     def test_no_agents_renders_an_explanatory_empty_figure(self):
         fig = build_agent_token_chart([])

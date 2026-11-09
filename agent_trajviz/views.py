@@ -275,7 +275,8 @@ _SPECS: dict[str, _Spec] = {
         lambda run, a: a.step_analytics),
     "hotspots": _Spec(
         "table", "Hotspots",
-        "The slowest steps, the most token-heavy steps and the assistant steps with the least cache reuse.",
+        "The slowest steps, the most token-heavy steps, the assistant steps with the least cache reuse, "
+        "and the steps that grew the context the most.",
         lambda run, a: a.hotspots),
     "token_usage": _Spec(
         "chart", "Token usage by step",

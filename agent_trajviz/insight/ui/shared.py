@@ -6,8 +6,14 @@ import functools
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from threading import Lock
+from typing import TYPE_CHECKING
+from weakref import WeakValueDictionary
 
 import gradio as gr
+
+if TYPE_CHECKING:
+    from ...api import Trajectory
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +33,9 @@ class SharedState:
     # Handlers that need the run itself read it here rather than re-parsing
     # `state_raw`, which holds nothing for a format registered by a plugin.
     state_run: gr.State
+    # Ranked Overview issues as JSON-friendly dicts (optional judgments).
+    # Cards pass a 1-based index; the sidebar rebuilds the AI question here.
+    state_overview_issues: gr.State
     # Session-only model overrides; credentials never enter browser storage.
     state_settings: gr.State | None = None
 
@@ -36,6 +45,41 @@ def format_choices() -> list[tuple[str, str]]:
     from ...api import FORMATS
 
     return [("Auto-detect", ""), *((label, key) for key, label in FORMATS.items())]
+
+
+# Gradio owns each loaded run. Weak references let its state eviction free
+# both the trajectory and this index, including clients that never unload.
+_latest_run_by_session: WeakValueDictionary[str, Trajectory] = WeakValueDictionary()
+_latest_run_lock = Lock()
+
+
+def record_latest_run(session_hash: str | None, run: Trajectory | None) -> None:
+    """Track the run the session displays, or invalidate it after a clear."""
+    if session_hash is None:
+        return
+    with _latest_run_lock:
+        if run is None:
+            _latest_run_by_session.pop(session_hash, None)
+        else:
+            _latest_run_by_session[session_hash] = run
+
+
+def is_latest_run(session_hash: str | None, run: Trajectory) -> bool:
+    """True while *run* is still what *session_hash* last loaded.
+
+    Only direct callers without a session bypass this check. A cleared,
+    evicted, or closed browser session supersedes its pending work.
+    """
+    if session_hash is None:
+        return True
+    with _latest_run_lock:
+        return _latest_run_by_session.get(session_hash) is run
+
+
+def drop_latest_run(session_hash: str) -> None:
+    """Forget *session_hash* on browser unload."""
+    with _latest_run_lock:
+        _latest_run_by_session.pop(session_hash, None)
 
 
 def safe_callback(label: str) -> Callable:

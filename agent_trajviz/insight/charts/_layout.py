@@ -1,5 +1,7 @@
 """Shared Plotly chrome for insight charts."""
 
+from __future__ import annotations
+
 from collections import Counter
 import html
 import textwrap
@@ -86,6 +88,19 @@ def _add_legend_hint(fig: go.Figure) -> None:
         xanchor="right",
     )
     localize_figure(fig, annotations=True)
+
+
+def _fmt_duration(seconds: float) -> str:
+    """Chart duration labels: keep one decimal under 10s, then human units."""
+    from agent_trajviz.insight.metrics import format_duration_seconds
+
+    return format_duration_seconds(seconds, fractional_under=10)
+
+
+def _labels_with_call_counts(names: Sequence[str], counts: Sequence[int], *, limit: int = 30) -> list[str]:
+    """Truncate tool names, then append ``(N×)`` so the suffix is never clipped."""
+    truncated = _truncate_chart_labels(names, limit=limit)
+    return [f"{label} ({count}×)" for label, count in zip(truncated, counts, strict=True)]
 
 
 def _truncate_chart_label(name: str, limit: int = 30) -> str:

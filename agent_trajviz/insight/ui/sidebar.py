@@ -8,6 +8,7 @@ import gradio as gr
 
 from ..assistant import analyze_loaded_trajectory, answer_question
 from ..llm_config import AnalysisSettings, config_status_html, request_reply_language, resolve_session_settings
+from ..presenters.issues import issue_analysis_question_from_payload
 from . import settings as settings_ui
 from .shared import SharedState
 
@@ -21,6 +22,12 @@ class SidebarRefs:
     analysis_clear: gr.Button
     analysis_run: gr.Button
     settings: settings_ui.SettingsRefs
+    issue_ask_box: gr.Textbox
+    issue_ask_btn: gr.Button
+
+
+def _brief_text(brief: object) -> str:
+    return brief if isinstance(brief, str) else ""
 
 
 def layout() -> SidebarRefs:
@@ -35,6 +42,11 @@ def layout() -> SidebarRefs:
         gr.HTML(
             "<div class='analysis-panel-title'>🤖 AI Trajectory Analysis</div>"
         )
+        # Keep the issue bridge mounted independently of the selected sidebar tab.
+        issue_ask_box = gr.Textbox(
+            value="", elem_id="tv-issue-ask", show_label=False, container=False,
+        )
+        issue_ask_btn = gr.Button("Analyze issue", elem_id="tv-issue-ask-btn")
         with gr.Tabs(elem_id="analysis-tabs"):
             with gr.Tab("Analysis", elem_id="analysis-chat-tab"):
                 analysis_status = gr.HTML(config_status_html(loaded_steps=0))
@@ -76,6 +88,8 @@ def layout() -> SidebarRefs:
         analysis_clear=analysis_clear,
         analysis_run=analysis_run,
         settings=settings_refs,
+        issue_ask_box=issue_ask_box,
+        issue_ask_btn=issue_ask_btn,
     )
 
 
@@ -84,7 +98,7 @@ def _run_analysis(steps, brief, settings: AnalysisSettings | None = None, ui_lan
     active = resolve_session_settings(settings)
     if not steps:
         return "", [], config_status_html(loaded_steps=0, config=active.config)
-    packed = brief if isinstance(brief, str) else ""
+    packed = _brief_text(brief)
     brief, history = analyze_loaded_trajectory(
         steps, brief=packed, config=active.config,
         language=request_reply_language(active.language, ui_language, reply_language),
@@ -113,7 +127,7 @@ def bind(refs: SidebarRefs, shared: SharedState, load_events, *, language: gr.Ra
         active = resolve_session_settings(settings)
         if not steps:
             return "", [], config_status_html(loaded_steps=0, config=active.config)
-        packed = brief if isinstance(brief, str) else ""
+        packed = _brief_text(brief)
         status = config_status_html(loaded_steps=len(steps), config=active.config)
         return packed, [], status
 
@@ -126,16 +140,22 @@ def bind(refs: SidebarRefs, shared: SharedState, load_events, *, language: gr.Ra
 
     def on_sidebar_expand(steps, brief, history, settings=None):
         active = resolve_session_settings(settings)
+        # Opening the panel also exposes Settings, so it must never start analysis.
+        # Pending issue asks are handled by issue_ask_btn.
         return (
-            brief if isinstance(brief, str) else "",
+            _brief_text(brief),
             history or [],
             config_status_html(loaded_steps=len(steps or []), config=active.config),
         )
 
-    # Opening the panel also exposes Settings, so it must never start analysis.
     refs.analysis_sidebar.expand(
         fn=on_sidebar_expand,
-        inputs=[shared.state_steps, state_analysis_brief, refs.analysis_chatbot, *settings_inputs],
+        inputs=[
+            shared.state_steps,
+            state_analysis_brief,
+            refs.analysis_chatbot,
+            *settings_inputs,
+        ],
         outputs=[
             state_analysis_brief,
             refs.analysis_chatbot,
@@ -165,4 +185,46 @@ def bind(refs: SidebarRefs, shared: SharedState, load_events, *, language: gr.Ra
         outputs=[refs.analysis_chatbot, refs.analysis_input],
     ))
     refs.analysis_clear.click(fn=lambda: [], outputs=[refs.analysis_chatbot])
+
+    def on_issue_ask(pending_q, history, brief, steps, issue_rows, settings=None, ui_language=None, reply_language=None):
+        active = resolve_session_settings(settings)
+        packed = _brief_text(brief)
+        hist = list(history or [])
+        status = config_status_html(
+            loaded_steps=len(steps) if steps else 0, config=active.config,
+        )
+        raw = (pending_q or "").strip()
+        try:
+            number = int(raw)
+        except ValueError:
+            number = 0
+        rows = issue_rows if isinstance(issue_rows, list) else []
+        question = issue_analysis_question_from_payload(rows, number)
+        if question:
+            hist = answer_question(
+                question, hist, packed, config=active.config,
+                language=request_reply_language(active.language, ui_language, reply_language),
+            )
+        return hist, packed, status, ""
+
+    model_events.append(refs.issue_ask_btn.click(
+        fn=on_issue_ask,
+        inputs=[
+            refs.issue_ask_box,
+            refs.analysis_chatbot,
+            state_analysis_brief,
+            shared.state_steps,
+            shared.state_overview_issues,
+            *settings_inputs,
+            *language_inputs,
+        ],
+        outputs=[
+            refs.analysis_chatbot,
+            state_analysis_brief,
+            refs.analysis_status,
+            refs.issue_ask_box,
+        ],
+        api_name=False,
+        api_visibility="private",
+    ))
     return tuple(model_events)

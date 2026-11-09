@@ -93,8 +93,10 @@ def token_usage(steps: list[dict], fmt: str | None = None) -> dict:
     fields and values) has no drawable breakdown: its segments are zero and
     only ``usable_total`` -- the reported total, when that is itself a count --
     describes it. ``has_breakdown`` is false when the format reports totals
-    only.
+    only. Each row carries its timeline ``agent``; ``agents`` lists every
+    timeline agent in palette order so a multi-agent renderer can split panels.
     """
+    color_map, labels, agent_id_of = bind_timeline_agents(steps)
     rows = []
     for position, s in enumerate(steps):
         tok = s["tokens"]
@@ -108,6 +110,7 @@ def token_usage(steps: list[dict], fmt: str | None = None) -> dict:
         row = {
             "position": position,
             "step": s.get("index", position),
+            "agent": agent_id_of(s),
             "fresh_input": seg["fresh"],
             "cache_read": seg["cache_read"],
             "cache_write": seg["cache_write"],
@@ -131,7 +134,12 @@ def token_usage(steps: list[dict], fmt: str | None = None) -> dict:
     has_breakdown = any(
         s["tokens"]["input"] > 0 or s["tokens"]["output"] > 0 or s["tokens"]["cache_read"] > 0 for s in steps
     )
-    return {"format": fmt, "has_breakdown": has_breakdown, "steps": rows}
+    return {
+        "format": fmt,
+        "has_breakdown": has_breakdown,
+        "agents": _agent_list(color_map, labels),
+        "steps": rows,
+    }
 
 
 def step_durations(steps: list[dict]) -> dict:
@@ -141,8 +149,10 @@ def step_durations(steps: list[dict]) -> dict:
     marks steps whose wait on a child agent was subtracted; ``error_kind`` is
     ``"system"`` (scaffold tool), ``"tool"`` (agentic tool) or ``None``;
     ``outlier`` marks durations more than 2σ above the mean. ``average_s`` is
-    the mean over steps that have a duration.
+    the mean over steps that have a duration. Each row carries its timeline
+    ``agent``; ``agents`` lists every timeline agent in palette order.
     """
+    color_map, labels, agent_id_of = bind_timeline_agents(steps)
     chart_durs = [
         step_duration_excluding_spawn(s)
         if not is_otel_step(s) or (s["_otel"].get("kind") == "model_request" and field_observed(s, "duration"))
@@ -156,6 +166,7 @@ def step_durations(steps: list[dict]) -> dict:
         rows.append({
             "position": i,
             "step": int(s.get("index", i)),
+            "agent": agent_id_of(s),
             "duration_s": d,
             "spawn_adjusted": (d is not None and not is_otel_step(s)
                                and s.get("timing_source") != "model_request" and spawn_wait_seconds(s) > 0),
@@ -164,6 +175,7 @@ def step_durations(steps: list[dict]) -> dict:
         })
     return {
         "average_s": sum(real) / len(real) if real else None if any(is_otel_step(s) for s in steps) else 0,
+        "agents": _agent_list(color_map, labels),
         "steps": rows,
     }
 

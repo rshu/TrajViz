@@ -10,6 +10,7 @@ from requests.auth import AuthBase
 from urllib3.exceptions import ReadTimeoutError
 
 from .._endpoints import anthropic_messages_url
+from .._llm_http import merge_llm_headers
 from .llm_config import AnalysisLLMConfig
 
 
@@ -132,13 +133,13 @@ def check_connection(config: AnalysisLLMConfig) -> ConnectionTestResult:
             or not math.isfinite(config.timeout) or config.timeout <= 0):
         return ConnectionTestResult(False, "Enter a positive Timeout before testing.")
     body = {"model": config.model, "messages": [{"role": "user", "content": "Reply OK."}], "max_tokens": 16}
-    headers = {"Content-Type": "application/json"}
     if config.provider == "anthropic":
         url = anthropic_messages_url(config.base_url)
-        headers.update({"x-api-key": config.api_key, "anthropic-version": "2023-06-01"})
+        auth = {"x-api-key": config.api_key, "anthropic-version": "2023-06-01"}
     else:
         url = f"{config.base_url.rstrip('/')}/chat/completions"
-        headers["Authorization"] = f"Bearer {config.api_key}"
+        auth = {"Authorization": f"Bearer {config.api_key}"}
+    headers = merge_llm_headers(config.extra_headers, auth=auth)
     try:
         with requests.Session() as session:
             session.auth = _ExplicitCredentials()

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
+from .._llm_http import env_headers_for_connection
 from ..i18n import text as ui_text
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -129,6 +130,8 @@ class AnalysisLLMConfig:
     max_tokens: int
     timeout: int
     source: str  # "analyze" | "label" | "mixed" | "missing" | "session"
+    #: From ``ANALYZE_HEADERS`` / ``LABEL_HEADERS``; out of repr (may hold secrets).
+    extra_headers: dict[str, str] = field(default_factory=dict, repr=False)
 
     @property
     def ready(self) -> bool:
@@ -205,8 +208,13 @@ def resolve_analysis_config() -> AnalysisLLMConfig:
         max_tokens=max_tokens,
         timeout=timeout,
         source=source,
+        extra_headers=_connection_headers(base_url, provider),
     )
 
+
+def _connection_headers(base_url: str, provider: str) -> dict[str, str]:
+    return (env_headers_for_connection("ANALYZE", base_url, provider)
+            or env_headers_for_connection("LABEL", base_url, provider))
 
 
 @dataclass(frozen=True)
@@ -393,6 +401,7 @@ def build_session_settings(
         max_tokens=_positive_integer(max_tokens, "Maximum output tokens"),
         timeout=_positive_integer(timeout, "Timeout"),
         source="session",
+        extra_headers=_connection_headers(endpoint, provider),
     )
     return AnalysisSettings(config=config, language=language)
 

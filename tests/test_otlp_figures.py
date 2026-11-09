@@ -56,8 +56,9 @@ def test_unknown_token_fields_are_gaps_and_absent_categories():
     view = run.view("token_usage")
     chart = figure(view)
     assert "Reasoning" not in {trace.name for trace in chart.data}
-    fresh = next(trace for trace in chart.data if trace.name == "Fresh Input")
-    assert list(fresh.y) == [None, 10, 2, 1, None, 2]
+    # Chart data keeps the full step series; multi-agent drawers may split it
+    # across panels, so assert gaps on the view payload rather than one trace.
+    assert [row["fresh_input"] for row in view.data["steps"]] == [None, 10, 2, 1, None, 2]
     assert sum(value for trace in chart.data for value in trace.y if value is not None) == 57
 
 

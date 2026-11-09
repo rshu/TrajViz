@@ -35,10 +35,11 @@ def test_otlp_issues_panel_never_claims_healthy_empty_state(tmp_path, partial):
     for panel in (build_overview_issues_html(session, issues=[]),
                   build_overview_issues_html(session, issues=[], banner="Provider not configured"),
                   load.do_load(str(directory), session_id="demo-session")["issues_html"]):
-        assert "limited evidence" in panel
-        assert "none detected" not in panel.lower()
+        assert ">⚠ Limited evidence</span>" in panel
+        assert 'data-tv-i18n-zh="⚠ 证据有限"' in panel
+        assert "No major issues detected" not in panel
         assert "No major workflow issues detected" not in panel
-        assert "Some workflow checks are unavailable" in panel
+        assert "This capture does not contain enough evidence to run every workflow check." in panel
 
 
 def test_observed_issues_remain_visible_with_limited_coverage(tmp_path):
@@ -49,7 +50,7 @@ def test_observed_issues_remain_visible_with_limited_coverage(tmp_path):
     assert "1 issue · limited evidence" in panel
     assert "Observed command failed" in panel
     assert "Reviewing captured error" in panel
-    assert "none detected" not in panel
+    assert "未检测到问题" not in panel
 
 
 @pytest.mark.parametrize("archive", [False, True], ids=["directory", "zip"])
@@ -73,8 +74,8 @@ def test_observed_partial_invalid_native_ui_transition_has_no_stale_state(tmp_pa
         assert packed["state_raw"] is run.raw
         assert packed["state_steps"] == run.steps
         assert packed["main_tabs"]["visible"] is True
-        assert "limited evidence" in packed["issues_html"]
-        assert "none detected" not in packed["issues_html"].lower()
+        assert "证据有限" in packed["issues_html"]
+        assert "未检测到问题" not in packed["issues_html"]
         assert packed["export_btn"]["value"] is None
         assert packed["export_btn"]["interactive"] is False
         exported = upload.prepare_html_export(run, request=browser_session)
@@ -123,7 +124,7 @@ def test_observed_partial_invalid_native_ui_transition_has_no_stale_state(tmp_pa
     assert len(run.agents) == 2
     assert packed["main_tabs"]["visible"] is True
     assert "Limited telemetry evidence" not in packed["overview_kpi_html"]["value"]
-    assert "limited evidence" not in packed["issues_html"]
+    assert "证据有限" not in packed["issues_html"]
     exported = upload.prepare_html_export(run, request=browser_session)
     assert exported["interactive"] is True
     html = Path(exported["value"]).read_text()

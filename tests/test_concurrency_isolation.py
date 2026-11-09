@@ -520,7 +520,7 @@ class ExportIsolationTests(_SyntheticExportsMixin, unittest.TestCase):
         armed = self._armed_path(upload.prepare_html_export(raw, None, False))
         self.assertIsNotNone(armed)
         self._made.append(os.path.dirname(armed))
-        recorded = upload._last_temp_export_dirs.get(None)
+        recorded = upload._last_temp_export_dirs.get((None, "report"))
         self.assertIsNotNone(recorded)
         self.assertTrue(
             os.path.basename(recorded).startswith(upload._TEMP_EXPORT_PREFIX),
@@ -537,7 +537,7 @@ class ExportIsolationTests(_SyntheticExportsMixin, unittest.TestCase):
         self._made.append(bystander)
         keepsake = Path(bystander) / "important.html"
         keepsake.write_text("do not delete me", encoding="utf-8")
-        upload._last_temp_export_dirs = {None: bystander}
+        upload._last_temp_export_dirs = {(None, "report"): bystander}
         raw = load_trajectory(self.synthesized[0])
         armed = self._armed_path(upload.prepare_html_export(raw, None, False))
         self.assertIsNotNone(armed)

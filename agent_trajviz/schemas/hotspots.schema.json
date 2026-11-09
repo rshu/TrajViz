@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Hotspots",
-  "description": "The slowest steps, the most token-heavy steps and the assistant steps with the least cache reuse.",
+  "description": "The slowest steps, the most token-heavy steps, the assistant steps with the least cache reuse, and the steps that grew the context the most.",
   "type": "object",
   "required": [
     "schema_version",
@@ -32,7 +32,8 @@
       "required": [
         "heaviest",
         "lowest_cache_read",
-        "slowest"
+        "slowest",
+        "top_growth"
       ],
       "properties": {
         "heaviest": {
@@ -509,6 +510,181 @@
                   "number",
                   "null"
                 ]
+              },
+              "availability": {
+                "type": "object",
+                "additionalProperties": {
+                  "enum": [
+                    "observed",
+                    "partial",
+                    "unavailable",
+                    "unknown"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "top_growth": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "agent",
+              "cache_ratio",
+              "cache_read",
+              "duration",
+              "errors",
+              "finish",
+              "index",
+              "model_id",
+              "non_cache_per_sec",
+              "non_cache_tokens",
+              "output_input_ratio",
+              "patch_parts",
+              "reasoning_parts",
+              "role",
+              "text_parts",
+              "tokens_input",
+              "tokens_output",
+              "tokens_per_sec",
+              "tokens_total",
+              "tool_calls",
+              "tool_time_share",
+              "tool_time_sum",
+              "growth",
+              "own_completion",
+              "new_content"
+            ],
+            "properties": {
+              "agent": {
+                "type": "string"
+              },
+              "cache_ratio": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "cache_read": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "duration": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "errors": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "finish": {
+                "type": "string"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "model_id": {
+                "type": "string"
+              },
+              "non_cache_per_sec": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "non_cache_tokens": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "output_input_ratio": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "patch_parts": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "reasoning_parts": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "role": {
+                "type": "string"
+              },
+              "text_parts": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "tokens_input": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "tokens_output": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "tokens_per_sec": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "tokens_total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "tool_calls": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "tool_time_share": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "tool_time_sum": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "growth": {
+                "type": "integer"
+              },
+              "own_completion": {
+                "type": "integer"
+              },
+              "new_content": {
+                "type": "integer"
               },
               "availability": {
                 "type": "object",

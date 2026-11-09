@@ -16,6 +16,19 @@ def safe_get(d: Any, *keys: Any, default: Any = None) -> Any:
 
 
 
+def decode_session_text(data: bytes) -> str:
+    """Decode a session file saved as UTF-8 or as PowerShell's Unicode (UTF-16).
+
+    Windows PowerShell 5.1 ``Out-File`` and ``Set-Content`` write UTF-16 LE
+    with a ``FF FE`` BOM, and ``utf-16`` also accepts the big-endian ``FE FF``
+    BOM. ``utf-8-sig`` still strips a UTF-8 BOM. A ``FF`` byte that is not a
+    UTF-16 BOM stays a ``UnicodeDecodeError``.
+    """
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16")
+    return data.decode("utf-8-sig")
+
+
 def as_text(value: Any) -> str:
     """A string field's value, or ``""`` when the export recorded a non-scalar.
 

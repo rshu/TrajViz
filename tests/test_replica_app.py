@@ -12,6 +12,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
+import os
 import socket
 import sys
 import tempfile
@@ -220,8 +221,18 @@ class LiveReplicaTests(unittest.TestCase):
             self.assertIn("70 tokens", rendered)
 
     def test_llm_features_without_configuration_answer_with_a_message(self):
-        self._load()
-        history, _ = self.client.predict("What is slow?", [], api_name="/ask")
+        # Hermetic: a developer's .env (loaded into this process by app
+        # startup) must not leak in. load_env_files only fills unset
+        # variables, so empty strings win and resolve sees them as missing.
+        keys = [k for k in os.environ if k.startswith(("ANALYZE_", "LABEL_"))]
+        saved = {k: os.environ[k] for k in keys}
+        try:
+            for k in keys:
+                os.environ[k] = ""
+            self._load()
+            history, _ = self.client.predict("What is slow?", [], api_name="/ask")
+        finally:
+            os.environ.update(saved)
         content = history[-1]["content"]  # Gradio 6 sends message content as parts
         text = content if isinstance(content, str) else " ".join(part.get("text", "") for part in content)
         self.assertEqual(history[-1]["role"], "assistant")

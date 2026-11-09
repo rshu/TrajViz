@@ -74,6 +74,21 @@ class LoadedSession:
     tool_selection: list
     edit_thrash: list
     repeated_searches: list
+    #: Single tool outputs big enough to tax every later step
+    #: (see detect_oversized_outputs).
+    oversized_outputs: list
+    #: A failed tool call retried verbatim and failing again
+    #: (see detect_blind_retries).
+    blind_retries: list
+    #: User messages sent verbatim two or more times
+    #: (see detect_user_repeats).
+    user_repeats: list
+    #: Code files written while no validation command ran at all
+    #: (see detect_unvalidated_writes).
+    unvalidated_writes: list
+    #: Same file re-read with no write or compaction in between
+    #: (see detect_redundant_re_reads).
+    redundant_re_reads: list
     # Computed on every load but read by no presenter, chart, report or UI
     # module — only by the two tests that construct a LoadedSession by keyword.
     # Kept rather than deleted: the field has no default, so dropping it is a
@@ -82,6 +97,9 @@ class LoadedSession:
     # product decision about what the Overview claims, not a cleanup.
     phase_regressions: list
     premature_compactions: list
+    #: A compaction between two consecutive writes whose file reads shrank
+    #: afterward (see detect_compaction_aftermath).
+    compaction_aftermath: list = dataclasses.field(default_factory=list)
     truncated: bool = False
     #: The trajectory as loaded (every step): comparisons and run groups use it.
     run: Trajectory | None = None
@@ -187,8 +205,14 @@ def session_from_run(run: Trajectory, path: str | None = None) -> LoadedSession:
         tool_selection=a.tool_selection,
         edit_thrash=a.edit_thrash,
         repeated_searches=a.repeated_searches,
+        oversized_outputs=a.oversized_outputs,
+        blind_retries=a.blind_retries,
+        user_repeats=a.user_repeats,
+        unvalidated_writes=a.unvalidated_writes,
+        redundant_re_reads=a.redundant_re_reads,
         phase_regressions=a.phase_regressions,
         premature_compactions=a.premature_compactions,
+        compaction_aftermath=a.compaction_aftermath,
         truncated=truncated,
         run=run,
         shown=shown,

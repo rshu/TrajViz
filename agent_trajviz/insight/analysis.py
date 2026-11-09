@@ -18,8 +18,10 @@ from .analytics import compute_step_analytics
 from .context_usage import (
     PRESSURE_ALL_AGENTS,
     context_pressure_series,
+    detect_compaction_aftermath,
     detect_premature_compactions,
     pressure_agent_choices,
+    step_context_occupancy,
 )
 from .diagnostics import (
     annotate_clusters_with_agents,
@@ -39,16 +41,22 @@ from .metrics import (
     compute_metrics,
     wall_clock_fmt,
 )
+from .parser import step_token_segments, usable_token_count
 from .patterns import (
     build_structural_phase_segments,
     compute_plan_metrics,
+    detect_blind_retries,
     detect_edit_thrash,
     detect_failure_patterns,
     detect_fruitless_streaks,
+    detect_oversized_outputs,
     detect_phase_anomalies,
     detect_repeated_searches,
     detect_tool_selection_antipatterns,
     detect_tool_sequences,
+    detect_user_repeats,
+    detect_redundant_re_reads,
+    detect_unvalidated_writes,
     extract_plan_history,
 )
 from .telemetry_quality import data_quality, field_observed, is_otel_step, supports
@@ -57,7 +65,72 @@ from .telemetry_quality import data_quality, field_observed, is_otel_step, suppo
 NOISY_ROOT_CAUSE_FORMATS = frozenset({"opencode", "codearts", "codex"})
 
 
-def hotspots(message_rows: list[dict], limit: int = 5) -> dict[str, list[dict]]:
+def _top_growth_rows(message_rows: list[dict], limit: int, steps: list[dict] | None) -> list[dict]:
+    """Steps that grew the live context the most before the agent's next call.
+
+    The growth of an assistant step is how much larger the next prompt of
+    the same agent is: the step's own completion (output + reasoning) plus
+    the new content it triggered (tool results, user messages). Rows from
+    other agents interleaved between the two calls are skipped, so
+    sub-agent traffic never counts as the parent's growth. The last call of
+    an agent has no successor and thus no growth to report.
+    """
+    # One reverse pass remembers each agent's next positive-prompt assistant,
+    # so a long single-agent trajectory stays linear. A stable sort then keeps
+    # equal-growth ties in forward encounter order.
+    successor: dict[tuple[str, str], int] = {}
+    out: list[dict] = []
+    for position in range(len(message_rows) - 1, -1, -1):
+        r = message_rows[position]
+        if r.get("role") != "assistant":
+            continue
+        step = steps[position] if steps is not None else None
+        agent = ((step or {}).get("session_id") or "", r.get("agent") or "")
+        total = usable_token_count(r["tokens_total"])
+        components_observed = step is None or all(
+            field_observed(step, f"tokens.{field}") for field in ("input", "output", "cache_read", "cache_write")
+        )
+        if total is None or not components_observed:
+            # An unobserved model call is a gap, not an empty prompt. Do not
+            # assign growth across it to an earlier call.
+            successor.pop(agent, None)
+            continue
+        if step is None:
+            fresh = r.get("non_cache_tokens", r.get("tokens_input"))
+            prompt = (fresh or 0) + (r.get("cache_read") or 0)
+        else:
+            tokens = step.get("tokens") or {}
+            segments = step_token_segments(tokens)
+            if segments["reading"] == "total_only" and "context_window" not in tokens and "prompt_peak" not in tokens:
+                successor.pop(agent, None)
+                continue
+            prompt = step_context_occupancy(step)["occupancy"]
+        if prompt <= 0:
+            continue
+        nxt = successor.get(agent)
+        successor[agent] = prompt
+        if nxt is None:
+            continue
+        growth = nxt - prompt
+        if growth <= 0:
+            continue
+        if step is None:
+            own = max(total - prompt, 0)
+        else:
+            # A step can aggregate several requests, whereas its occupancy
+            # represents one window. Use the disjoint completion segments.
+            own = segments["output"] + segments["reasoning"]
+        row = dict(r)
+        row["growth"] = growth
+        row["own_completion"] = own
+        row["new_content"] = max(growth - own, 0)
+        out.append(row)
+    out.reverse()
+    out.sort(key=lambda r: r["growth"], reverse=True)
+    return out[:limit]
+
+
+def hotspots(message_rows: list[dict], limit: int = 5, *, steps: list[dict] | None = None) -> dict[str, list[dict]]:
     """The steps worth looking at first, from the per-step metrics rows.
 
     ``slowest`` and ``heaviest`` are the *limit* longest and most token-heavy
@@ -65,6 +138,8 @@ def hotspots(message_rows: list[dict], limit: int = 5) -> dict[str, list[dict]]:
     smallest cache-read share -- empty when no step reports any cache read,
     because a ranking of zeros points at nothing. Rows whose cache share is
     unknown (a self-inconsistent record) are never ranked by it.
+    ``top_growth`` is the *limit* assistant steps that enlarged the next
+    prompt of the same agent the most.
     """
     with_duration = [r for r in message_rows if r.get("duration") is not None]
     with_cache = [
@@ -81,6 +156,7 @@ def hotspots(message_rows: list[dict], limit: int = 5) -> dict[str, list[dict]]:
             sorted(with_cache, key=lambda r: r["cache_ratio"])[:limit]
             if with_cache and any(r["cache_ratio"] > 0 for r in with_cache) else []
         ),
+        "top_growth": _top_growth_rows(message_rows, limit, steps),
     }
 
 
@@ -148,7 +224,7 @@ class Analysis:
 
     @cached_property
     def hotspots(self) -> dict[str, list[dict]]:
-        return hotspots(self.message_rows)
+        return hotspots(self.message_rows, steps=self.steps)
 
     # -- diagnostics ------------------------------------------------------
     @cached_property
@@ -225,6 +301,10 @@ class Analysis:
     def premature_compactions(self) -> list:
         return detect_premature_compactions(self.steps, self.raw) if supports(self.steps, "context") else []
 
+    @cached_property
+    def compaction_aftermath(self) -> list:
+        return detect_compaction_aftermath(self.steps)
+
     # -- plan and phases --------------------------------------------------
     @cached_property
     def plan_history(self) -> list:
@@ -278,13 +358,33 @@ class Analysis:
     def repeated_searches(self) -> list:
         return detect_repeated_searches(self.steps) if supports(self.steps, "tool_inputs") else []
 
+    @cached_property
+    def oversized_outputs(self) -> list:
+        return detect_oversized_outputs(self.steps)
+
+    @cached_property
+    def blind_retries(self) -> list:
+        return detect_blind_retries(self.steps)
+
+    @cached_property
+    def user_repeats(self) -> list:
+        return detect_user_repeats(self.steps)
+
+    @cached_property
+    def unvalidated_writes(self) -> list:
+        return detect_unvalidated_writes(self.steps)
+
+    @cached_property
+    def redundant_re_reads(self) -> list:
+        return detect_redundant_re_reads(self.steps)
+
     # -- triage -------------------------------------------------------------
     @cached_property
     def issues(self) -> list:
         """Ranked issues (see :mod:`.issues`): errors, then waste, then latency."""
-        from .issues import collect_overview_issues, rank_issues
+        from .issues import prepare_overview_issues
 
-        return rank_issues(collect_overview_issues(self))
+        return prepare_overview_issues(self)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         computed: list[Any] = [k for k in vars(self) if k not in ("steps", "raw", "format")]

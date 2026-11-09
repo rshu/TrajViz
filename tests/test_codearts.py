@@ -58,7 +58,7 @@ class CodeArtsTests(unittest.TestCase):
 
         self.assertEqual(preview, "actual user request")
 
-    def test_codearts_keeps_all_five_token_legend_items(self):
+    def test_codearts_drops_the_structurally_zero_cache_write_legend_item(self):
         from agent_trajviz.insight.charts import build_token_chart
         from agent_trajviz.insight.loaders import load_trajectory
         from agent_trajviz.insight.parser import parse_steps
@@ -66,12 +66,25 @@ class CodeArtsTests(unittest.TestCase):
         steps = parse_steps(load_trajectory(str(FIXTURE)))
         figure = build_token_chart(steps, format="codearts")
 
+        # Root + explore subagent → one panel each; legend still lists each
+        # series once (second panel suppresses duplicate legend entries).
+        # Cache Write is structurally zero in CodeArts exports, so it never
+        # enters the legend even though include_empty is set for this format.
         self.assertEqual(
-            [trace.name for trace in figure.data],
-            ["Fresh Input", "Cache Read", "Output", "Reasoning", "Cache Write"],
+            [trace.name for trace in figure.data if trace.showlegend is not False],
+            ["Cache Read", "Fresh Input", "Reasoning", "Output"],
         )
-        # Root assistant step: 50 fresh + 20 cache + 20 output + 10 reasoning.
-        self.assertEqual(sum(trace.y[1] for trace in figure.data), 100)
+        # Root assistant is Workflow step 1 on the first panel
+        # (50 fresh + 20 cache + 20 output + 10 reasoning).
+        root_traces = [
+            trace for trace in figure.data
+            if (getattr(trace, "xaxis", None) or "x") == "x"
+        ]
+        root_at_step = {
+            x: sum(trace.y[i] for trace in root_traces)
+            for i, x in enumerate(root_traces[0].x)
+        }
+        self.assertEqual(root_at_step[1], 100)
 
     def test_human_readable_format_label(self):
         from agent_trajviz.insight.presenters import trajectory_format_label

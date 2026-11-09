@@ -18,7 +18,7 @@ from ...i18n.ui import language_selector
 from ..presenters.overview import load_warnings_html
 from ..report import ReportError, write_report_file
 from ..session import LoadedSession
-from .shared import SharedState, format_choices
+from .shared import SharedState, drop_latest_run, format_choices
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,9 @@ def layout() -> UploadRefs:
 
     with gr.Column(visible=False) as summary_area:
         summary_banner = gr.HTML("", container=False, padding=False)
-        label_badge_html = gr.HTML("", elem_classes=["label-status-badge"])
+        # Hidden until Load Labels fills it — an empty gr.HTML still paints a
+        # padded block (~20px) between the upload row and the KPI strip.
+        label_badge_html = gr.HTML("", visible=False, elem_classes=["label-status-badge"])
 
     return UploadRefs(
         upload_accordion=upload_accordion,
@@ -128,28 +130,42 @@ def load_slots(refs: UploadRefs) -> dict:
 
 
 _TEMP_EXPORT_PREFIX = "trajviz-report-"
-# Keyed by Gradio session hash (``None`` for direct/library callers). One process
-# serves every viewer and each export deletes the directory it recorded, so a
-# single module-level string meant the next viewer's export rmtree'd the report
-# the previous viewer's Export HTML button was still pointing at. The cost of
-# keying it is that abandoned sessions need cleanup on unload, with a normal
-# interpreter-exit sweep as a fallback when the browser never sends unload.
-_last_temp_export_dirs: dict[str | None, str] = {}
+_TEMP_ISSUES_EXPORT_PREFIX = "trajviz-issues-"
+_TEMP_EXPORT_PREFIXES = (_TEMP_EXPORT_PREFIX, _TEMP_ISSUES_EXPORT_PREFIX)
+_EXPORT_KIND_BY_PREFIX = {
+    _TEMP_EXPORT_PREFIX: "report",
+    _TEMP_ISSUES_EXPORT_PREFIX: "issues",
+}
+# Keyed by (Gradio session hash, export kind). One process serves every viewer;
+# replacing an export of the same kind deletes only that kind's previous dir so
+# Export HTML and Export issues can coexist. Abandoned sessions need cleanup on
+# unload, with a normal interpreter-exit sweep as a fallback.
+_last_temp_export_dirs: dict[tuple[str | None, str], str] = {}
 _temp_export_lock = Lock()
 
 
+def _is_temp_export_dir(directory: str | None) -> bool:
+    if not directory:
+        return False
+    base = os.path.basename(directory)
+    return any(base.startswith(prefix) for prefix in _TEMP_EXPORT_PREFIXES)
+
+
 def _remove_temp_export_dir(directory: str | None) -> None:
-    if directory and os.path.basename(directory).startswith(_TEMP_EXPORT_PREFIX):
+    if _is_temp_export_dir(directory):
         shutil.rmtree(directory, ignore_errors=True)
 
 
 def cleanup_session_export(request: gr.Request) -> None:
-    """Release only the departing browser session's temporary report."""
+    """Release only the departing browser session's temporary exports and load record."""
     session = getattr(request, "session_hash", None)
     if session is None:
         return
+    drop_latest_run(session)
     with _temp_export_lock:
-        _remove_temp_export_dir(_last_temp_export_dirs.pop(session, None))
+        stale = [key for key in _last_temp_export_dirs if key[0] == session]
+        for key in stale:
+            _remove_temp_export_dir(_last_temp_export_dirs.pop(key, None))
 
 
 def _cleanup_temp_exports() -> None:
@@ -167,15 +183,54 @@ def _export_off():
     return gr.update(value=None, interactive=False)
 
 
-def _replace_temp_export_dir(new_path: str, session: str | None = None) -> None:
-    """Drop *this session's* previous mkdtemp export dir once its replacement is written."""
+def _replace_temp_export_dir(
+    new_path: str,
+    session: str | None = None,
+    *,
+    kind: str = "report",
+) -> None:
+    """Drop *this session's* previous mkdtemp dir for *kind* once its replacement is written."""
     parent = os.path.dirname(os.path.abspath(new_path))
+    key = (session, kind)
     with _temp_export_lock:
-        previous = _last_temp_export_dirs.get(session)
-        if os.path.basename(parent).startswith(_TEMP_EXPORT_PREFIX):
-            _last_temp_export_dirs[session] = parent
+        previous = _last_temp_export_dirs.get(key)
+        if _is_temp_export_dir(parent):
+            _last_temp_export_dirs[key] = parent
         if previous != parent:
             _remove_temp_export_dir(previous)
+
+
+def stage_gradio_download(
+    writer,
+    *,
+    prefix: str = _TEMP_EXPORT_PREFIX,
+    request: gr.Request | None = None,
+):
+    """Write a DownloadButton file under Gradio's upload cache; return ``gr.update``.
+
+    *writer* receives the temporary directory path and must return the absolute
+    file path to serve. On failure the temp dir is removed and the button is
+    disarmed.
+    """
+    kind = _EXPORT_KIND_BY_PREFIX.get(prefix)
+    if kind is None:
+        raise ValueError(f"unknown export temp prefix: {prefix!r}")
+    directory = path = None
+    try:
+        cache_root = gr.utils.get_upload_folder()
+        os.makedirs(cache_root, exist_ok=True)
+        directory = tempfile.mkdtemp(prefix=prefix, dir=cache_root)
+        path = writer(directory)
+    except Exception:
+        logger.exception("staging Gradio download failed")
+        return _export_off()
+    finally:
+        if path is None:
+            _remove_temp_export_dir(directory)
+    _replace_temp_export_dir(
+        path, getattr(request, "session_hash", None), kind=kind,
+    )
+    return gr.update(value=path, interactive=True)
 
 
 def prepare_html_export(source, _steps=None, dark=False, request: gr.Request | None = None):
@@ -253,6 +308,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
     # `summary_area` is a plain Column above the Tabs — never an accordion — so a
     # step-truncation notice (session.MAX_STEPS) cannot be collapsed out of
     # sight, and `report.py` repeats the same strip in the exported header.
+    # Kept visible after load so label badges can appear (badge HTML starts hidden).
     return {
         # Label callbacks reveal this parent when their own badge has content.
         "summary_area": gr.update(visible=bool(warnings.strip())),

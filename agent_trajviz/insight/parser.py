@@ -157,6 +157,14 @@ def infer_non_cache_input(
                           cache_read_tokens, cache_write_tokens)["fresh"]
 
 
+def step_token_segments(tokens: dict) -> dict:
+    """Apply the canonical disjoint breakdown to a step's recorded usage."""
+    return token_segments(
+        tokens.get("total", 0), tokens.get("input", 0), tokens.get("output", 0),
+        tokens.get("reasoning", 0), tokens.get("cache_read", 0), tokens.get("cache_write", 0),
+    )
+
+
 def _parse_parts(parts_raw: list) -> tuple[list, list, int, bool, str]:
     """Parse raw parts into structured parts, tool calls, error count, reasoning flag, and preview."""
     from .tool_failure import tool_call_failed

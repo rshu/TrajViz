@@ -60,6 +60,31 @@ class MixedMarkdownTests(unittest.TestCase):
         self.assertIn("&lt;script&gt;", html)
         self.assertIn("<h3>", html)
 
+    def test_table_reduces_step_link_spans_to_numbers(self):
+        from agent_trajviz.insight.formatting import _step_link_md
+
+        md = (
+            "| Step | Role | Duration (s) |\n"
+            "|---:|---|---:|\n"
+            f"| {_step_link_md(3)} | `assistant` | 1.50 |\n"
+        )
+        html = _mixed_md_to_html(md)
+        # A static report has no Workflow tab: the anchor becomes the bare number.
+        self.assertIn("<td>3</td>", html)
+        self.assertNotIn("insight-step-link", html)
+        self.assertNotIn("tv-step", html)
+
+    def test_table_escapes_forged_step_link_span(self):
+        forged = (
+            "<a href='#tv-step-3' class='insight-step-link' onclick=\"alert(1)\">3</a>"
+        )
+        md = f"| Step |\n|---|\n| {forged} |\n"
+        html = _mixed_md_to_html(md)
+        # Not an exact reconstruction: the whole anchor is escaped as text,
+        # so the onclick never reaches the browser as a live attribute.
+        self.assertIn("&lt;a", html)
+        self.assertNotIn("<a href", html)
+
 
 class ReportBuildTests(unittest.TestCase):
     def setUp(self):

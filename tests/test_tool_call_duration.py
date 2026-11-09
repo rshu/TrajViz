@@ -1,4 +1,5 @@
-"""tool_call_duration_ms prefers part wall-clock over execution-only stamps."""
+"""tool_call_duration_ms prefers part wall-clock; compaction-rewritten ends
+are replaced by state.time.end (the last genuine write)."""
 
 from __future__ import annotations
 
@@ -58,6 +59,49 @@ class ToolCallDurationMsTests(unittest.TestCase):
             "duration_ms": 20,
         }
         self.assertEqual(tool_call_duration_ms(tc), 500.0)
+
+    def test_falls_back_to_part_wall_clock_when_no_execution_window(self):
+        tc = {"time_created": 1_000, "time_updated": 1_500}
+        self.assertEqual(tool_call_duration_ms(tc), 500.0)
+
+    def test_compaction_rewrite_does_not_pollute_duration(self):
+        # OpenCode compaction rewrites the part row hours after the tool
+        # finished, stamping state.time.compacted == part time_updated.
+        # The window must end at state.time.end — the last genuine write —
+        # not the compaction row-write time. (For OpenCode bash parts
+        # state.time is stamped at result finalization, so its end sits at
+        # the true completion.)
+        tc = {
+            "time_created": 1_000,
+            "time_updated": 23_556_000,
+            "time_compacted": 23_556_000,
+            "time_start": 1_230,
+            "time_end": 1_235,
+        }
+        self.assertEqual(tool_call_duration_ms(tc), 235.0)
+
+    def test_compacted_part_time_is_rejected_even_without_state_end(self):
+        tc = {
+            "time_created": 1_000,
+            "time_updated": 23_556_000,
+            "time_compacted": 23_556_000,
+            "duration_ms": 80,
+        }
+        self.assertEqual(tool_call_duration_ms(tc), 80.0)
+
+    def test_part_wall_clock_includes_queue_wait(self):
+        # A call issued at t=0 whose execution was deferred ~8 h (idle/
+        # permission wait) is outstanding the whole span, and OpenCode bash
+        # parts stamp state.time at finalization — the true process start is
+        # not recorded. The part wall-clock (queue included) is therefore
+        # the only defensible bash duration.
+        tc = {
+            "time_created": 0,
+            "time_updated": 28_972_000,
+            "time_start": 28_971_900,
+            "time_end": 28_971_908,
+        }
+        self.assertEqual(tool_call_duration_ms(tc), 28_972_000.0)
 
     def test_falls_back_to_execution_window(self):
         tc = {"time_start": 100, "time_end": 250}

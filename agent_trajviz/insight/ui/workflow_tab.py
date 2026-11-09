@@ -22,29 +22,9 @@ WORKFLOW_JS = """
                                 if (!bar) return;
                                 var active = Array.from(bar.querySelectorAll('.filter-chip.chip-active'))
                                     .map(function(c) { return c.dataset.filter; });
-                                var hiddenEl = document.querySelector(
-                                    '#wf-filter-hidden textarea, #wf-filter-hidden input'
-                                );
-                                if (!hiddenEl) return;
-                                var proto = hiddenEl.tagName === 'TEXTAREA'
-                                    ? window.HTMLTextAreaElement.prototype
-                                    : window.HTMLInputElement.prototype;
-                                var descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
-                                if (descriptor && descriptor.set) {
-                                    descriptor.set.call(hiddenEl, active.join(','));
-                                } else {
-                                    hiddenEl.value = active.join(',');
+                                if (typeof window.tvSetGradioText === 'function') {
+                                    window.tvSetGradioText('#wf-filter-hidden', active.join(','));
                                 }
-                                hiddenEl.dispatchEvent(new InputEvent('input', {
-                                    bubbles: true,
-                                    composed: true,
-                                    inputType: 'insertText',
-                                    data: null
-                                }));
-                                hiddenEl.dispatchEvent(new Event('change', {
-                                    bubbles: true,
-                                    composed: true
-                                }));
                             };
                             window.__setWorkflowChipActive = function(chip, active) {
                                 if (!chip) return;
@@ -358,6 +338,7 @@ WORKFLOW_JS = """
 @dataclass
 class WorkflowRefs:
     wf_toc_toggle: gr.Button
+    wf_view_mode: gr.Radio
     wf_filter_chips_html: gr.HTML
     wf_search: gr.Textbox
     wf_filter_hidden: gr.Textbox
@@ -372,6 +353,14 @@ def layout() -> WorkflowRefs:
     with gr.TabItem("Workflow"):
         with gr.Row(equal_height=True, elem_classes=["wf-toolbar"]):
             wf_toc_toggle = gr.Button("TOC", variant="secondary", scale=0, min_width=50)
+            wf_view_mode = gr.Radio(
+                ["Cards", "Expanded"],
+                value="Cards",
+                label="View",
+                scale=0,
+                min_width=150,
+                info="Expanded shows full step content inline",
+            )
             wf_filter_chips_html = gr.HTML(
                 render_filter_chips(),
                 elem_id="wf-filter-chips",
@@ -408,6 +397,7 @@ def layout() -> WorkflowRefs:
         detail_store = gr.HTML("", elem_id="wf-detail-store")
     return WorkflowRefs(
         wf_toc_toggle=wf_toc_toggle,
+        wf_view_mode=wf_view_mode,
         wf_filter_chips_html=wf_filter_chips_html,
         wf_search=wf_search,
         wf_filter_hidden=wf_filter_hidden,
@@ -422,6 +412,7 @@ def layout() -> WorkflowRefs:
 def load_slots(refs: WorkflowRefs) -> dict:
     """Named Gradio components filled by the load packer."""
     return {
+        "wf_view_mode": refs.wf_view_mode,
         "wf_filter_chips_html": refs.wf_filter_chips_html,
         "wf_filter_hidden": refs.wf_filter_hidden,
         "wf_count_html": refs.wf_count_html,
@@ -437,6 +428,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
     del dark, banner
     if session is None:
         return {
+            "wf_view_mode": "Cards",
             "wf_filter_chips_html": render_filter_chips(),
             "wf_filter_hidden": ",".join(FILTER_CHIPS_DEFAULT),
             "wf_count_html": "",
@@ -447,6 +439,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
         }
     wf = build_workflow_outputs(session.steps)
     return {
+        "wf_view_mode": "Cards",
         "wf_filter_chips_html": wf["wf_chips"],
         "wf_filter_hidden": wf["wf_filter_val"],
         "wf_count_html": wf["wf_count"],
@@ -459,6 +452,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
 
 def bind(refs: WorkflowRefs, shared: SharedState) -> None:
     state_steps = shared.state_steps
+    wf_view_mode = refs.wf_view_mode
     wf_filter_hidden = refs.wf_filter_hidden
     wf_search = refs.wf_search
     toc_html = refs.toc_html
@@ -466,9 +460,12 @@ def bind(refs: WorkflowRefs, shared: SharedState) -> None:
     wf_count_html = refs.wf_count_html
 
     @safe_callback("Workflow filter")
-    def do_filter_workflow(steps, filter_csv, keyword, current_toc):
+    def do_filter_workflow(steps, filter_csv, keyword, current_toc, view_mode):
         """Re-render Workflow cards, count, and TOC with filters applied."""
-        return build_filtered_workflow_outputs(steps, filter_csv, keyword, current_toc)
+        return build_filtered_workflow_outputs(
+            steps, filter_csv, keyword, current_toc,
+            expanded=str(view_mode) == "Expanded",
+        )
 
     @safe_callback("Workflow contents")
     def on_toc_toggle(current_toc):
@@ -485,13 +482,19 @@ def bind(refs: WorkflowRefs, shared: SharedState) -> None:
         outputs=[toc_html],
     )
 
+    filter_inputs = [state_steps, wf_filter_hidden, wf_search, toc_html, wf_view_mode]
+    wf_view_mode.change(
+        fn=do_filter_workflow,
+        inputs=filter_inputs,
+        outputs=[workflow_html, wf_count_html, toc_html],
+    )
     wf_filter_hidden.change(
         fn=do_filter_workflow,
-        inputs=[state_steps, wf_filter_hidden, wf_search, toc_html],
+        inputs=filter_inputs,
         outputs=[workflow_html, wf_count_html, toc_html],
     )
     wf_search.change(
         fn=do_filter_workflow,
-        inputs=[state_steps, wf_filter_hidden, wf_search, toc_html],
+        inputs=filter_inputs,
         outputs=[workflow_html, wf_count_html, toc_html],
     )

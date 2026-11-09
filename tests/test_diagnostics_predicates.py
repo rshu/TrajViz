@@ -132,9 +132,15 @@ class SessionFieldAccessTests(unittest.TestCase):
             plan_history=[],
             edit_thrash=[],
             repeated_searches=[],
+            oversized_outputs=[],
+            blind_retries=[],
+            user_repeats=[],
+            unvalidated_writes=[],
+            redundant_re_reads=[],
             phase_regressions=[],
             performance_bottlenecks=[],
             premature_compactions=[],
+            compaction_aftermath=[],
             file_interactions=[],
             format="",
         )
@@ -143,7 +149,7 @@ class SessionFieldAccessTests(unittest.TestCase):
 
     def test_missing_session_field_fails_loudly(self):
         base = self._stub().__dict__
-        for name in ("edit_thrash", "repeated_searches", "premature_compactions"):
+        for name in ("edit_thrash", "repeated_searches", "oversized_outputs", "blind_retries", "user_repeats", "unvalidated_writes", "redundant_re_reads", "premature_compactions"):
             with self.subTest(field=name):
                 stub = SimpleNamespace(**{k: v for k, v in base.items() if k != name})
                 with self.assertRaises(AttributeError):

@@ -141,14 +141,19 @@ def test_issue_suggestions_use_session_connection_and_language(handlers):
         return '{"where":"AGENTS.md","fix":"Check the command","confidence":"high"}'
 
     with (
-        patch.object(overview_tab, "collect_overview_issues", return_value=[issue]),
+        patch.object(overview_tab, "prepare_overview_issues", return_value=[issue]),
         patch.object(issue_judge, "complete_chat", side_effect=chat),
     ):
         results = list(handlers["on_suggest_fixes"].fn(run, settings))
     assert captured["config"] is settings.config
     assert "German" in captured["system"] and "German" in captured["messages"][0]["content"]
-    assert "Check the command" in results[-1]
-    assert settings.config.api_key not in "".join(results)
+    last_html = results[-1][0] if isinstance(results[-1], tuple) else results[-1]
+    assert "Check the command" in last_html
+    joined = "".join(
+        (item[0] if isinstance(item, tuple) else item) for item in results
+        if isinstance(item, (str, tuple))
+    )
+    assert settings.config.api_key not in joined
 
 
 def test_unconfigured_issue_suggestions_point_to_settings_without_calling_model(handlers):
@@ -156,4 +161,5 @@ def test_unconfigured_issue_suggestions_point_to_settings_without_calling_model(
     with patch.object(issue_judge, "complete_chat") as call:
         results = list(handlers["on_suggest_fixes"].fn(run, _settings(api_key="")))
     call.assert_not_called()
-    assert "Settings" in results[-1]
+    last_html = results[-1][0] if isinstance(results[-1], tuple) else results[-1]
+    assert "Settings" in last_html

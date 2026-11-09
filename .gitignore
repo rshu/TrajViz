@@ -63,6 +63,7 @@ gradio_cached_examples/
 
 # Trajectory data (keep small samples, ignore large dumps)
 data/
+windows_opencode_session.json
 # ...but DO track the small, hermetic attribution test fixture, whose
 # reference data lives under the `data/` subdir evaluation's layout requires.
 !tests/fixtures/reference/data/

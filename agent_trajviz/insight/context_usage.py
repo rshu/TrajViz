@@ -16,11 +16,17 @@ import math
 from collections.abc import Iterable
 from typing import Any
 
-from agent_trajviz.tool_vocab import SPAWN_TOOL_NAMES, is_mcp_tool, parse_skill_name
+from agent_trajviz.tool_vocab import (
+    SPAWN_TOOL_NAMES,
+    WRITE_TOOL_NAMES,
+    is_mcp_tool,
+    parse_skill_name,
+    write_target_path,
+)
 
 from .formats.common import as_text
 from .metrics import effective_agent, tagged_subagent_display_label
-from .parser import token_segments, spawned_child_session_id
+from .parser import step_token_segments, spawned_child_session_id
 
 # Display order follows Cursor's tray, then TrajViz-only tool_outputs
 # (Cursor folds tool results into Conversation).
@@ -229,14 +235,7 @@ def step_context_occupancy(step: dict) -> dict:
         # at a time, so occupancy is the largest one, not the summed usage.
         cached = tokens.get("prompt_peak_cache_read") or 0
         return {"fresh": int(peak - cached), "cache_read": int(cached), "occupancy": int(peak)}
-    seg = token_segments(
-        tokens.get("total", 0) or 0,
-        tokens.get("input", 0) or 0,
-        tokens.get("output", 0) or 0,
-        tokens.get("reasoning", 0) or 0,
-        tokens.get("cache_read", 0) or 0,
-        tokens.get("cache_write", 0) or 0,
-    )
+    seg = step_token_segments(tokens)
     # Tokens written to the cache this turn were part of this turn's prompt
     # (Anthropic's cache_creation_input_tokens). Leaving them out made a Claude
     # Code first turn — which writes the whole system prompt to the cache —
@@ -809,6 +808,26 @@ def detect_compaction_events(steps: list[dict]) -> list[dict]:
 PREMATURE_COMPACTION_RATIO = 0.5
 
 
+def _explicit_compaction_events(steps: list[dict]) -> list[dict]:
+    """Explicit compaction signals, one event per compaction.
+
+    One compaction leaves several signals on the window — the compaction
+    part on the user turn, the summary turn right after it, a compress
+    step. They are coalesced per agent (see :func:`coalesce_compaction_events`)
+    so each compaction is judged once instead of once per signal.
+    """
+    by_agent: dict[str, list[dict]] = {}
+    for event in detect_compaction_events(steps):
+        if event.get("kind") not in _EXPLICIT_COMPACTION_KINDS:
+            continue
+        by_agent.setdefault(str(event.get("agent") or ""), []).append(event)
+    return [
+        merged
+        for group in by_agent.values()
+        for merged in coalesce_compaction_events(group)
+    ]
+
+
 def detect_premature_compactions(
     steps: list[dict],
     raw: dict | None = None,
@@ -828,9 +847,7 @@ def detect_premature_compactions(
     # With an unknown window only "grew" can be judged; "low occupancy" would
     # be measured against a window the export disproves.
     limit, _, _ = resolve_context_window(steps, raw, override=window_limit)
-    for event in detect_compaction_events(steps):
-        if event.get("kind") not in _EXPLICIT_COMPACTION_KINDS:
-            continue
+    for event in _explicit_compaction_events(steps):
         before = event.get("occupancy_before")
         after = event.get("occupancy_after")
         grew = isinstance(before, (int, float)) and isinstance(after, (int, float)) and int(after) >= int(before)
@@ -855,6 +872,98 @@ def detect_premature_compactions(
             }
         )
     return flagged
+
+
+# -- compaction aftermath ---------------------------------------------------
+
+#: Read tools whose output puts file content into the context window.
+_AFTERMATH_READ_TOOLS = frozenset({"Read", "read"})
+#: Pre-compaction reads must exceed post-compaction reads by this factor
+#: (1.2 == "20% less after") before a hint is emitted.
+_AFTERMATH_READ_SHRINK_RATIO = 1.2
+
+
+def detect_compaction_aftermath(steps: list[dict]) -> list[dict]:
+    """A compaction between two consecutive writes whose file reads then shrank.
+
+    The reads between the last successful write before the compaction and the
+    first after it are what the second write was working from. When the
+    pre-compaction volume exceeds the post-compaction volume by
+    ``_AFTERMATH_READ_SHRINK_RATIO``, emit one advisory event. No write on
+    both sides, or reads that kept pace, produces nothing.
+    """
+    from .token_explain import _est_tokens
+    from .tool_failure import tool_call_failed
+
+    events = _explicit_compaction_events(steps)
+    if not events:
+        return []
+
+    by_index = {int(s.get("index", i)): s for i, s in enumerate(steps)}
+    # Tokenize each file read once. Which compaction it belongs to is a
+    # filter on step index and session, not a reason to rescan the output.
+    reads: list[tuple[int, int, str, int]] = []
+    writes: list[tuple[int, int, str]] = []
+    for s in steps:
+        sid = str(s.get("session_id") or "")
+        idx = int(s.get("index", 0))
+        for pos, tc in enumerate(s.get("tool_calls") or []):
+            name = str(tc.get("tool_name") or "")
+            inp = tc.get("input")
+            if name in _AFTERMATH_READ_TOOLS and write_target_path(inp if isinstance(inp, dict) else {}):
+                reads.append((idx, pos, sid, _est_tokens(str(tc.get("output") or ""))))
+            elif name in WRITE_TOOL_NAMES:
+                if write_target_path(inp if isinstance(inp, dict) else {}) and not tool_call_failed(tc):
+                    writes.append((idx, pos, sid))
+
+    def _in_session(session: str, sid: str) -> bool:
+        # A blank id on either side stays visible: an unscoped compaction
+        # sees every step, and a step with no session belongs to every one.
+        return not (session and sid and sid != session)
+
+    out: list[dict] = []
+    for event in events:
+        c_idx = int(event.get("step", 0))
+        session = str(by_index.get(c_idx, {}).get("session_id") or "")
+
+        prev_writes = [
+            (idx, pos) for idx, pos, sid in writes
+            if idx < c_idx and _in_session(session, sid)
+        ]
+        next_writes = [
+            (idx, pos) for idx, pos, sid in writes
+            if idx > c_idx and _in_session(session, sid)
+        ]
+        if not prev_writes or not next_writes:
+            continue  # no consecutive-write pair spans this compaction
+        w_prev = max(prev_writes)
+        w_next = min(next_writes)
+
+        before_tokens = sum(
+            tokens for idx, pos, sid, tokens in reads
+            if _in_session(session, sid) and w_prev < (idx, pos) and idx < c_idx
+        )
+        after_tokens = sum(
+            tokens for idx, pos, sid, tokens in reads
+            if _in_session(session, sid) and idx > c_idx and (idx, pos) < w_next
+        )
+        if before_tokens <= 0 or before_tokens <= _AFTERMATH_READ_SHRINK_RATIO * after_tokens:
+            continue
+
+        dropped = event.get("dropped")
+        out.append(
+            {
+                "step": c_idx,
+                "agent": event.get("agent", ""),
+                "dropped": int(dropped) if isinstance(dropped, (int, float)) else None,
+                "prev_write_step": w_prev[0],
+                "next_write_step": w_next[0],
+                "reads_before_tokens": before_tokens,
+                "reads_after_tokens": after_tokens,
+                "shrink_pct": round(100 * (before_tokens - after_tokens) / before_tokens),
+            }
+        )
+    return out
 
 
 def _live_occupancy(step: dict, agent_id: str, snapshot_agents: set[str]) -> dict | None:
@@ -1344,7 +1453,7 @@ def context_usage_breakdown(
 
     if anchor_step >= 0:
         last_comp = _last_stored_compaction_step(
-            detect_compaction_events(steps), agent_id, anchor_step,
+            _explicit_compaction_events(steps), agent_id, anchor_step,
         )
         start = 0 if last_comp is None else last_comp + 1
         lo = max(0, last_comp - 1) if last_comp is not None else start

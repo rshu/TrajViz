@@ -19,6 +19,7 @@ import plotly.graph_objects as go
 
 from ..errors import ReportError  # public; importable without the charts extra
 from .._fileio import ensure_output_does_not_overwrite, input_sources, write_text_atomic
+from .formatting import _step_link_md
 
 from .loaders import FORMAT_LABELS
 from .presenters.overview import (
@@ -55,6 +56,10 @@ _LIVE_MARKUP = re.compile(
 # A markdown cell delimiter is an unescaped `|`; `formatting._md_cell_text`
 # writes `\|` for a pipe that came out of the trajectory.
 _MD_CELL_SEP = re.compile(r"(?<!\\)\|")
+# A dashboard step-link cell, exactly as `formatting._step_link_md` writes it.
+_STEP_LINK_CELL = re.compile(
+    r"^<a href='#tv-step-(\d+)' class='insight-step-link'>\d+</a>$"
+)
 
 
 def build_report_html(
@@ -403,13 +408,22 @@ def _md_table_to_html(block: list[str]) -> str:
             parts = parts[:-1]
         return [c.strip().replace("\\|", "|") for c in parts]
 
+    def cell_html(c: str) -> str:
+        # The dashboard's step-link spans have no Workflow tab to jump to in
+        # a static report; reduce them to the bare step number. The exact
+        # reconstruction check keeps a forged look-alike from passing through.
+        m = _STEP_LINK_CELL.match(c)
+        if m and c == _step_link_md(int(m.group(1))):
+            return m.group(1)
+        return _inline(c)
+
     header = cells(block[0])
     body_rows = [cells(row) for row in block[2:]]
     head = "".join(f"<th>{_inline(c)}</th>" for c in header)
     rows = []
     for row in body_rows:
         padded = row + [""] * (len(header) - len(row))
-        rows.append("<tr>" + "".join(f"<td>{_inline(c)}</td>" for c in padded[: len(header)]) + "</tr>")
+        rows.append("<tr>" + "".join(f"<td>{cell_html(c)}</td>" for c in padded[: len(header)]) + "</tr>")
     return "<table><thead><tr>" + head + "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
 
 

@@ -188,6 +188,46 @@ def _percentile(values: list[float], q: float) -> float:
     return vals[idx]
 
 
+def _num_ms(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _part_time_compacted(tc: dict) -> bool:
+    """True when the part row's ``time_updated`` reflects a compaction rewrite.
+
+    OpenCode compaction/prune passes rewrite tool parts long after they
+    finished: they stamp ``state.time.compacted`` and bump the part row's
+    ``time_updated`` to that later write. Such an ``updated`` is a row-write
+    time, not the tool's result time, so a part wall-clock ending at or
+    after ``time_compacted`` cannot be trusted as a duration bound.
+    """
+    compacted, updated = tc.get("time_compacted"), tc.get("time_updated")
+    return _num_ms(compacted) and _num_ms(updated) and updated >= compacted
+
+
+def _tool_call_part_window(tc: dict) -> tuple[float, float] | None:
+    """Part-level ``(start, end)`` ms window of a call, or ``None``.
+
+    The window runs from call issuance (``time_created``) to the last
+    *genuine* row write. Normally that is ``time_updated`` (the result
+    write). When a compaction pass rewrote the row
+    (:func:`_part_time_compacted`), the last genuine write is
+    ``state.time.end`` — for OpenCode bash parts ``state.time`` is stamped
+    at result finalization, so its ``end`` sits at the true completion even
+    though its ``start`` is not the execution start. Without a trustworthy
+    end there is no part window at all.
+    """
+    created, updated = tc.get("time_created"), tc.get("time_updated")
+    if not (_num_ms(created) and _num_ms(updated) and updated >= created):
+        return None
+    if not _part_time_compacted(tc):
+        return float(created), float(updated)
+    end = tc.get("time_end")
+    if _num_ms(end) and end >= created:
+        return float(created), float(end)
+    return None
+
+
 def tool_call_duration_ms(tc: dict) -> float | None:
     """Best-effort duration of one tool call in milliseconds.
 
@@ -197,10 +237,15 @@ def tool_call_duration_ms(tc: dict) -> float | None:
 
     Native fallback chain:
 
-    1. ``time_created``/``time_updated`` — OpenCode part wall-clock from when
-       the tool call was issued until the result was written (includes queue).
-    2. ``time_start``/``time_end`` — execution window only (OpenCode
-       ``state.time``, or formats that stamp run bounds).
+    1. ``time_created``/``time_updated`` — part wall-clock from when the
+       tool call was issued until the result was written (includes queue).
+       When a compaction pass rewrote the row (``time_updated`` >=
+       ``time_compacted``), the polluted ``updated`` is replaced by
+       ``state.time.end``, the last genuine write (see
+       :func:`_tool_call_part_window`).
+    2. ``time_start``/``time_end`` — execution window (formats that stamp
+       run bounds: Claude Code, DSH, Cursor, ICode ``_chrys_timing``, and
+       OpenCode ``task`` children).
     3. ``duration_ms``, then ``metadata.totalDurationMs`` (Claude Code).
 
     Returns ``None`` when no usable timing exists. Shared by analytics,
@@ -221,15 +266,11 @@ def tool_call_duration_ms(tc: dict) -> float | None:
                 precise = None
             if precise is not None and math.isfinite(precise) and precise >= 0:
                 return precise
-    created, updated = tc.get("time_created"), tc.get("time_updated")
-    if (
-        isinstance(created, (int, float))
-        and isinstance(updated, (int, float))
-        and updated >= created
-    ):
-        return float(updated - created)
+    window = _tool_call_part_window(tc)
+    if window is not None:
+        return window[1] - window[0]
     ts, te = tc.get("time_start"), tc.get("time_end")
-    if isinstance(ts, (int, float)) and isinstance(te, (int, float)) and te >= ts:
+    if _num_ms(ts) and _num_ms(te) and te >= ts:
         return float(te - ts)
     dm = tc.get("duration_ms")
     if not isinstance(dm, (int, float)):
@@ -297,24 +338,21 @@ def tool_call_window_ms(tc: dict) -> tuple[float, float] | None:
     """Absolute ``(start, end)`` ms window of one tool call, or ``None``.
 
     Native calls use the same fallback order as :func:`tool_call_duration_ms`:
-    part wall-clock (``time_created``/``time_updated``) before execution bounds
-    (``time_start``/``time_end``). OTLP unions use exact nanosecond execution
-    bounds in :func:`non_spawn_tool_seconds` instead of display timestamps.
+    the compaction-aware part window (:func:`_tool_call_part_window`) before
+    execution bounds (``time_start``/``time_end``). OTLP unions use exact
+    nanosecond execution bounds in :func:`non_spawn_tool_seconds` instead of
+    display timestamps.
     """
     from .telemetry_quality import tool_field_observed
 
     if not tool_field_observed(tc, "duration"):
         return None
-    for lo_key, hi_key in (("time_created", "time_updated"), ("time_start", "time_end")):
-        lo, hi = tc.get(lo_key), tc.get(hi_key)
-        if (
-            isinstance(lo, (int, float))
-            and isinstance(hi, (int, float))
-            and not isinstance(lo, bool)
-            and not isinstance(hi, bool)
-            and hi >= lo
-        ):
-            return float(lo), float(hi)
+    window = _tool_call_part_window(tc)
+    if window is not None:
+        return window
+    ts, te = tc.get("time_start"), tc.get("time_end")
+    if _num_ms(ts) and _num_ms(te) and te >= ts:
+        return float(ts), float(te)
     return None
 
 
@@ -387,13 +425,36 @@ def non_spawn_tool_seconds(step: dict) -> float:
     return total
 
 
+def format_duration_seconds(seconds: float, *, fractional_under: float | None = None) -> str:
+    """Human duration: ``45s`` / ``5m 40s`` / ``2h 05m`` / ``2d 4h``.
+
+    Pass ``fractional_under=10`` for chart tooltips that keep one decimal below
+    that threshold (``0.5s``); wall-clock cards leave it unset and round.
+    """
+    if not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or seconds < 0:
+        seconds = 0.0
+    if fractional_under is not None and seconds < fractional_under:
+        text = f"{seconds:.1f}".rstrip("0").rstrip(".")
+        return f"{text}s"
+    total = int(round(seconds))
+    if total < 60:
+        return f"{total}s"
+    minutes, secs = divmod(total, 60)
+    if minutes < 60:
+        return f"{minutes}m {secs}s" if secs else f"{minutes}m"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours}h {minutes:02d}m" if minutes else f"{hours}h"
+    days, hours = divmod(hours, 24)
+    return f"{days}d {hours}h" if hours else f"{days}d"
+
+
 def wall_clock_fmt(metrics: dict) -> tuple[float, str]:
     """Return (wall_seconds, formatted_string) for wall-clock time."""
     wall = metrics["wall_clock"] if isinstance(metrics["wall_clock"], (int, float)) else metrics["total_duration"]
     if wall is None:
         return 0.0, "n/a"
-    fmt = f"{wall:.0f}s" if wall < 3600 else f"{wall / 60:.1f}m"
-    return wall, fmt
+    return wall, format_duration_seconds(wall)
 
 
 def generation_seconds(step: dict) -> tuple[float, float] | None:

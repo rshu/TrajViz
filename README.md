@@ -109,6 +109,7 @@ use `agent-trajviz-converge --help`. Every command provides `--help`.
 | Pi | Native JSONL under `~/.pi/agent/sessions/`, using the active history branch |
 | DeepSeek Harness | Native session directories, `session.vN.jsonl[.zstd]`, or legacy session exports |
 | CodeArts | AgentKernel session exports from its `opencode.db` store |
+| CodeAgent | Session JSON exports with `session` + `child_sessions` (data-wrapped messages/parts) |
 | ICode | Chrys expanded-session JSON with nested subagent sessions |
 
 ### Collect sessions and subagents
@@ -267,6 +268,13 @@ usage analyses.
 </details>
 
 ## Optional LLM features
+
+The **AI Trajectory Analysis** sidebar starts closed; open it from the labeled
+control on the right edge. It answers follow-up questions using the same
+dashboard statistics (health verdicts, bottlenecks, failures, fruitless
+streaks). Select **Analyze issue with AI** on an Overview issue to open the sidebar
+and ask a focused question about that issue. Select **Suggest fixes with LLM**
+to summarize the run and get recommendations for ranked issues.
 
 Open **AI Trajectory Analysis → Settings** to configure the provider, API key,
 base URL, model and request options. Use **Analyze trajectory** on the Analysis

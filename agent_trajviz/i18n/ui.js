@@ -30,8 +30,8 @@
         if (key === null) return;
         let args = {};
         try { args = JSON.parse(node.getAttribute("data-tv-i18n-args") || "{}"); } catch (_) { return; }
-        const translated = language === "en" ? node.getAttribute("data-tv-i18n-en") || format(key, args)
-            : window.tvTranslate(key, args);
+        const translated = language === "en" ? node.getAttribute("data-tv-i18n-en") ?? format(key, args)
+            : node.getAttribute("data-tv-i18n-zh") ?? window.tvTranslate(key, args);
         const attribute = node.getAttribute("data-tv-i18n-attr");
         if (attribute === "title" || attribute === "aria-label" || attribute === "data-help") {
             if (node.getAttribute(attribute) !== translated) node.setAttribute(attribute, translated);
@@ -203,7 +203,7 @@
                 if (graph) plot(graph);
             }
         }).observe(document.body, {childList: true, characterData: true, subtree: true,
-            attributes: true, attributeFilter: ["data-tv-i18n", "data-tv-i18n-args", "data-tv-i18n-en",
+            attributes: true, attributeFilter: ["data-tv-i18n", "data-tv-i18n-args", "data-tv-i18n-en", "data-tv-i18n-zh",
                 "data-tv-i18n-attr", "title", "aria-label", "data-help"]});
     }
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, {once: true});

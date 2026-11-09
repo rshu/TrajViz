@@ -783,6 +783,31 @@ class DshLoaderTests(unittest.TestCase):
             raw = load_trajectory(isolated)
         self.assertEqual(raw["metadata"]["sub_agent_count"], 1)
 
+    def test_export_root_reads_the_header_without_decoding_a_truncated_body(self):
+        export_dir = os.path.join(self.tmp, "export-dir")
+        header_file = _write(export_dir, "session.jsonl", self.events[:1])
+        header = Path(header_file).read_bytes()
+        body = b'{"type":"user/message","text":"'
+        padding = b"x" * (65535 - len(header) - len(body))
+        # A full 64 KiB byte read would end inside the three-byte character.
+        Path(header_file).write_bytes(header + body + padding + "中".encode() + b'"}\n')
+        _write(export_dir, os.path.join("subagents", "child-1", "session.jsonl"), self._child_events())
+        isolated = _write(os.path.join(self.tmp, "cache"), "session.jsonl", self.events)
+        with patch.dict(os.environ, {"TRAJVIZ_DSH_EXPORT_ROOT": export_dir}):
+            run = tv.load(isolated)
+        self.assertTrue(any(step["session_id"] == "child-1" for step in run.steps))
+
+    def test_utf16_export_root_header_and_child_load(self):
+        export_dir = os.path.join(self.tmp, "export-dir")
+        header_file = _write(export_dir, "session.jsonl", self.events[:1])
+        child_file = _write(export_dir, os.path.join("subagents", "child-1", "session.jsonl"), self._child_events())
+        for path in map(Path, (header_file, child_file)):
+            path.write_bytes(path.read_text(encoding="utf-8").encode("utf-16"))
+        isolated = _write(os.path.join(self.tmp, "cache"), "session.jsonl", self.events)
+        with patch.dict(os.environ, {"TRAJVIZ_DSH_EXPORT_ROOT": export_dir}):
+            run = tv.load(isolated)
+        self.assertTrue(any(step["session_id"] == "child-1" for step in run.steps))
+
     def test_child_log_merges_local_grandchildren_not_export_root(self):
         child_dir = os.path.join(self.tmp, "orphan-child")
         child_path = _write(child_dir, "session.jsonl", self._child_events())

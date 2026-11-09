@@ -26,13 +26,12 @@ print. It is built to keep them on your machine.
   Gradio's usage telemetry is disabled. A `--share` link uses Gradio's tunnel
   service; standalone reports load plotly.js from its CDN unless built with
   `--inline-plotly`.
-- **Model assistance uses the configured endpoint.** Once a connection is
-  ready, opening the AI panel for a loaded trajectory can request analysis;
-  loading a new trajectory while that panel is open can do the same.
-  Submitting a question, pressing **Suggest fixes**, or running
-  `agent-trajviz-label` also requests model assistance. Applying Settings
-  sends no model request. These features send a statistics brief and relevant
-  step text to the configured provider. Before a model request leaves,
+- **Model assistance uses the configured endpoint.** Select **Analyze trajectory**,
+  submit a question, select **Suggest fixes** or **Analyze issue with AI**, or run
+  `agent-trajviz-label` to request model assistance. These actions can send a
+  statistics brief and relevant step text to the configured provider. **Test API
+  key** sends a small prompt without trajectory data. Gateway headers apply only
+  to their configured base URL and provider. Before a model request leaves,
   credential-shaped text in it -- provider API keys, tokens, private keys,
   passwords in URLs and authorization headers, values of secret-named
   assignments -- is replaced with `[REDACTED]`. That is a safety net for

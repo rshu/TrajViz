@@ -98,6 +98,70 @@ class WorkflowDetailUiTests(unittest.TestCase):
         self.assertIn("class='dp-tabs'", html)
         self.assertNotIn("onclick=", html[html.index("class='dp-tabs'"):html.index("data-tab-content='content'")])
 
+    def test_detail_panel_reasoning_collapses_with_token_label(self):
+        from agent_trajviz.insight.rendering import format_step_detail
+
+        html = format_step_detail({
+            "index": 1,
+            "role": "assistant",
+            "parts": [
+                {"type": "reasoning", "text": "long chain of thought"},
+                {"type": "text", "text": "the answer"},
+            ],
+            "tokens": {
+                "total": 4100,
+                "input": 0,
+                "output": 100,
+                "reasoning": 4000,
+                "cache_read": 0,
+                "cache_write": 0,
+            },
+            "tool_calls": [],
+            "tool_call_count": 0,
+            "error_count": 0,
+            "has_reasoning": True,
+        })
+
+        # Reasoning collapses behind a summary labelled with the real metric.
+        self.assertIn("<summary>Reasoning (4,000 tok)</summary>", html)
+        details_start = html.index("Reasoning (4,000 tok)")
+        block = html[html.rindex("<details", 0, details_start):]
+        self.assertNotIn("<details open", block[: block.index(">") + 1])
+        self.assertIn("long chain of thought", html)
+        # Text stays an open section, not collapsed.
+        text_start = html.index("the answer")
+        self.assertNotIn(
+            "<details", html[html.rindex("<div", 0, text_start):text_start]
+        )
+
+    def test_detail_panel_drops_text_label_when_part_is_empty(self):
+        from agent_trajviz.insight.rendering import format_step_detail
+
+        html = format_step_detail({
+            "index": 1,
+            "role": "assistant",
+            "parts": [
+                {"type": "text", "text": ""},  # 纯工具调用步常见：空 text part
+                {"type": "text", "text": "the answer"},
+            ],
+            "tokens": {
+                "total": 100,
+                "input": 0,
+                "output": 100,
+                "reasoning": 0,
+                "cache_read": 0,
+                "cache_write": 0,
+            },
+            "tool_calls": [],
+            "tool_call_count": 0,
+            "error_count": 0,
+            "has_reasoning": False,
+        })
+
+        # 空 text part 不再渲染孤零零的 "Text" 标签。
+        self.assertIn("the answer", html)
+        self.assertEqual(1, html.count(">Text<"))
+
     def test_workflow_registers_delegated_detail_tab_handler(self):
         from agent_trajviz.insight.ui import workflow_tab
 
@@ -381,7 +445,10 @@ class ReasoningDetailContentTests(unittest.TestCase):
                            {"type": "reasoning", "text": "A recorded reasoning summary."},
                            {"type": "text", "text": "Final response."}], True)
         self.assertIn("A recorded reasoning summary.", out)
-        self.assertEqual(out.count("<div class='dp-section-title'>Reasoning</div>"), 1)
+        # Readable reasoning is collapsed into a details block (not a titled section card).
+        self.assertEqual(out.count("<details class='dp-details'>"), 1)
+        self.assertIn("<summary>Reasoning (", out)
+        self.assertNotIn("<div class='dp-section-title'>Reasoning</div>", out)
         self.assertNotIn("Reasoning text unavailable", out)
 
     def test_truly_blank_content_does_not_leave_empty_section_cards(self):

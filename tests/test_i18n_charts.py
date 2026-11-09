@@ -85,4 +85,6 @@ def test_agent_token_categories_localize_but_agent_labels_remain_categories():
     owned = figure.layout.meta["tv_i18n"]["traces"]
     assert set(owned.values()) == {"Fresh Input", "Cache Read", "Output", "Reasoning"}
     assert _AGENT not in owned.values() and "Input" not in owned.values()
-    assert [list(trace.y) for trace in figure.data] == [[70, 70], [10, 10], [15, 15], [5, 5]]
+    # Stack/legend order matches context-window occupancy: cache base, then fresh,
+    # then reasoning / output (see ``_add_token_bar_traces``).
+    assert [list(trace.y) for trace in figure.data] == [[10, 10], [70, 70], [5, 5], [15, 15]]

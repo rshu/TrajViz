@@ -9,8 +9,9 @@ from dataclasses import dataclass
 import requests
 
 from .assistant import ChatFn, complete_chat, _first_user_task, _public_http_error
+from .issues import IssueJudgment, OverviewIssue
 from .llm_config import AnalysisLLMConfig, analysis_language, is_chinese, resolve_analysis_config
-from .presenters.issues import IssueJudgment, OverviewIssue
+from .patterns import _user_typed_text
 from .session import LoadedSession
 
 JUDGE_ISSUE_CAP = 8
@@ -153,11 +154,11 @@ def pack_issue_judge_context(session: LoadedSession, issue: OverviewIssue) -> st
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-def parse_issue_judgment(raw: str) -> IssueJudgment:
-    """Parse model output into IssueJudgment; raise ValueError on bad shape."""
+def _parse_json_object(raw: str, *, empty_msg: str, label: str) -> dict:
+    """Extract a JSON object from raw/fenced model output."""
     text = (raw or "").strip()
     if not text:
-        raise ValueError("Empty judge response")
+        raise ValueError(empty_msg)
 
     fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
     if fence:
@@ -166,17 +167,24 @@ def parse_issue_judgment(raw: str) -> IssueJudgment:
         start = text.find("{")
         end = text.rfind("}")
         if start < 0 or end <= start:
-            raise ValueError("Judge response contained no JSON object")
+            raise ValueError(f"{label} response contained no JSON object")
         text = text[start : end + 1]
 
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"Judge JSON parse failed: {exc}") from exc
+        raise ValueError(f"{label} JSON parse failed: {exc}") from exc
 
     if not isinstance(data, dict):
-        raise ValueError("Judge JSON must be an object")
+        raise ValueError(f"{label} JSON must be an object")
+    return data
 
+
+def parse_issue_judgment(raw: str) -> IssueJudgment:
+    """Parse model output into IssueJudgment; raise ValueError on bad shape."""
+    data = _parse_json_object(
+        raw, empty_msg="Empty judge response", label="Judge",
+    )
     where = str(data.get("where") or "").strip()
     fix = str(data.get("fix") or "").strip()
     also = str(data.get("also") or "").strip()
@@ -191,6 +199,113 @@ def parse_issue_judgment(raw: str) -> IssueJudgment:
         also=also,
         confidence=confidence_raw,  # type: ignore[arg-type]
     )
+
+
+RUN_SUMMARY_SYSTEM_PROMPT = """You are TrajViz's run summarizer for coding-agent runs.
+
+You receive the first user message, the last assistant reply, and headline
+numbers of one run. Reply with ONLY a single JSON object (no markdown prose
+outside JSON). Schema:
+
+{
+  "task": "string — what the user asked the agent to do",
+  "outcome": "string — how the run ended"
+}
+
+Language:
+- Write the values of "task" and "outcome" in {LANGUAGE}.
+- Keep JSON keys in English.
+
+Rules:
+- "task": 1–2 sentences naming the concrete goal (target files, systems, or
+  behavior the user asked for). Summarize; do not copy the message verbatim.
+- "outcome": 1–2 sentences on what the agent delivered or where it stopped,
+  grounded in the last assistant reply and the numbers.
+- File/path/tool names may stay in their original Latin spelling.
+"""
+
+
+def _assistant_text(step: dict) -> str:
+    """Joined ``text`` parts of an assistant step (whitespace-collapsed)."""
+    chunks = []
+    for p in step.get("parts") or []:
+        if isinstance(p, dict) and p.get("type") == "text":
+            t = str(p.get("text") or "").strip()
+            if t:
+                chunks.append(t)
+    return " ".join(chunks)
+
+
+def pack_run_summary_context(session: LoadedSession) -> str:
+    """JSON payload for the run-summary LLM call: first user message, last
+    assistant reply, headline numbers."""
+    steps = session.steps or []
+    first_user = ""
+    for s in steps:
+        if s.get("role") != "user":
+            continue
+        first_user = _user_typed_text(s)
+        if first_user:
+            break
+    last_assistant = ""
+    for s in reversed(steps):
+        if s.get("role") == "assistant":
+            last_assistant = _assistant_text(s)
+            if last_assistant:
+                break
+    metrics = session.metrics or {}
+    toks = metrics.get("tokens") or {}
+    payload = {
+        "first_user_message": _clip(first_user, 4000),
+        "last_assistant_reply": _clip(last_assistant, 2000),
+        "numbers": {
+            "steps": len(steps),
+            "tool_calls": metrics.get("tool_call_count") or 0,
+            "total_tokens": toks.get("total") or 0,
+        },
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def parse_run_summary(raw: str) -> tuple[str, str]:
+    """Parse model output into (task, outcome); raise ValueError on bad shape."""
+    data = _parse_json_object(
+        raw, empty_msg="Empty run-summary response", label="Run-summary",
+    )
+    task = str(data.get("task") or "").strip()
+    outcome = str(data.get("outcome") or "").strip()
+    if not task:
+        raise ValueError("Run-summary JSON requires non-empty task")
+    return task, outcome
+
+
+def judge_run_summary(
+    session: LoadedSession,
+    *,
+    config: AnalysisLLMConfig | None = None,
+    chat_fn: ChatFn | None = None,
+    language: str | None = None,
+    require_config: bool = True,
+) -> tuple[str, str]:
+    """Ask the analysis LLM for a (task, outcome) summary of the whole run.
+
+    ``require_config=False`` skips the endpoint check (a caller-supplied client).
+    """
+    cfg = config or resolve_analysis_config()
+    if require_config and not cfg.ready:
+        missing = ", ".join(cfg.missing) or "ANALYZE_* / LABEL_*"
+        raise ValueError(f"Analysis LLM not configured ({missing})")
+
+    lang = _judge_language(language)
+    user_msg = (
+        "Summarize this TrajViz run. Return ONLY the JSON object. "
+        f"task / outcome must be {lang}.\n\n"
+        f"{pack_run_summary_context(session)}"
+    )
+    fn: ChatFn = chat_fn or complete_chat
+    system = RUN_SUMMARY_SYSTEM_PROMPT.replace("{LANGUAGE}", lang)
+    raw = fn(cfg, system, [{"role": "user", "content": user_msg}])
+    return parse_run_summary(raw)
 
 
 def judge_issue_fix(

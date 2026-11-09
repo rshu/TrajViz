@@ -17,14 +17,16 @@ if TYPE_CHECKING:
     from .analysis import Analysis
     from .session import LoadedSession
 
-IssueKind = Literal["error", "antipattern", "bottleneck"]
+IssueKind = Literal["error", "risk", "antipattern", "bottleneck"]
 Confidence = Literal["high", "medium", "low"]
 
-# Lower = more urgent. Errors before waste before latency.
+# Lower = more urgent. Errors before correctness risks before waste before
+# latency.
 _SEVERITY: dict[IssueKind, int] = {
     "error": 0,
-    "antipattern": 1,
-    "bottleneck": 2,
+    "risk": 1,
+    "antipattern": 2,
+    "bottleneck": 3,
 }
 
 @dataclass(frozen=True)
@@ -65,6 +67,40 @@ def rank_issues(issues: list[OverviewIssue]) -> list[OverviewIssue]:
     )
 
 
+_CASCADE_COVER_FRAC = 0.8
+
+
+def dedupe_overlapping_issues(issues: list[OverviewIssue]) -> list[OverviewIssue]:
+    """Drop issues that restate another issue's failures.
+
+    Failure cascades that are mostly covered by an error-cluster issue add little
+    beyond consecutive-thrash chrome, so they are removed when ≥80% of their
+    steps already appear on a ``fail:`` card (includes ``fail:system:``).
+    """
+    fail_steps = {
+        step
+        for issue in issues
+        if issue.source_id.startswith("fail:")
+        for step in issue.steps
+    }
+    if not fail_steps:
+        return list(issues)
+
+    kept: list[OverviewIssue] = []
+    for issue in issues:
+        if issue.source_id.startswith("cascade:") and issue.steps:
+            covered = sum(1 for s in issue.steps if s in fail_steps)
+            if covered / len(issue.steps) >= _CASCADE_COVER_FRAC:
+                continue
+        kept.append(issue)
+    return kept
+
+
+def prepare_overview_issues(session: LoadedSession | Analysis) -> list[OverviewIssue]:
+    """Collect, drop overlaps, and rank — the dashboard Issues leaf list."""
+    return rank_issues(dedupe_overlapping_issues(collect_overview_issues(session)))
+
+
 def collect_overview_issues(session: LoadedSession | Analysis) -> list[OverviewIssue]:
     """Map the analysis results of *session* into issues (no re-detection)."""
     issues: list[OverviewIssue] = []
@@ -72,6 +108,7 @@ def collect_overview_issues(session: LoadedSession | Analysis) -> list[OverviewI
     issues.extend(_from_failure_chains(session))
     issues.extend(_from_antipatterns(session))
     issues.extend(_from_premature_compactions(session))
+    issues.extend(_from_compaction_aftermath(session))
     issues.extend(_from_bottlenecks(session))
     return issues
 
@@ -81,6 +118,13 @@ _SYSTEM_ERROR_HIGH = 5
 
 def _count_label(label: str, count: int) -> str:
     return f"{label} ({count}×)" if count else label
+
+
+def _short_display(text: str, limit: int = 48) -> str:
+    """Truncate *text* for an issue detail/title, keeping *limit* chars."""
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)] + "…"
 
 
 def _from_failure_patterns(session: LoadedSession | Analysis) -> list[OverviewIssue]:
@@ -303,18 +347,132 @@ def _from_antipatterns(session: LoadedSession | Analysis) -> list[OverviewIssue]
         display = str(rep.get("display") or rep.get("signature") or "")
         count = int(rep.get("count") or 0)
         steps = tuple(int(s) for s in (rep.get("steps") or []) if s is not None)
-        short = display if len(display) <= 48 else (display[:45] + "…")
         out.append(
             OverviewIssue(
                 kind="antipattern",
                 title=f"Repeated empty search ({count}×)",
-                detail=short,
+                detail=_short_display(display),
                 why=(
                     "The same search ran multiple times with empty results (not only as a "
                     "consecutive streak) — the query or path is likely wrong."
                 ),
                 steps=steps,
                 source_id=f"antipattern:repeated_search:{i}",
+            )
+        )
+
+    oversized = session.oversized_outputs or []
+    if oversized:
+        shown = oversized[:3]
+        desc = ", ".join(
+            f"step {o['step']} {o['tool']} ≈{int(o['tokens']):,} tokens"
+            + (f" ({int(o['share'])}% of context)" if o.get("share") is not None else "")
+            for o in shown
+        )
+        remaining = len(oversized) - len(shown)
+        if remaining > 0:
+            desc += f", +{remaining} more"
+        out.append(
+            OverviewIssue(
+                kind="antipattern",
+                title=_count_label("Oversized tool outputs", len(oversized)),
+                detail=desc,
+                why=(
+                    "A tool result this large stays in the conversation history, so every "
+                    "later step pays for it again until a compaction drops it. Typical "
+                    "sources: whole-file cat, unbounded find, verbose test output."
+                ),
+                steps=tuple(sorted({int(o["step"]) for o in oversized})),
+                source_id="antipattern:oversized_output",
+            )
+        )
+
+    for i, retry in enumerate(session.blind_retries or []):
+        tool = str(retry.get("tool") or "tool")
+        attempts = int(retry.get("attempts") or 0)
+        failed = int(retry.get("failed") or 0)
+        steps = tuple(int(s) for s in (retry.get("steps") or []) if s is not None)
+        display = str(retry.get("display") or "")
+        out.append(
+            OverviewIssue(
+                kind="antipattern",
+                title=f"Blind retry of failed {tool} call ({attempts}×)",
+                detail=(
+                    f"{failed} of {attempts} identical attempts failed — "
+                    f"{_short_display(display)}"
+                ),
+                why=(
+                    "A failed call was resubmitted verbatim and failed again — unchanged "
+                    "input in an unchanged environment yields the same result, so the "
+                    "retries only burned tokens and turns."
+                ),
+                steps=steps,
+                source_id=f"antipattern:blind_retry:{i}",
+            )
+        )
+
+    for i, rep in enumerate(session.user_repeats or []):
+        message = str(rep.get("message") or "")
+        count = int(rep.get("count") or 0)
+        steps = tuple(int(s) for s in (rep.get("steps") or []) if s is not None)
+        out.append(
+            OverviewIssue(
+                kind="antipattern",
+                title=f"User repeated a message ({count}×)",
+                detail=_short_display(message, 60),
+                why=(
+                    "The user sent the exact same message again — the most direct evidence "
+                    "available that the previous response did not satisfy them; no "
+                    "inference required."
+                ),
+                steps=steps,
+                source_id=f"antipattern:user_repeat:{i}",
+            )
+        )
+
+    unvalidated = session.unvalidated_writes or []
+    if unvalidated:
+        u = unvalidated[0]
+        write_steps = tuple(int(s) for s in (u.get("steps") or []) if s is not None)
+        first, last = write_steps[0], write_steps[-1]
+        out.append(
+            OverviewIssue(
+                kind="antipattern",
+                title="Code changes were never validated",
+                detail=(
+                    f"{int(u.get('files') or 0)} code file(s) written in steps "
+                    f"{first}–{last}; no test/build/lint command in the whole run"
+                ),
+                why=(
+                    "Every write succeeded but nothing checked the result — correctness "
+                    "rests on the agent's confidence alone, and regressions it cannot "
+                    "see have no chance of being caught."
+                ),
+                steps=write_steps[:12],
+                source_id="antipattern:unvalidated_writes",
+            )
+        )
+
+    for i, reread in enumerate(session.redundant_re_reads or []):
+        path = str(reread.get("path") or "")
+        count = int(reread.get("count") or 0)
+        steps = tuple(int(s) for s in (reread.get("steps") or []) if s is not None)
+        step_list = ", ".join(str(s) for s in steps)
+        out.append(
+            OverviewIssue(
+                kind="antipattern",
+                title=f"Re-read an unchanged file ({count}×)",
+                detail=(
+                    f"{path} re-read {count}× with no write or compaction in "
+                    f"between (steps {step_list})"
+                ),
+                why=(
+                    "Nothing wrote to the file and no compaction dropped it — the "
+                    "content was already in context, so each re-read spends fresh "
+                    "tokens for nothing."
+                ),
+                steps=steps,
+                source_id=f"antipattern:redundant_reread:{i}",
             )
         )
 
@@ -382,6 +540,48 @@ def _from_premature_compactions(session: LoadedSession | Analysis) -> list[Overv
                 ),
                 steps=tuple(int(c.get("step", 0)) for c in premature),
                 source_id="antipattern:compaction_premature",
+            )
+        )
+    return out
+
+
+def _from_compaction_aftermath(session: LoadedSession | Analysis) -> list[OverviewIssue]:
+    """Correctness-risk card: a compaction between two consecutive writes
+    thinned the reads feeding the second write (see
+    ``detect_compaction_aftermath``)."""
+    out: list[OverviewIssue] = []
+    for i, ev in enumerate(session.compaction_aftermath or []):
+        if not isinstance(ev, dict) or not isinstance(ev.get("reads_before_tokens"), int):
+            continue
+        c_step = int(ev.get("step") or 0)
+        before = int(ev.get("reads_before_tokens") or 0)
+        after = int(ev.get("reads_after_tokens") or 0)
+        pct = ev.get("shrink_pct")
+        w_prev = ev.get("prev_write_step")
+        w_next = ev.get("next_write_step")
+        dropped = ev.get("dropped")
+        segs = []
+        if isinstance(dropped, int):
+            segs.append(f"compaction dropped {format_token_count(dropped)} tokens")
+        segs.append(
+            f"consecutive writes at steps {w_prev} and {w_next} span it: "
+            f"~{format_token_count(before)} tokens of file reads before vs "
+            f"~{format_token_count(after)} after ({pct}% less)"
+        )
+        out.append(
+            OverviewIssue(
+                kind="risk",
+                title=f"Post-compaction write may rest on summarized context (#{c_step})",
+                detail="; ".join(segs),
+                why=(
+                    "Two consecutive writes span this compaction, and the file reads "
+                    "between them shrank after it: the information behind the second "
+                    "write survives mostly as the compaction summary rather than fresh "
+                    "reads. How much a write needs to read varies with the task — "
+                    "follow the step links to review the second write."
+                ),
+                steps=(c_step, int(w_next or c_step)),
+                source_id=f"antipattern:compaction_thin_read:{i}:{c_step}",
             )
         )
     return out

@@ -580,6 +580,20 @@ class PrematureCompactionTests(unittest.TestCase):
         ]
         self.assertEqual(detect_premature_compactions(steps), [])
 
+    def test_opencode_dual_signal_compaction_flagged_once(self):
+        # OpenCode leaves two signals for one compaction: the compaction
+        # part on the user turn and the summary turn right after it.
+        steps = [
+            _step(0, session_id="s", tokens=_tokens(total=20_000, inp=20_000)),
+            _step(1, role="user", session_id="s",
+                  parts=[{"type": "compaction", "summary": "prior work"}]),
+            _step(2, session_id="s", summary=True, tokens=_tokens(total=8_000, inp=8_000)),
+        ]
+        flagged = detect_premature_compactions(steps)
+        self.assertEqual(len(flagged), 1)
+        self.assertEqual(flagged[0]["step"], 1)
+        self.assertEqual(flagged[0]["reason"], "low_occupancy")
+
 
 if __name__ == "__main__":
     unittest.main()

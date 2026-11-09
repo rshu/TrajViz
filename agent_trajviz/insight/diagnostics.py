@@ -828,7 +828,9 @@ def detect_performance_bottlenecks(
             label = f"{tool_name}: {tool_target}" if tool_target else tool_name
             short = label if len(label) <= 40 else (label[:37] + "…")
             title = f"Tool bottleneck: {short} ({tool_s:.1f}s)"
-            detail = explanation[:200]
+            # Keep the full label (title truncates it) so the UI can show the
+            # whole command/target in the folded detail.
+            detail = f"{label} — {explanation}"[:200]
             why = (
                 "Most of this outlier step was spent in a tool — prefer cheaper tools, "
                 "narrower scopes, or caching results instead of repeating heavy calls."

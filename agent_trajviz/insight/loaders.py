@@ -19,6 +19,7 @@ from .formats.claude_files import (
     parse_claude_zip,
     resolve_session_path,
 )
+from .formats.codeagent import _convert_codeagent_to_internal
 from .formats.codearts import _convert_codearts_metadata
 from .formats.codex import _convert_codex_to_internal
 from .formats.cursor import _convert_cursor_to_internal
@@ -26,6 +27,7 @@ from .formats.icode import _convert_icode_to_internal
 from .formats.common import (  # noqa: F401  (re-exported public / test API)
     _classify_tool_error,
     _iso_to_epoch_ms,
+    decode_session_text,
     safe_get,
 )
 from .formats.dsh import (
@@ -55,6 +57,7 @@ FORMAT_LABELS = {
     "otlp": "OpenTelemetry",
     "claude_code": "Claude Code",
     "cursor": "Cursor",
+    "codeagent": "CodeAgent",
     "codearts": "CodeArts",
     "icode": "ICode",
     "opencode": "OpenCode",
@@ -133,8 +136,8 @@ def detect_format(raw: Any) -> str:
     """Detect trajectory format from parsed content.
 
     Accepts a JSON object or an event array. Returns ``claude_code``,
-    ``opencode``, ``codearts``, ``cursor``, ``icode``, ``codex``, ``pi``, ``dsh``,
-    or ``unknown``.
+    ``opencode``, ``codeagent``, ``codearts``, ``cursor``, ``icode``, ``codex``,
+    ``pi``, ``dsh``, or ``unknown``.
     """
     if isinstance(raw, list):
         return _detect_event_stream_format(raw)
@@ -246,6 +249,8 @@ def _apply_format(payload: Any, fmt: str, *, source_path: str | None = None) -> 
 
     if not isinstance(payload, dict):
         return _kind_mismatch_error(fmt)
+    if fmt == "codeagent":
+        return _convert_codeagent_to_internal(payload)
     if fmt == "codearts":
         # Legacy-JSON exports are detected as CodeArts (so the UI labels them
         # correctly) but have no parser yet: their 'sender'/'content' messages
@@ -338,7 +343,7 @@ def read_payload(file_path: str) -> tuple[Any, str | None, str | None]:
         return None, None, str(exc)
     sha = _sha256_bytes(data)
     try:
-        text = data.decode("utf-8-sig")
+        text = decode_session_text(data)
     except UnicodeDecodeError as exc:
         return None, sha, str(exc)
     payload, error = _parse_trajectory_text(text, file_path)
@@ -418,7 +423,7 @@ def _load_trajectory_unguarded(file_path: str, format_hint: str | None = None) -
         payload, parse_error = native_events(data, file_path), None
     else:
         try:
-            text = data.decode("utf-8-sig")
+            text = decode_session_text(data)
         except UnicodeDecodeError as exc:
             return {"_error": str(exc)}
         payload, parse_error = _parse_trajectory_text(text, file_path)

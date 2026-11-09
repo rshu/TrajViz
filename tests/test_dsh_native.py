@@ -105,6 +105,15 @@ class DshNativeTests(unittest.TestCase):
             with self.assertRaisesRegex(LoadError, "ambiguous"):
                 tv.load(root)
 
+    def test_versioned_session_accepts_bom_marked_utf16(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows = events()
+            path = write(Path(tmp), rows, compressed=False)
+            path.write_bytes(path.read_text(encoding="utf-8").encode("utf-16"))
+            captured = tv.load(path.parent)
+        self.assertEqual(captured.raw["_dsh_events"]["root"], rows)
+        self.assertEqual(captured.metrics["tokens"]["total"], 70)
+
     def test_compressed_tree_uses_catalog_lineage_and_exact_source_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)

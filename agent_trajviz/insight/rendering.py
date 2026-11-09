@@ -9,15 +9,15 @@ from pygments import highlight as _pygments_highlight
 from pygments.formatters import HtmlFormatter as _HtmlFormatter
 from pygments.lexers import get_lexer_by_name as _get_lexer, TextLexer as _TextLexer
 
-from ..i18n import text as ui_text
+from ..i18n import attrs as ui_attrs, text as ui_text
 from .timeline_agents import bind_timeline_agents
 from .issues import _indices_for_step_range
 from .chart_data import step_category
 from .formats.common import as_text
 from .context_usage import PRESSURE_MAIN_AGENT, pressure_agent_key
-from .metrics import tool_call_duration_ms
+from .metrics import is_spawn_tool_call, tool_call_duration_ms
 from .palette import AGENT_COLORS, AGENT_CSS_COLORS
-from .parser import _optional_token_count, cache_read_share
+from .parser import _optional_token_count, cache_read_share, spawned_child_session_id
 from .styles import WORKFLOW_CSS
 from .telemetry_quality import field_observed
 from .tool_output import tool_output_text
@@ -438,6 +438,56 @@ def render_toc_sidebar(steps: list[dict], collapsed: bool = False) -> str:
     )
 
 
+def _spawn_step_map(steps: list[dict]) -> dict[str, int]:
+    """Map each child session id to the index of the step that spawned it.
+
+    Primary source: Task-tool metadata recording the child session id. When
+    the export only marks ``is_sub_agent``/``parent_session_id`` without the
+    tool metadata, fall back to the nearest preceding spawn-tool step in the
+    parent session.
+    """
+    root_sid = ""
+    for s in steps:
+        sid = s.get("session_id")
+        if sid:
+            root_sid = str(sid)
+            break
+
+    mapping: dict[str, int] = {}
+    spawn_steps: list[tuple[int, str]] = []  # (step index, owning session id)
+    for s in steps:
+        s_sid = str(s.get("session_id") or "")
+        has_spawn = False
+        for tc in s.get("tool_calls") or []:
+            if not is_spawn_tool_call(tc):
+                continue
+            has_spawn = True
+            meta = tc.get("metadata") if isinstance(tc.get("metadata"), dict) else {}
+            child = spawned_child_session_id(
+                meta, caller_session_id=s_sid, root_session_id=root_sid
+            )
+            if child:
+                mapping.setdefault(child, s.get("index", 0))
+        if has_spawn:
+            spawn_steps.append((s.get("index", 0), s_sid))
+
+    if spawn_steps:
+        seen: set[str] = set()
+        for s in steps:
+            sid = str(s.get("session_id") or "")
+            if not sid or sid in mapping or sid in seen or not s.get("is_sub_agent"):
+                continue
+            seen.add(sid)
+            parent = str(s.get("parent_session_id") or root_sid)
+            candidates = [
+                idx for idx, owner in spawn_steps
+                if owner == parent and idx < (s.get("index", 0))
+            ]
+            if candidates:
+                mapping[sid] = max(candidates)
+    return mapping
+
+
 def _model_error_text(step: dict) -> str:
     """Explicit model-operation failures, without fabricating a tool result."""
     metadata = step.get("_otel")
@@ -450,14 +500,29 @@ def _model_error_text(step: dict) -> str:
     return ": ".join(details) or "The captured model request failed."
 
 
-def render_workflow_html(steps: list[dict]) -> str:
-    """Render vertical card flow as self-contained HTML with scroll container."""
+def render_workflow_html(steps: list[dict], *, expanded: bool = False) -> str:
+    """Render vertical card flow as self-contained HTML with scroll container.
+
+    ``expanded`` appends each step's full conversation content (message text
+    inline, reasoning / tool I/O as collapsed ``<details>``) below the card
+    header instead of the one-line preview — the former Transcript tab view
+    embedded in the card flow. Cards keep their ids/classes, so selection,
+    j/k navigation, deep links, and the detail store all work unchanged.
+    """
     if not steps:
         return f"<div style='padding:2em;color:var(--ov-muted);text-align:center;'>{ui_text('No steps to display.')}</div>"
 
     css = WORKFLOW_CSS
+    if expanded:
+        # Local import: presenters/__init__ eagerly imports workflow, which
+        # imports this module — a module-level import would be circular.
+        from .presenters.transcript import TRANSCRIPT_CSS, build_step_parts_html
+
+        css += TRANSCRIPT_CSS
     color_map, labels, agent_id_of = bind_timeline_agents(steps)
     has_agents = len(color_map) > 1
+    spawn_step_of = _spawn_step_map(steps)
+    shown_spawn: set[str] = set()
 
     cards_html = []
     for i, step in enumerate(steps):
@@ -519,10 +584,24 @@ def render_workflow_html(steps: list[dict]) -> str:
 
         sub_agent_badge = ""
         sub_indent = ""
+        spawn_badge = ""
         if step.get("is_sub_agent"):
             sub_agent_badge = f'<span class="wf-badge" style="{_filled_badge_style("var(--wf-border-reasoning)")}font-size:10px;">{ui_text("sub-agent")}</span>'
             sub_indent = "margin-left:24px;"
+            sid = str(step.get("session_id") or "")
+            if sid and sid in spawn_step_of and sid not in shown_spawn:
+                spawn_idx = spawn_step_of[sid]
+                spawn_badge = _step_link_chip(
+                    spawn_idx,
+                    label="spawned by #{n}",
+                    title="Jump to the step that spawned this sub-agent",
+                )
+                shown_spawn.add(sid)
 
+        if expanded:
+            body = f"<div class='wf-expand-body'>{build_step_parts_html(step)}</div>"
+        else:
+            body = f"<div class='wf-preview'>{preview}</div>"
         card = f"""
         <div class="wf-card" id="wf-card-{orig_idx}" data-step-idx="{orig_idx}"
              style="background:{bg};border-color:{border};{agent_left_border}{sub_indent}">
@@ -531,6 +610,7 @@ def render_workflow_html(steps: list[dict]) -> str:
                 <span class="wf-badge" data-wf-role="{html.escape(role, quote=True)}" style="{role_style}">{ui_text(role_label) if role in _ROLE_COLORS else html.escape(role_label)}</span>
                 {"" if label == role_label else f'<span class="wf-badge" style="background:transparent;color:{_card_label_ink(border)};border:1px solid {border};">{_card_label_html(label)}</span>'}
                 {sub_agent_badge}
+                {spawn_badge}
                 {agent_badge}
                 <span class="wf-icons">{icon_str}</span>
             </div>
@@ -539,7 +619,7 @@ def render_workflow_html(steps: list[dict]) -> str:
                 <span>{tok} tok</span>
                 {tc_info}{err_info}
             </div>
-            <div class="wf-preview">{preview}</div>
+            {body}
             {error_html}
         </div>
         """
@@ -644,8 +724,17 @@ def _format_tool_call_detail(p: dict) -> str:
     inp = p.get("input", {})
     out = tool_output_text(p.get("output", ""))
     inp_str = json.dumps(inp, indent=2, ensure_ascii=False) if isinstance(inp, dict) else str(inp)
-    if len(out) > 2000:
-        out = out[:2000] + "\n... (truncated)"
+    if not isinstance(out, str):
+        if isinstance(out, list) and all(isinstance(b, dict) and b.get("type") == "text" for b in out):
+            # unwrap content-block lists to readable text
+            out = "\n".join(str(b.get("text", "")) for b in out)
+        else:
+            try:
+                out = json.dumps(out, indent=2, ensure_ascii=False)
+            except (TypeError, ValueError):
+                out = str(out)
+    if len(out) > 200000:
+        out = out[:200000] + "\n... (truncated at 200,000 chars)"
 
     tc_dur = ""
     dur_ms = tool_call_duration_ms(p)
@@ -714,9 +803,10 @@ def _format_tool_call_detail(p: dict) -> str:
     )
     out_detail = ""
     if out:
+        out_str = str(out)
         out_detail = (
-            f"<details class='dp-details'><summary>{ui_text('Output')}</summary>"
-            f"<div class='dp-details-body'><pre>{html.escape(str(out))}</pre></div>"
+            f"<details class='dp-details'><summary>{ui_text('Output')} ({len(out_str):,} chars)</summary>"
+            f"<div class='dp-details-body'><pre>{html.escape(out_str)}</pre></div>"
             f"</details>"
         )
 
@@ -742,8 +832,21 @@ def _format_tool_call_detail(p: dict) -> str:
     )
 
 
-def _format_text_section(p: dict, section_type: str) -> str:
-    """Render a text or reasoning part as a styled HTML section card."""
+def _format_text_section(
+    p: dict,
+    section_type: str,
+    *,
+    reasoning_tokens: int | None = None,
+    reasoning_part_no: int = 1,
+    reasoning_part_count: int = 1,
+) -> str:
+    """Render a text or reasoning part as a styled HTML section card.
+
+    Reasoning collapses into a ``<details>`` block labelled with the step's
+    real ``tokens.reasoning`` metric — a long chain-of-thought would
+    otherwise dominate the panel (and the Expanded view shows the same
+    collapsed block inline).
+    """
     cls = "dp-section-text" if section_type == "text" else "dp-section-reasoning"
     label = "Text" if section_type == "text" else "Reasoning"
     if section_type == "text" and p.get("synthetic"):
@@ -753,6 +856,18 @@ def _format_text_section(p: dict, section_type: str) -> str:
         return ""
     # Use the code-fence-aware HTML renderer for content with code blocks
     rendered = _md_to_html_preview(text)
+    if section_type == "reasoning":
+        from .presenters.transcript import reasoning_block_label
+
+        summary = reasoning_block_label(
+            text, reasoning_tokens, reasoning_part_no, reasoning_part_count
+        )
+        return (
+            "<details class='dp-details'>"
+            f"<summary>{summary}</summary>"
+            f"<div class='dp-details-body'>{rendered}</div>"
+            "</details>"
+        )
     return (
         f"<div class='dp-section {cls}'>"
         f"<div class='dp-section-title'>{ui_text(label)}</div>"
@@ -981,6 +1096,13 @@ def format_step_detail(step: dict) -> str:
     header = _format_step_header(step)
 
     # Content tab
+    reasoning_total = (step.get("tokens") or {}).get("reasoning") or None
+    reasoning_count = sum(
+        1
+        for p in step["parts"]
+        if isinstance(p, dict) and p.get("type") == "reasoning" and p.get("text")
+    )
+    reasoning_no = 0
     content_parts = []
     if model_error := _model_error_text(step):
         content_parts.append(
@@ -1003,7 +1125,17 @@ def format_step_detail(step: dict) -> str:
         if ptype == "text":
             content_parts.append(_format_text_section(p, "text"))
         elif ptype == "reasoning":
-            content_parts.append(_format_text_section(p, "reasoning"))
+            if p.get("text"):
+                reasoning_no += 1
+            content_parts.append(
+                _format_text_section(
+                    p,
+                    "reasoning",
+                    reasoning_tokens=reasoning_total,
+                    reasoning_part_no=reasoning_no,
+                    reasoning_part_count=reasoning_count or 1,
+                )
+            )
         elif ptype == "tool_call":
             content_parts.append(_format_tool_call_detail(p))
         elif ptype in ("step_start", "step_finish"):
@@ -1016,6 +1148,23 @@ def format_step_detail(step: dict) -> str:
             )
         elif ptype == "patch":
             content_parts.append(_format_patch_section(p))
+        elif ptype == "compaction":
+            comp_summary = str(p.get("summary") or "")
+            comp_reason = str(p.get("reason") or "")
+            comp_body = html.escape(comp_summary) if comp_summary else "<em>(no summary recorded)</em>"
+            reason_line = (
+                f"<div class='dp-tool-meta'>Reason: {html.escape(comp_reason)}</div>"
+                if comp_reason else ""
+            )
+            content_parts.append(
+                f"<div class='dp-section'>"
+                f"<div class='dp-section-title'>Compaction</div>"
+                f"{reason_line}"
+                f"<details class='dp-details'><summary>Summary ({len(comp_summary):,} chars)</summary>"
+                f"<div class='dp-details-body'><pre>{comp_body}</pre></div>"
+                f"</details>"
+                f"</div>"
+            )
         else:
             content_parts.append(
                 f"<div class='dp-section'>"
@@ -1400,36 +1549,54 @@ _STEP_CHIP_STYLE = (
 )
 
 
-def _step_link_chip(idx: int, *, workflow_links: bool = True) -> str:
-    """Clickable ``#N`` chip that jumps to Workflow step *idx*."""
+def _step_link_chip(
+    idx: int,
+    *,
+    label: str = "#{n}",
+    title: str = "",
+    workflow_links: bool = True,
+) -> str:
+    """Clickable chip (``#N`` by default) that jumps to Workflow step *idx*.
+
+    *label* is a trusted ``str.format`` template with ``{n}`` for the step.
+    *title* is an optional tooltip; it is escaped.
+    """
     n = _step_index(idx)
+    title_attr = f" {ui_attrs(title)}" if title else ""
+    label_html = f"#{n}" if label == "#{n}" else ui_text(label, n=n)
     if not workflow_links:
         style = _STEP_CHIP_STYLE.replace("cursor:pointer;", "")
-        return f"<span class='insight-step-index' style='{style}'>#{n}</span>"
+        return (
+            f"<span class='insight-step-index' style='{style}'{title_attr}>"
+            f"{label_html}</span>"
+        )
     return (
-        f"<span class='insight-step-link' style='{_STEP_CHIP_STYLE}' "
-        f"onclick=\"{_diag_jump_onclick(n)}\">#{n}</span>"
+        f"<span class='insight-step-link' style='{_STEP_CHIP_STYLE}'{title_attr} "
+        f"onclick=\"{_diag_jump_onclick(n)}\">{label_html}</span>"
     )
 
 
-def _step_link_chips(indices: list[int], *, limit: int = 8, workflow_links: bool = True) -> str:
-    """Deduped step chips; shows ``+N more`` when truncated."""
-    seen: list[int] = []
-    for raw in indices:
-        if raw is None:
-            continue
-        n = _step_index(raw)
-        if n not in seen:
-            seen.append(n)
+def _step_link_chips(
+    indices: list[int],
+    *,
+    limit: int = 8,
+    label: str = "#{n}",
+    more: str = "+{extra} more",
+    workflow_links: bool = True,
+) -> str:
+    """Deduped step chips; shows *more* (``+N more``) when truncated."""
+    seen = list(dict.fromkeys(_step_index(raw) for raw in indices if raw is not None))
     if not seen:
         return ""
     shown = seen[:limit]
-    chips = "".join(_step_link_chip(n, workflow_links=workflow_links) for n in shown)
+    chips = "".join(
+        _step_link_chip(n, label=label, workflow_links=workflow_links) for n in shown
+    )
     extra = len(seen) - len(shown)
     if extra > 0:
         chips += (
             f"<span style='font-size:11px;color:var(--ov-muted);'>"
-            f"+{extra} more</span>"
+            f"{ui_text(more, extra=extra)}</span>"
         )
     return f"<div style='margin-top:4px;'>{chips}</div>"
 

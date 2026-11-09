@@ -30,8 +30,14 @@ _ENV = {
 
 def _handler(app, name):
     matches = [fn for fn in app.fns.values() if getattr(fn.fn, "__name__", "") == name]
-    assert len(matches) == 1, name
-    return matches[0]
+    assert matches, name
+    if len(matches) == 1:
+        return matches[0]
+    # Issues judge is bound after load (then) and on the re-run button (click);
+    # Gradio suffixes the second api_name. Prefer the primary endpoint.
+    primary = [fn for fn in matches if fn.api_name == name]
+    assert len(primary) == 1, name
+    return primary[0]
 
 
 def _is_state(component):
@@ -106,7 +112,7 @@ def recorded_transport(monkeypatch):
     monkeypatch.setattr(assistant, "complete_chat", lambda *args: record("chat", *args))
     monkeypatch.setattr(issue_judge, "complete_chat", lambda *args: record("fix", *args))
     issue = OverviewIssue(kind="error", title="fixture error", detail="command failed", steps=(1,), source_id="fixture")
-    monkeypatch.setattr(overview_tab, "collect_overview_issues", lambda _session: [issue])
+    monkeypatch.setattr(overview_tab, "prepare_overview_issues", lambda _session: [issue])
     return calls
 
 
@@ -194,16 +200,22 @@ def test_http_sessions_interleave_locales_and_suggest_fixes_without_language_or_
         (second, "en", "Simplified Chinese", "second-model", "second-private-key"),
         (first, "zh-CN", "English", "first-model", "first-private-key"),
     ):
+        before = len(recorded_transport)
         result = _invoke(app, client, "on_suggest_fixes", **{
             "Language / 语言": locale, "Reply language": language,
         })
-        call = recorded_transport[-1]
-        assert call["kind"] == "fix"
-        _assert_language(call, language)
-        assert (call["config"].model, call["config"].api_key) == (model, key)
+        # Fork path: run summarizer then Issues judge (two issue_judge complete_chat calls).
+        assert len(recorded_transport) == before + 2
+        summary_call, fix_call = recorded_transport[-2], recorded_transport[-1]
+        assert summary_call["kind"] == "fix" and fix_call["kind"] == "fix"
+        judge_language = "Simplified Chinese (Mandarin)" if language == "Simplified Chinese" else language
+        assert f'Write the values of "task" and "outcome" in {judge_language}.' in summary_call["system"]
+        _assert_language(fix_call, language)
+        for call in (summary_call, fix_call):
+            assert (call["config"].model, call["config"].api_key) == (model, key)
         assert ("先读取 src/cache.py" if language == "Simplified Chinese" else "Read src/cache.py first") in result
         assert "first-private-key" not in result and "second-private-key" not in result
-    assert len(recorded_transport) == 5
+    assert len(recorded_transport) == 7  # 3 analysis asks + 2*(summary + judge)
 
 
 def test_language_toggle_handlers_make_no_model_calls_and_preserve_active_state_history_and_form_values(served_app,

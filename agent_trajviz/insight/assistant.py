@@ -11,6 +11,7 @@ import requests
 from urllib3.exceptions import ReadTimeoutError
 
 from .._endpoints import anthropic_messages_url
+from .._llm_http import merge_llm_headers, raise_for_llm_status
 from .._redact import redact
 from .analytics import compute_step_analytics
 from .diagnostics import (
@@ -778,10 +779,10 @@ def _call_openai(
     messages: list[dict[str, str]],
 ) -> str:
     url = f"{config.base_url}/chat/completions"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {config.api_key}",
-    }
+    headers = merge_llm_headers(
+        config.extra_headers,
+        auth={"Authorization": f"Bearer {config.api_key}"},
+    )
     body: dict[str, Any] = {
         "model": config.model,
         "messages": [{"role": "system", "content": system}, *messages],
@@ -789,8 +790,8 @@ def _call_openai(
     }
     if config.temperature is not None:
         body["temperature"] = config.temperature
-    response = requests.post(url, json=body, headers=headers, timeout=config.timeout)
-    response.raise_for_status()
+    response = requests.post(url, json=body, headers=headers, timeout=config.timeout, allow_redirects=False)
+    raise_for_llm_status(response)
     data = response.json()
     choice = data["choices"][0]
     content = choice["message"]["content"]
@@ -807,11 +808,10 @@ def _call_anthropic(
     messages: list[dict[str, str]],
 ) -> str:
     url = anthropic_messages_url(config.base_url)
-    headers = {
-        "Content-Type": "application/json",
-        "x-api-key": config.api_key,
-        "anthropic-version": "2023-06-01",
-    }
+    headers = merge_llm_headers(
+        config.extra_headers,
+        auth={"x-api-key": config.api_key, "anthropic-version": "2023-06-01"},
+    )
     body: dict[str, Any] = {
         "model": config.model,
         "system": system,
@@ -820,8 +820,8 @@ def _call_anthropic(
     }
     if config.temperature is not None:
         body["temperature"] = config.temperature
-    response = requests.post(url, json=body, headers=headers, timeout=config.timeout)
-    response.raise_for_status()
+    response = requests.post(url, json=body, headers=headers, timeout=config.timeout, allow_redirects=False)
+    raise_for_llm_status(response)
     data = response.json()
     blocks = data.get("content", [])
     texts = [block["text"] for block in blocks if isinstance(block, dict) and block.get("type") == "text"]

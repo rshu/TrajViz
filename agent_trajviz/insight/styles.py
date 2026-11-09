@@ -21,8 +21,10 @@ _LIGHT_TOKENS = """
     --ov-text: #0f172a;
     --ov-muted: #5b6473;
     --ov-accent: #1d4ed8;
+    --ov-ai-accent: #ea580c;
     --ov-success: #059669;
     --ov-warn: #b45309;
+    --ov-risk: #ea580c;
     --ov-bad: #dc2626;
     /* Component-level light tokens */
     --ov-card-bg: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
@@ -96,8 +98,10 @@ _DARK_TOKENS = """
         --ov-text: #e2e8f0;
         --ov-muted: #94a3b8;
         --ov-accent: #60a5fa;
+        --ov-ai-accent: #fb923c;
         --ov-success: #34d399;
         --ov-warn: #fbbf24;
+        --ov-risk: #fb923c;
         --ov-bad: #f87171;
         /* Component-level dark tokens */
         --ov-card-bg: linear-gradient(180deg, #1e1f33 0%, #1a1b2e 100%);
@@ -918,6 +922,89 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
     font-style: italic;
 }
 
+/* Shown under Token Usage by Step until a bar is clicked. */
+.tv-token-hint {
+    margin: 4px 0 10px;
+    padding: 8px 12px;
+    border: 1px solid var(--ov-insight-border);
+    border-radius: 8px;
+    background: var(--ov-insight-bg);
+    color: var(--ov-text);
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+/* ===== Overview Contents section guide (summary + hover panel) ===== */
+.section-guide {
+    position: relative;
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    margin: -8px 0 12px 0;
+    font-size: 13px;
+    color: var(--ov-muted);
+}
+.section-guide-tip {
+    outline: none;
+}
+.section-guide-trigger {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ov-accent, #1d4ed8);
+    border-bottom: 1px dotted currentColor;
+    cursor: help;
+    white-space: nowrap;
+}
+.section-guide-tip:focus-visible .section-guide-trigger {
+    outline: 2px solid var(--ov-accent, #1d4ed8);
+    outline-offset: 2px;
+}
+/* Anchored to .section-guide (not the trigger) so it never runs off the right
+   edge; padding-top bridges the gap so the pointer can move into the panel. */
+.section-guide-pop {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 1000;
+    width: min(640px, 100%);
+    padding-top: 6px;
+}
+.section-guide-tip:hover .section-guide-pop,
+.section-guide-tip:focus-within .section-guide-pop {
+    display: block;
+}
+.section-guide-panel {
+    padding: 12px 14px;
+    background: var(--ov-card);
+    color: var(--ov-text);
+    border: 1px solid var(--ov-border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    font-size: 13px;
+    line-height: 1.65;
+}
+.section-guide-heading {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--ov-muted);
+    margin: 0 0 4px;
+}
+.section-guide-charts {
+    margin: 0 0 10px;
+    padding-left: 18px;
+}
+.section-guide-chart {
+    margin: 0 0 4px;
+}
+.section-guide-chart-name {
+    font-weight: 600;
+}
+.section-guide-example {
+    margin: 0;
+}
+
 /* ===== Detail panel tabs ===== */
 .dp-tabs {
     position: sticky;
@@ -1014,6 +1101,11 @@ body, p, td, li { font-size: 13px; font-weight: 400; }
 
 /* ===== Filter summary bar ===== */
 #wf-filter-hidden {
+    display: none !important;
+}
+/* Overview → AI sidebar bridge (Gradio must mount these; hide visually). */
+#tv-issue-ask,
+#tv-issue-ask-btn {
     display: none !important;
 }
 
@@ -1213,15 +1305,19 @@ html.tv-theme-dark {
     color: var(--ov-text);
     user-select: none;
 }
-.overview-issues-summary::-webkit-details-marker { display: none; }
-.overview-issues-summary::before {
+.overview-issues-summary::-webkit-details-marker,
+.overview-issue-group-head::-webkit-details-marker { display: none; }
+.overview-issues-summary::before,
+.overview-issue-group-head::before {
     content: "▸";
     display: inline-block;
     width: 0.9em;
+    flex-shrink: 0;
     color: var(--ov-muted);
     transition: transform 0.12s ease;
 }
-.overview-issues-panel[open] > .overview-issues-summary::before {
+.overview-issues-panel[open] > .overview-issues-summary::before,
+.overview-issue-group[open] > .overview-issue-group-head::before {
     transform: rotate(90deg);
 }
 .overview-issues-summary-meta {
@@ -1246,6 +1342,23 @@ html.tv-theme-dark {
     gap: 8px;
     flex-wrap: wrap;
 }
+.overview-issue-index {
+    align-self: center;
+    min-width: 2.2em;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--ov-muted);
+    font-variant-numeric: tabular-nums;
+}
+.overview-issue-kind {
+    align-self: center;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--ov-table-header-bg);
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+}
 .overview-issue-title {
     font-size: 14px;
     font-weight: 600;
@@ -1256,28 +1369,218 @@ html.tv-theme-dark {
     font-size: 12px;
     color: var(--ov-muted);
 }
-.overview-issue-more {
+.overview-issue-why,
+.overview-issue-action {
+    margin-top: 5px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--ov-text);
+}
+.overview-issue-action {
+    color: var(--ov-muted);
+}
+.overview-issue-label {
+    display: inline-block;
+    margin-right: 6px;
+    padding: 0 5px;
+    border-radius: 4px;
+    background: var(--ov-table-header-bg);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--ov-muted);
+    vertical-align: 1px;
+    white-space: nowrap;
+}
+.overview-issue-label-ai {
+    background: var(--ov-card);
+    color: var(--ov-accent);
+}
+.overview-issue-fix {
     margin-top: 4px;
+    color: var(--ov-text);
+    line-height: 1.45;
+}
+.overview-issue-where {
+    margin-top: 4px;
+    font-size: 11.5px;
+    color: var(--ov-muted);
+}
+.overview-issue-where-label {
+    display: inline-block;
+    margin-right: 6px;
+    vertical-align: 1px;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--ov-muted);
+    white-space: nowrap;
+}
+.overview-issue-where-value {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--ov-text);
+}
+.overview-issue-also {
+    margin-top: 4px;
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--ov-muted);
+}
+.overview-issue-tech {
+    margin-top: 6px;
+}
+.overview-issue-tech summary {
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--ov-muted);
+    user-select: none;
+}
+.overview-issue-tech .overview-issue-detail {
+    display: block;
+    margin-top: 4px;
+    line-height: 1.45;
+}
+.ov-verdict {
+    padding: 10px 14px;
+    background: var(--ov-card);
+    border-left: 4px solid var(--ov-border);
+    border-radius: 4px;
+    margin: 0 0 10px;
+}
+.ov-verdict-head {
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.4;
+}
+.ov-verdict-text {
+    margin-top: 4px;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--ov-text);
+}
+.ov-run-summary {
+    padding: 10px 14px;
+    background: var(--ov-card);
+    border-left: 4px solid var(--ov-border);
+    border-radius: 4px;
+    margin: 0 0 10px;
+}
+.ov-run-row {
+    display: flex;
+    gap: 10px;
+    font-size: 13px;
+    line-height: 1.55;
+}
+.ov-run-row + .ov-run-row {
+    margin-top: 6px;
+}
+.ov-run-label {
+    flex: 0 0 40px;
+    font-weight: 700;
+    font-size: 12px;
+    color: var(--ov-muted);
+    padding-top: 1px;
+}
+.ov-run-value {
+    flex: 1;
+    min-width: 0;
+    color: var(--ov-text);
+    word-break: break-word;
+}
+.ov-run-muted {
+    color: var(--ov-muted);
+}
+.ov-run-note {
+    color: var(--ov-bad);
+    font-weight: 650;
+    white-space: nowrap;
+}
+.token-summary-wrap {
+    min-height: 0;
+}
+.token-summary-line {
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--ov-text);
+    padding: 0 2px 8px;
+}
+.token-summary-line span {
+    white-space: nowrap;
+}
+.token-summary-sep {
+    color: var(--ov-muted);
+}
+.overview-issue-analyze {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 8px;
+    padding: 4px 10px;
+    border: 1px solid var(--ov-ai-accent);
+    border-radius: 6px;
+    background: #fff7ed;
+    color: #c2410c;
+    font-size: 12px;
+    font-weight: 650;
+    line-height: 1.3;
+    cursor: pointer;
+}
+.overview-issue-analyze:hover {
+    background: var(--ov-ai-accent);
+    color: #fff;
+}
+.overview-issue-group {
+    padding: 8px 10px 4px;
+    background: var(--ov-card);
+    border-left: 3px solid var(--ov-border);
+    border-radius: 4px;
+    margin-bottom: 8px;
+}
+.overview-issue-group-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
+}
+.overview-issue-group-meta {
+    font-size: 11px;
+    color: var(--ov-muted);
+    font-weight: 600;
+}
+.overview-issue-group-body {
+    margin-top: 6px;
+    padding-left: 6px;
+    border-left: 1px dashed var(--ov-border);
+}
+.overview-issue-child {
+    margin-bottom: 6px;
+}
+.overview-issue-child .overview-issue-card {
+    margin-bottom: 0;
+    background: var(--ov-bg);
+}
+.overview-issue-more {
+    margin: 2px 0 8px;
 }
 .overview-issue-more-summary {
     list-style: none;
     cursor: pointer;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
-    color: var(--ov-accent, #1d4ed8);
+    color: var(--ov-accent);
+    padding: 4px 0;
     user-select: none;
 }
 .overview-issue-more-summary::-webkit-details-marker { display: none; }
-.overview-issue-more-summary::before {
-    content: "▸ ";
-    color: var(--ov-muted);
-}
-.overview-issue-more[open] > .overview-issue-more-summary::before {
-    content: "▾ ";
-}
 .overview-issue-more-body {
-    margin-top: 4px;
-    padding-top: 2px;
+    margin-top: 2px;
+}
+.overview-issues-hint {
+    margin: 8px 0;
+    font-size: 12px;
+    color: var(--ov-muted);
 }
 .overview-issues-progress {
     display: flex;
@@ -1860,31 +2163,35 @@ html.tv-theme-dark {
     border-radius: 10px;
 }
 /* Closed right-edge tab: Gradio rotates this button 180deg, so undo that
-   before adding a readable label next to the chevron. */
+   before adding a readable label next to the chevron. Orange fill so first-time
+   users spot the AI analysis entry point. */
 #analysis-sidebar.right:not(.open) .toggle-button {
     transform: none;
     width: auto;
     height: auto;
-    padding: 7px 12px 7px 8px;
-    gap: 8px;
-    border-radius: 8px 0 0 8px;
-    border: 1px solid var(--ov-border, var(--border-color-primary));
+    min-height: 44px;
+    padding: 12px 16px 12px 12px;
+    gap: 10px;
+    border-radius: 10px 0 0 10px;
+    border: 1px solid var(--ov-ai-accent);
     border-right: none;
-    box-shadow: -2px 2px 8px var(--ov-card-shadow, rgba(15, 23, 42, 0.08));
-    background: var(--ov-card, var(--background-fill-secondary));
+    box-shadow: -3px 3px 12px color-mix(in srgb, var(--ov-ai-accent) 28%, transparent);
+    background: var(--ov-ai-accent);
+    color: #fff;
 }
 #analysis-sidebar.right:not(.open) .toggle-button .chevron {
-    transform: rotate(180deg);
+    transform: rotate(180deg) scale(1.25);
     padding: 0;
+    color: #fff;
 }
 #analysis-sidebar.right:not(.open) .toggle-button::after {
     content: "AI Trajectory Analysis";
-    font-size: 12px;
-    font-weight: 600;
+    font-size: 15px;
+    font-weight: 700;
     letter-spacing: -0.01em;
-    color: var(--ov-text, var(--body-text-color));
+    color: #fff;
     white-space: nowrap;
-    line-height: 1.2;
+    line-height: 1.25;
 }
 @media (max-width: 600px) {
     .tv-header { min-height: 28px; padding-right: 125px; }
@@ -2046,6 +2353,10 @@ WORKFLOW_CSS = """
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     max-height: 1.4em; line-height: 1.4;
 }
+
+/* Expanded view: full step content below the card header. */
+.wf-expand-body { margin-top: 8px; }
+.wf-expand-body .tv-text { font-size: 13px; }
 
 .wf-code-block {
     background: #0d1117; border: 1px solid #30363d; border-radius: 6px;

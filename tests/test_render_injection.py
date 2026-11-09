@@ -196,6 +196,7 @@ EXEMPT_SLOTS = {
     "state_raw": "gr.State",
     "state_analysis_brief": "gr.State (LLM prompt text)",
     "state_run": "gr.State (the loaded Trajectory)",
+    "state_overview_issues": "gr.State (OverviewIssue objects; escaped when build_overview_issues_html renders them)",
     # gr.Code renders into a CodeMirror text node.
     "raw_json": "gr.Code",
     # gr.Markdown defaults to sanitize_html=True (DOMPurify runs client-side).
@@ -212,6 +213,7 @@ EXEMPT_SLOTS = {
     "diag_file_chart": "plotly Figure",
     "diag_pressure_chart": "plotly Figure",
     "duration_chart": "plotly Figure",
+    "gantt_chart": "plotly Figure",
     "plan_timeline_chart": "plotly Figure",
     "skill_chart": "plotly Figure",
     "token_chart": "plotly Figure",
@@ -222,6 +224,8 @@ EXEMPT_SLOTS = {
     "diag_pressure_agent": "gr.Dropdown choices",
     "diag_usage_snapshot": "gr.Dropdown choices",
     "diag_window_limit": "gr.Number",
+    "gantt_axis_mode": "gr.Radio choices",
+    "wf_view_mode": "gr.Radio choices",
     "wf_filter_hidden": "gr.Textbox",
 }
 
@@ -556,6 +560,13 @@ class StepIndexJsInjectionTests(unittest.TestCase):
         from agent_trajviz.insight.rendering import render_workflow_html
 
         self.assertNotIn(self.INDEX_MARKER, render_workflow_html([self._step()]))
+
+    def test_workflow_expanded_view_coerces_the_index(self):
+        from agent_trajviz.insight.rendering import render_workflow_html
+
+        out = render_workflow_html([self._step()], expanded=True)
+        self.assertNotIn(self.INDEX_MARKER, out)
+        self.assertIn("wf-card-0", out)
 
     def test_step_link_chip_coerces_the_index(self):
         from agent_trajviz.insight.rendering import _step_link_chip, _step_link_chips

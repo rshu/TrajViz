@@ -78,6 +78,7 @@
             "type": "string",
             "enum": [
               "error",
+              "risk",
               "antipattern",
               "bottleneck"
             ]

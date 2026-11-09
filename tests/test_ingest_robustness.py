@@ -154,14 +154,20 @@ class LoadTrajectoryNeverRaises(unittest.TestCase):
             with self.subTest(case=name):
                 self._assert_contract(_write_bytes(self.tmp, name, data))
 
-    def test_encoding_hostility_is_a_clean_error(self):
-        """A BOM must be tolerated; UTF-16 and invalid UTF-8 must degrade to ``_error``."""
+    def test_powershell_utf16_bom_loads_and_a_stray_ff_does_not(self):
+        """A UTF-8 BOM and a PowerShell UTF-16 BOM both load; a stray 0xFF does not."""
         doc = json.dumps(_opencode_doc([_opencode_message()]))
         bom = self._assert_contract(_write_bytes(self.tmp, "bom.json", b"\xef\xbb\xbf" + doc.encode("utf-8")))
         self.assertNotIn("_error", bom, "a UTF-8 BOM is not a corrupt file")
 
-        utf16 = self._assert_contract(_write_bytes(self.tmp, "utf16.json", doc.encode("utf-16")))
-        self.assertIn("_error", utf16)
+        for name, encoded in (
+            ("utf16-le.json", b"\xff\xfe" + doc.encode("utf-16-le")),
+            ("utf16-be.json", b"\xfe\xff" + doc.encode("utf-16-be")),
+        ):
+            with self.subTest(name=name):
+                loaded = self._assert_contract(_write_bytes(self.tmp, name, encoded))
+                self.assertNotIn("_error", loaded)
+                self.assertEqual(loaded["metadata"]["session_id"], "s1")
 
         bad = self._assert_contract(
             _write_bytes(self.tmp, "badutf8.json", b'{"info": {}, "messages": [], "x": "\xff\xfe"}')

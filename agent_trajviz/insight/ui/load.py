@@ -14,7 +14,7 @@ from ..assistant import build_analysis_brief_from_session
 from ...plugins import format_label
 from ..session import LoadError, LoadedSession, load_session
 from . import overview_tab, patterns_tab, raw_tab, upload, workflow_tab
-from .shared import SharedState
+from .shared import SharedState, record_latest_run
 
 logger = logging.getLogger(__name__)
 
@@ -81,10 +81,17 @@ def _tab_unit(mod: Any) -> LoadUnit:
     return LoadUnit(name=name, pack=mod.pack_load, slots=slots, module=mod)
 
 
+def _overview_slots(ctx: LoadContext) -> dict[str, Any]:
+    """Overview components plus the shared ranked-issues State for AI follow-ups."""
+    slots = overview_tab.load_slots(ctx.refs[overview_tab])
+    slots["state_overview_issues"] = ctx.shared.state_overview_issues
+    return slots
+
+
 LOAD_UNITS: tuple[LoadUnit, ...] = (
     LoadUnit("shell", pack_shell, _shell_slots),
     _tab_unit(upload),
-    _tab_unit(overview_tab),
+    LoadUnit("overview_tab", overview_tab.pack_load, _overview_slots, overview_tab),
     _tab_unit(patterns_tab),
     _tab_unit(workflow_tab),
     _tab_unit(raw_tab),
@@ -214,12 +221,21 @@ def pack_load_outputs(result: LoadedSession | LoadError, dark: bool = False) -> 
     return packed
 
 
-def do_load(upload_obj, dark=False, selected_format="", *, slots: dict[str, Any] | None = None,
-            session_id: str | None = None):
+def do_load(
+    upload_obj,
+    dark=False,
+    selected_format="",
+    *,
+    slots: dict[str, Any] | None = None,
+    request: gr.Request | None = None,
+    session_id: str | None = None,
+):
     """Load wrapper: surface unexpected failures as a visible banner.
 
     When *slots* is provided (the live dashboard), return a Gradio component
     dict. Tests call ``pack_load_outputs`` / ``empty_load_outputs`` directly.
+    Every load — success, error, or the cleared upload — records what the
+    browser session now displays so superseded post-load streams stop themselves.
     """
     try:
         file_path = resolve_upload_path(upload_obj)
@@ -232,6 +248,7 @@ def do_load(upload_obj, dark=False, selected_format="", *, slots: dict[str, Any]
             banner=(f"<p style='color:#dc2626;'>Error loading trajectory: {html.escape(str(exc))}</p>"),
             detail="*Failed to load — see console for details.*",
         )
+    record_latest_run(getattr(request, "session_hash", None), packed.get("state_run"))
     if slots is None:
         return packed
     return {slots[key]: packed[key] for key in slots}
@@ -272,13 +289,29 @@ def bind_load(*, file_upload, load_btn, format_selector, state_dark, slots: dict
             f"Load slot keys mismatch vs packer: missing={sorted(expected - got)} extra={sorted(got - expected)}"
         )
 
-    def _do_load(upload_obj, dark=False, selected_format="", session_id=None):
-        return do_load(upload_obj, dark, selected_format, slots=slots, session_id=session_id)
+    def _do_load(
+        upload_obj,
+        dark=False,
+        selected_format="",
+        session_id=None,
+        request: gr.Request | None = None,
+    ):
+        return do_load(
+            upload_obj,
+            dark,
+            selected_format,
+            slots=slots,
+            request=request,
+            session_id=session_id,
+        )
 
     outputs = list(slots.values())
+    load_inputs = [file_upload, state_dark, format_selector]
+    if session_selector is not None:
+        load_inputs.append(session_selector)
     _load_ev = load_btn.click(
         fn=_do_load,
-        inputs=[file_upload, state_dark, format_selector] + ([session_selector] if session_selector is not None else []),
+        inputs=load_inputs,
         outputs=outputs,
     )
     click_load = (

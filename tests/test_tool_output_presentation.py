@@ -91,7 +91,9 @@ def test_detail_escapes_markup_and_keeps_full_native_payload(tmp_path):
     detail = _format_tool_call_detail(call)
     assert "<img src=x" not in detail
     assert "&lt;img src=x" in detail
-    assert "truncated" in detail
+    # Detail keeps the full native payload (no mid-size truncation) while escaping markup.
+    assert "native-tail" in detail
+    assert "truncated" not in detail
     assert json.loads(call["output"][0]["text"])["output"].endswith("native-tail")
     assert run.to_dict(include_raw=True)["raw"]["messages"][0]["parts"][0]["output"] == output
 
