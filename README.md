@@ -116,7 +116,7 @@ use `agent-trajviz-converge --help`. Every command provides `--help`.
 | ICode | Chrys expanded-session JSON with nested subagent sessions |
 
 Session files with a UTF-16 byte order mark are supported. For OpenTelemetry
-files, see [Saved OTLP captures](#saved-otlp-captures).
+files, see [Saved OTLP captures](https://github.com/rshu/TrajViz#saved-otlp-captures).
 
 ### Collect sessions and subagents
 
