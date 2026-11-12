@@ -7,6 +7,18 @@ change the public API (the names exported from `agent_trajviz`).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-12
+
+### Fixed
+
+- Show label coverage and mismatch errors, and hide the plan timeline when
+  the session recorded no plan.
+- Recover shell reads and searches from the recorded working directory and
+  retain writes when the same command also reads the file.
+- Show nonzero tool exit codes as failures in Workflow and AWE.
+- Recognize passing pytest summaries in piped output and clarify the
+  **Last Recognized Edit** milestone in comparison views.
+
 ## [0.5.0] - 2026-11-09
 
 ### Added
@@ -444,7 +456,8 @@ First release as the `agent-trajviz` package.
   passwords, authorization headers and generated-looking values of
   secret-named assignments become `[REDACTED]`.
 
-[Unreleased]: https://github.com/rshu/TrajViz/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/rshu/TrajViz/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/rshu/TrajViz/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/rshu/TrajViz/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/rshu/TrajViz/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/rshu/TrajViz/compare/v0.4.0...v0.4.1
