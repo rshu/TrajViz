@@ -14,6 +14,7 @@ import posixpath
 import re
 import shlex
 import statistics
+from collections import Counter
 
 from .shell_cmd import (
     _SHELL_PUNCTUATION, _cmd_script_tokens, _is_shell_assignment, _powershell_payload,
@@ -277,9 +278,12 @@ def extract_file_interactions(steps: list[dict]) -> list[dict]:
                     workdir = inp.get("workdir") or inp.get("cwd") or step.get("cwd")
                     operands = _shell_file_operands(command, workdir)
                     found_paths.extend(dict.fromkeys((path, kind) for _, path, kind in operands))
-                    covered = {operand for operand, _, _ in operands}
+                    covered = Counter(operand for operand, _, _ in operands)
                     for p in _extract_bash_paths(command):
-                        if p.replace("\\", "/") in covered:
+                        operand = p.replace("\\", "/")
+                        if covered[operand]:
+                            # Another stage may use the same operand for a write.
+                            covered[operand] -= 1
                             continue
                         # Classify: if command looks like a write operation
                         write_cmds = ("mv ", "cp ", "rm ", "mkdir ", "touch ",

@@ -79,6 +79,12 @@ def test_bash_file_references_exclude_non_file_arguments(command, paths):
     ("cat ./source.py /tmp/input.py > /tmp/output.py", "/capture/repo", [
         ("/capture/repo/source.py", "read"), ("/tmp/input.py", "read"), ("/tmp/output.py", "write"),
     ]),
+    ("cd /capture/repo && cat /capture/repo/source.py && rm /capture/repo/source.py", "", [
+        ("/capture/repo/source.py", "read"), ("/capture/repo/source.py", "write"),
+    ]),
+    ("cat ./source.py > ./source.py", "/capture/repo", [
+        ("/capture/repo/source.py", "read"), ("./source.py", "write"),
+    ]),
     ("cd /capture/repo || cat src/file.py", "", []),
     ("tools/cd /capture/repo && cat src/file.py", "", []),
     ("cd /capture/repo && cat README; cat ambiguous.py", "", [("/capture/repo/README", "read")]),
