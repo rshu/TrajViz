@@ -8,7 +8,11 @@ ZH_CN = {
     "First Surviving<br>Edit": "首次保留<br>的编辑",
     "First Passing Validation": "首次通过验证",
     "First Passing<br>Validation": "首次通过<br>验证",
-    "Final Patch": "最终补丁",
+    "Last Recognized Edit": "最后识别到的编辑",
+    "Last Recognized<br>Edit": "最后识别到的<br>编辑",
+    "Start": "开始",
+    "End": "结束",
+    "{start} → {end}": "{start} → {end}",
     "Matching milestone not recorded in the other run": "另一条轨迹未记录对应的里程碑",
     "Compared − reference: {delta} steps": "对比 − 参考：{delta} 步",
     "<b>%{text}</b><br>Step: %{x}<br>%{hovertext}<extra>Reference</extra>":

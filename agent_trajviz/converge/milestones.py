@@ -33,20 +33,26 @@ DEFAULT_VALIDATION_PATTERNS = {"test", "build", "lint", "check", "verify"}
 
 _PROCESS_SESSION = re.compile(r"(?m)^Process running with session ID ([^\s]+)\s*$")
 _PROCESS_EXIT = re.compile(r"(?m)^Process exited with code (-?\d+)\s*$")
+_TAIL_OUTPUT_FILTER = re.compile(r"\s*tail(?:\s+(?:-[1-9][0-9]*|-n\s*-?[1-9][0-9]*))?\s*")
+_STDERR_TO_STDOUT = re.compile(r"\s+2>&1\s*$")
+_PYTEST_RUNNERS = {"pytest", "py.test"}
 _RUNNER_VALUE_OPTIONS = {
     "--with", "--with-editable", "--project", "--directory", "--python",
     "--group", "--extra", "--package", "--env-file", "--index", "--index-url",
 }
 
 
-def _runs_validation(command: str, patterns: set[str], nesting: int = 0) -> bool:
+def _runs_validation(
+    command: str, patterns: set[str], nesting: int = 0, *, pytest_tail: bool = False,
+) -> bool:
     """Recognize runner argv, never words in script bodies or file arguments."""
     if nesting > 3:
         return False
     command = _without_heredoc_bodies(command).strip()
     # A shell's successful exit only grounds its final sequential command or
     # an && chain. Pipes, background jobs, and || branches can hide a failed
-    # validation; do not promote them to a passing milestone.
+    # validation. A final pytest-to-tail pipeline is eligible only when the
+    # caller separately checks the captured pytest summary.
     quote = ""
     tail = 0
     index = 0
@@ -67,13 +73,18 @@ def _runs_validation(command: str, patterns: set[str], nesting: int = 0) -> bool
             if command.startswith("&&", index):
                 index += 2
                 continue
+            if char == "|" and pytest_tail and _TAIL_OUTPUT_FILTER.fullmatch(command[index + 1:]):
+                producer = _STDERR_TO_STDOUT.sub("", command[tail:index])
+                segments = _shell_segments(producer)
+                return (bool(segments) and _validation_segment(segments[-1], _PYTEST_RUNNERS, nesting)
+                        and _validation_segment(segments[-1], patterns, nesting))
             return False
         elif char in {";", "\n"}:
             tail = index + 1
         index += 1
     command = command[tail:]
-    return any(_validation_segment(tokens, patterns, nesting)
-               for tokens in _shell_segments(command))
+    return not pytest_tail and any(_validation_segment(tokens, patterns, nesting)
+                                   for tokens in _shell_segments(command))
 
 
 def _validation_segment(tokens: list[str], patterns: set[str], nesting: int) -> bool:
@@ -205,6 +216,24 @@ def _successful_completion(tool: dict, *, process_poll: bool = False) -> bool | 
     return True if str(tool.get("status") or "").lower() in {"success", "completed", "complete", "succeeded", "ok"} else None
 
 
+def _has_passing_pytest_summary(tool: dict) -> bool:
+    """Require one complete terminal summary with an executed, passing test."""
+    from agent_trajviz.awe._engine.verification import test_summary
+
+    output = tool.get("output")
+    if (not isinstance(output, str) or not output.strip()
+            or (tool.get("metadata") or {}).get("truncated") is True
+            or not tool_field_observed(tool, "tool_outputs")):
+        return False
+    summary = test_summary(output)
+    if summary.get("runner") != "pytest":
+        return False
+    if test_summary(output.strip().rsplit("\n", 1)[-1]) != summary:
+        return False
+    counts = summary["counts"]
+    return counts["passed"] > 0 and counts["failed"] == counts["errors"] == 0
+
+
 def _first_passing_validation(steps: list[dict], patterns: set[str]) -> int | None:
     pending: set[tuple[str, str]] = set()
     for step in steps:
@@ -214,7 +243,12 @@ def _first_passing_validation(steps: list[dict], patterns: set[str]) -> int | No
             if not isinstance(args, dict):
                 continue
             command = args.get("command")
-            if tool.get("tool_name") in BASH_TOOL_NAMES and isinstance(command, str) and _runs_validation(command, patterns):
+            if tool.get("tool_name") in BASH_TOOL_NAMES and isinstance(command, str):
+                if not _runs_validation(command, patterns):
+                    if ("|" in command and _runs_validation(command, patterns, pytest_tail=True)
+                            and _successful_completion(tool) is True and _has_passing_pytest_summary(tool)):
+                        return step["index"]
+                    continue
                 completed = _successful_completion(tool)
                 if completed is True:
                     return step["index"]
@@ -255,7 +289,7 @@ MILESTONE_LABELS = {
     "first_edit": "First Edit",
     "first_surviving_edit": "First Surviving Edit",
     "first_passing_validation": "First Passing Validation",
-    "final_patch": "Final Patch",
+    "final_patch": "Last Recognized Edit",
 }
 
 
@@ -348,7 +382,7 @@ def extract_milestones(
             ):
                 milestones["first_passing_validation"] = a.step_index
 
-        # Track last successful write for final_patch
+        # The public final_patch key represents the last recognized successful write.
         if a.action_type == "FILE_WRITE" and a.effect_label == "survived":
             last_successful_write_step = a.step_index
 

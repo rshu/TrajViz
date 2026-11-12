@@ -52,6 +52,9 @@ def test_milestone_names_tick_labels_and_hover_prose_are_owned_but_values_are_no
             assert set(_label_keys(expression)) <= catalog().keys()
     ref = next(trace for _, trace in markers if trace.name == "Reference")
     cmp = next(trace for _, trace in markers if trace.name == "Compared")
+    assert "Last Recognized Edit" in ref.text
+    assert "Last Recognized<br>Edit" in figure.layout.yaxis.ticktext
+    assert translate("Last Recognized<br>Edit", "zh-CN") == "最后识别到的<br>编辑"
     assert list(ref.x) == list(reference.values())
     assert list(cmp.x) == [step for step in compared.values() if step is not None]
     assert "Compared − reference: +5 steps" in ref.customdata

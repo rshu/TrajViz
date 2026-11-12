@@ -88,6 +88,23 @@ class LoadPathTests(unittest.TestCase):
             packed = pack_load_outputs(session)
         self.assertIs(packed["state_run"], session.run)
         self.assertIn("2 assistant, 1 user", packed["overview_kpi_html"]["value"])
+        self.assertFalse(packed["plan_timeline_chart"]["visible"])
+
+    def test_plan_chart_appears_for_recorded_todos_and_hides_on_clear(self):
+        from agent_trajviz.insight.session import session_from_run
+        from agent_trajviz.insight.ui.load import empty_load_outputs, pack_load_outputs
+
+        run = tv.Trajectory.from_steps([{
+            "role": "assistant",
+            "tool_calls": [{
+                "tool_name": "TodoWrite",
+                "input": {"todos": [{"content": "Run tests", "status": "in_progress"}]},
+            }],
+        }])
+        chart = pack_load_outputs(session_from_run(run))["plan_timeline_chart"]
+        self.assertTrue(chart["visible"])
+        self.assertTrue(chart["value"].data)
+        self.assertFalse(empty_load_outputs()["plan_timeline_chart"]["visible"])
 
     def test_an_exported_trajectory_opens_with_the_same_numbers(self):
         from agent_trajviz.insight.session import load_session

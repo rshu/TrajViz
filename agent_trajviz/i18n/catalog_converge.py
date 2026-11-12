@@ -136,5 +136,5 @@ ZH_CN = {
     "First Surviving Edit": "首次保留的编辑",
     "First Passing Validation": "首次通过验证",
     "First Passing<br>Validation": "首次通过<br>验证",
-    "Final Patch": "最终补丁",
+    "Last Recognized Edit": "最后识别到的编辑",
 }

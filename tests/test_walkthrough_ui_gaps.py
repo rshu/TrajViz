@@ -124,13 +124,17 @@ def test_summary_parent_hides_empty_state_and_reveals_valid_labels(app, tmp_path
         "index": 1, "phase": "understand", "action": "code_reading",
     }]}))
     handler = _handler(app, "do_load_labels")
+    assert handler.outputs[0].visible is False
     loaded = handler.fn(str(labels), False, run)
-    assert "Labels loaded" in loaded[0] and loaded[-1]["visible"]
+    assert "Labels loaded" in loaded[0]["value"]
+    assert loaded[0]["visible"] and loaded[-1]["visible"]
     cleared = handler.fn(None, False, run)
-    assert cleared[0] == "" and not cleared[-1]["visible"]
+    assert cleared[0]["value"] == ""
+    assert not cleared[0]["visible"] and not cleared[-1]["visible"]
     labels.write_text(json.dumps({"taxonomy_version": "v1", "steps": [{"index": 999}]}))
     failed = handler.fn(str(labels), False, run)
-    assert "Labels could not be loaded" in failed[0] and failed[-1]["visible"]
+    assert "Labels could not be loaded" in failed[0]["value"]
+    assert failed[0]["visible"] and failed[-1]["visible"]
 
 
 def test_label_clear_keeps_current_run_warning_parent_visible(app):
@@ -143,11 +147,13 @@ def test_label_clear_keeps_current_run_warning_parent_visible(app):
     assert packed["summary_area"]["visible"]
     assert "Some records were unavailable" in packed["summary_banner"]["value"]
     cleared = _handler(app, "do_load_labels").fn(None, False, run)
-    assert cleared[0] == "" and cleared[-1]["visible"]
+    assert cleared[0]["value"] == ""
+    assert not cleared[0]["visible"] and cleared[-1]["visible"]
     reset = _handler(app, "_reset_labels")
     assert _handler(app, "do_load_labels").outputs[-1] not in reset.outputs
 
 
 def test_label_clear_does_not_hide_a_failed_load_banner(app):
     result = _handler(app, "do_load_labels").fn(None, False, None, "<p>Could not load this trajectory</p>")
-    assert result[0] == "" and result[-1]["visible"]
+    assert result[0]["value"] == ""
+    assert not result[0]["visible"] and result[-1]["visible"]

@@ -68,6 +68,33 @@ def test_bash_file_references_exclude_non_file_arguments(command, paths):
     assert _extract_bash_paths(command) == paths
 
 
+@pytest.mark.parametrize(("command", "workdir", "interactions"), [
+    ("cd '/capture/repo root' && sed -n '4,10p' 'src/file one.py' | head -n 80", "", [
+        ("/capture/repo root/src/file one.py", "read"),
+    ]),
+    ("cd /capture/repo && grep -n -A 3 needle src/a.py src/b.py && cat README", "", [
+        ("/capture/repo/src/a.py", "search"), ("/capture/repo/src/b.py", "search"),
+        ("/capture/repo/README", "read"),
+    ]),
+    ("cat ./source.py /tmp/input.py > /tmp/output.py", "/capture/repo", [
+        ("/capture/repo/source.py", "read"), ("/tmp/input.py", "read"), ("/tmp/output.py", "write"),
+    ]),
+    ("cd /capture/repo || cat src/file.py", "", []),
+    ("tools/cd /capture/repo && cat src/file.py", "", []),
+    ("cd /capture/repo && cat README; cat ambiguous.py", "", [("/capture/repo/README", "read")]),
+    ("cd /capture/repo && cd subdir && cat src/file.py", "", []),
+    ("cd /capture/repo && cat README # ignore adjacent.py", "", [("/capture/repo/README", "read")]),
+    ("cat missing_scope.py", "relative-workdir", []),
+    ("cd /capture/repo && cat *.py \"$INPUT\"", "", []),
+    ("cd /capture/repo && sed -i 's/a/b/' target.py", "", []),
+])
+def test_shell_file_diagnostics_uses_scoped_reader_and_search_operands(command, workdir, interactions):
+    steps = [{"index": 0, "tokens": {"total": 10}, "tool_calls": [
+        {"tool_name": "shell", "input": {"command": command, "workdir": workdir}},
+    ]}]
+    assert [(row["path"], row["type"]) for row in extract_file_interactions(steps)] == interactions
+
+
 @pytest.mark.parametrize("scope", [".", "..", "./", "../", "/"])
 def test_generic_search_roots_do_not_become_file_rows(scope):
     steps = [{"index": 0, "tokens": {"total": 10}, "tool_calls": [

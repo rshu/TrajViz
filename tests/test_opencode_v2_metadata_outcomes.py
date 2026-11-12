@@ -10,6 +10,8 @@ import tempfile
 import pytest
 
 import agent_trajviz as tv
+from agent_trajviz.awe.inspection import inspect_trajectory
+from agent_trajviz.awe.inspection_render import inspection_html
 from agent_trajviz.insight.tool_failure import tool_call_failed
 from agent_trajviz.insight.rendering import format_step_detail, render_workflow_html
 from agent_trajviz.labeling.taxonomy import build_step_message
@@ -101,10 +103,23 @@ def test_native_exit_semantics_remain_unchanged(exit_code, failures):
     assert run.metrics["tool_fail"] == failures
     assert run.metrics["tool_success"] == 1 - failures
     assert run.steps[1]["error_count"] == failures
+    detail_html = format_step_detail(run.steps[1])
     if failures:
         assert "1 tool err" in render_workflow_html(run.steps)
-        detail = " ".join(re.sub(r"<[^>]+>", " ", format_step_detail(run.steps[1])).split())
+        detail = " ".join(re.sub(r"<[^>]+>", " ", detail_html).split())
         assert "Errors 1" in detail
+        assert "dp-section-tool-error" in detail_html
+        assert "Exit code 1" in detail
+        expanded = render_workflow_html(run.steps, expanded=True)
+        assert "status: <code>error</code>" in expanded
+        assert "<pre>Exit code 1</pre>" in expanded
+        inspection = inspect_trajectory(run)
+        failure, = inspection["failures"]
+        assert failure["status"] == "completed"
+        rendered = inspection_html(inspection)
+        assert re.search(r"<td><span [^>]*>Error</span></td><td>1</td>", rendered)
+    else:
+        assert "dp-section-tool-error" not in detail_html
 
 
 def test_genuine_empty_interruption_remains_a_request_error_without_tool_errors():

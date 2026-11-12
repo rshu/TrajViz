@@ -142,6 +142,8 @@ def test_segment_ticks_keep_full_names_without_colliding_with_an_axis_title():
         False,
     )
     assert all(list(trace.x) == [label] for trace in figure.data)
+    assert list(figure.layout.xaxis.ticktext) == ["First Surviving Edit → First Passing Validation"]
+    assert all(list(trace.hovertext) == list(figure.layout.xaxis.ticktext) for trace in figure.data)
     assert figure.layout.xaxis.title.text is None
     assert figure.layout.xaxis.automargin and figure.layout.xaxis.tickangle == -45
     assert figure.layout.margin.b >= 180 and figure.layout.height >= 500

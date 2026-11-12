@@ -23,11 +23,10 @@ from .milestones import MILESTONE_LABELS, MILESTONE_NAMES
 _TPL = "plotly_white"
 
 # Milestone names/labels live in milestones.py, next to extract_milestones, so
-# the chart and the HTML table cannot drift apart. Aliased to the private
-# names this module already used; the miss fallback stays `.get(name, name)`
-# here and `.title()`-cased in rendering.py, so no rendered string changes.
+# the chart and the HTML table cannot drift apart.
 _MILESTONE_NAMES = MILESTONE_NAMES
 _MILESTONE_LABELS = MILESTONE_LABELS
+_SEGMENT_ENDPOINT_LABELS = {"start": "Start", "end": "End", **MILESTONE_LABELS}
 
 _REF_COLOR = "#1d4ed8"   # blue
 _CMP_COLOR = "#dc2626"   # red
@@ -223,7 +222,28 @@ def build_segment_cost_chart(
 
     fig.update_layout(height=500, margin=dict(b=180),
                       xaxis=dict(title=None, tickangle=-45, automargin=True, tickfont=dict(size=10)))
-    return localize_figure(fig, trace_names=True, annotations=True)
+    segment_labels = {}
+    trace_labels = {}
+    for index, trace in enumerate(fig.data):
+        for label in trace.x:
+            if label in segment_labels:
+                continue
+            start, _, end = str(label).partition(" → ")
+            if start in _SEGMENT_ENDPOINT_LABELS and end in _SEGMENT_ENDPOINT_LABELS:
+                segment_labels[label] = {
+                    "template": "{start} → {end}",
+                    "labels": {"start": _SEGMENT_ENDPOINT_LABELS[start], "end": _SEGMENT_ENDPOINT_LABELS[end]},
+                }
+            else:
+                segment_labels[label] = {"literal": html.escape(str(label))}
+        trace_labels[index] = {
+            "hovertext": [segment_labels[label] for label in trace.x],
+            "hovertemplate": "%{hovertext}<br>%{y}<extra>%{fullData.name}</extra>",
+        }
+    fig.update_xaxes(tickvals=list(segment_labels))
+    return localize_figure(fig, trace_names=True, annotations=True,
+                           layout_labels={"xaxis.ticktext": list(segment_labels.values())},
+                           trace_labels=trace_labels)
 
 
 # -- Divergence waterfall chart ------------------------------------------------

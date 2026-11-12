@@ -5,7 +5,7 @@ import json
 import re
 import shlex
 
-from ..shell_cmd import _shell_segments
+from ..shell_cmd import _command_operands, _read_operands, _search_operands, _shell_segments
 from .common import _iso_to_epoch_ms
 from .codex_files import agent_path as _codex_agent_path
 from .codex_files import own_codex_events, parent_thread_id, session_meta
@@ -608,78 +608,9 @@ def _classify_codex_command(func_name: str, cmd: str) -> str:
     return "Bash"
 
 
-_RG_SEARCH_VALUE_OPTIONS = frozenset({
-    "-A", "-B", "-C", "-m", "-g", "-t", "-T", "-j", "--after-context", "--before-context", "--context",
-    "--max-count", "--glob", "--iglob", "--type", "--type-not", "--type-add", "--type-clear", "--threads",
-    "--encoding", "--max-columns", "--max-depth", "--max-filesize", "--sort", "--sortr", "--ignore-file",
-    "--include", "--exclude", "--exclude-dir", "--label", "--color", "--colors", "--pre", "--pre-glob",
-})
-_GREP_SEARCH_VALUE_OPTIONS = frozenset({
-    "-A", "-B", "-C", "-m", "-D", "-d", "--after-context", "--before-context", "--context", "--max-count",
-    "--include", "--exclude", "--exclude-dir", "--label", "--devices", "--directories",
-})
-
-
-def _command_operands(parts: list[str], value_options: frozenset[str]) -> list[str]:
-    """Positional operands of one shell stage, excluding flags and redirects."""
-    operands = []
-    index, options = 1, True
-    while index < len(parts):
-        token = parts[index]
-        if re.fullmatch(r"[0-9]*[<>]+", token):
-            index += 2
-        elif re.match(r"^[0-9]*[<>]", token):
-            index += 1
-        elif options and token == "--":
-            options = False
-            index += 1
-        elif options and token.startswith("-") and token != "-":
-            option, separator, _ = token.partition("=")
-            index += 2 if option in value_options and not separator else 1
-        else:
-            operands.append(token)
-            index += 1
-    return operands
-
-
 def _search_input(parts: list[str]) -> tuple[str, str]:
-    """Keep search patterns/scopes separate from option values and later pipes."""
-    operands = []
-    name = parts[0].rsplit("/", 1)[-1] if parts else ""
-    value_options = _RG_SEARCH_VALUE_OPTIONS if name in {"rg", "ripgrep"} else _GREP_SEARCH_VALUE_OPTIONS
-    pattern = ""
-    has_pattern = False
-    index, options = 1, True
-    while index < len(parts):
-        token = parts[index]
-        option, separator, value = token.partition("=")
-        if options and option in {"-e", "--regexp", "-f", "--file"}:
-            if not separator and index + 1 < len(parts):
-                value = parts[index + 1]
-            if not has_pattern:
-                pattern = value
-            has_pattern = True
-            index += 1 if separator else 2
-        elif options and token.startswith(("-e", "-f")) and len(token) > 2:
-            if not has_pattern:
-                pattern = token[2:]
-            has_pattern = True
-            index += 1
-        elif re.fullmatch(r"[0-9]*[<>]+", token):
-            index += 2
-        elif re.match(r"^[0-9]*[<>]", token):
-            index += 1
-        elif options and token == "--":
-            options = False
-            index += 1
-        elif options and token.startswith("-") and token != "-":
-            index += 2 if option in value_options and not separator else 1
-        else:
-            operands.append(token)
-            index += 1
-    if not has_pattern and operands:
-        pattern = operands.pop(0)
-    return pattern, operands[-1] if operands else ""
+    pattern, paths = _search_operands(parts)
+    return pattern, paths[-1] if paths else ""
 
 
 def _build_codex_tool_input(
@@ -702,16 +633,7 @@ def _build_codex_tool_input(
     if tool_name in ("Read",):
         segments = _shell_segments(cmd)
         parts = segments[0] if segments else []
-        reader = parts[0].rsplit("/", 1)[-1] if parts else ""
-        values = frozenset({"-n", "--lines", "-c", "--bytes"}) if reader in {"head", "tail"} else frozenset()
-        if reader == "sed":
-            values = frozenset({"-e", "--expression", "-f", "--file"})
-        operands = _command_operands(parts, values)
-        if reader == "sed" and not any(
-            option.partition("=")[0] in values or option.startswith(("-e", "-f"))
-            for option in parts[1:] if option.startswith("-")
-        ):
-            operands = operands[1:]  # the first positional operand is sed's program
+        operands = _read_operands(parts)
         return {"file_path": operands[-1] if operands else "", "command": cmd}
 
     elif tool_name in ("Write",):

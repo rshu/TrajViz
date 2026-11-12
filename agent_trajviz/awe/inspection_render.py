@@ -187,6 +187,14 @@ def _process_result(row: Mapping[str, Any]) -> str:
     return body
 
 
+def _failure_status(row: Mapping[str, Any]) -> str:
+    status = row.get("status")
+    code = row.get("exit_code")
+    if status in ("completed", "success") and type(code) is int and code != 0:
+        return text("Error")
+    return _escape(status)
+
+
 def _pre(value: Any) -> str:
     return "<pre>" + _escape(value) + "</pre>"
 
@@ -297,7 +305,7 @@ def inspection_html(result: dict, *, workflow_links: bool = True) -> str:
 
     failures = _records(data.get("failures"))
     rows = [[_row_steps(row, allowed, workflow_links), _escape(row.get("tool_name")),
-             _pre(row.get("command")), _escape(row.get("status")), _escape(row.get("exit_code")),
+             _pre(row.get("command")), _failure_status(row), _escape(row.get("exit_code")),
              _pre(row.get("output_excerpt"))] for row in failures]
     body += _details("Recorded tool failures ({count})", _table(
         ["Step", "Tool", "Command", "Status", "Exit code", "Recorded output"], rows,

@@ -11,6 +11,7 @@ import html
 import json
 
 from ..metrics import tool_call_duration_ms
+from ..tool_failure import tool_call_failed
 
 # Same hint keys as the Workflow detail panel.
 _TITLE_ARG_KEYS = ("command", "file_path", "pattern", "description", "prompt")
@@ -95,7 +96,9 @@ def _tool_call_html(part: dict) -> str:
                     break
     dur_ms = tool_call_duration_ms(part)
     status = str(part.get("status") or "?")
-    is_error = bool(part.get("error")) or status == "error"
+    is_error = tool_call_failed(part)
+    if is_error and status in ("completed", "success"):
+        status = "error"
     bits = "".join((
         f" &middot; {_esc(title)}" if title else "",
         f" &mdash; {dur_ms / 1000.0:.2f}s" if dur_ms is not None else "",
@@ -108,8 +111,13 @@ def _tool_call_html(part: dict) -> str:
     output_text = _plain(part.get("output", ""))
     if output_text:
         body.append(f"<div class='tv-io-label'>Output</div><pre>{_esc(output_text)}</pre>")
-    if part.get("error"):
-        body.append(f"<div class='tv-io-label'>Error</div><pre>{_esc(_plain(part['error']))}</pre>")
+    error = part.get("error")
+    metadata = part.get("metadata")
+    exit_code = metadata.get("exit") if isinstance(metadata, dict) else None
+    if not error and type(exit_code) is int and exit_code != 0:
+        error = f"Exit code {exit_code}"
+    if error:
+        body.append(f"<div class='tv-io-label'>Error</div><pre>{_esc(_plain(error))}</pre>")
     return _details(f"<code>{_esc(tool_name)}</code>{bits}", "".join(body))
 
 

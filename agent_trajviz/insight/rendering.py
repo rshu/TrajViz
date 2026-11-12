@@ -20,6 +20,7 @@ from .palette import AGENT_COLORS, AGENT_CSS_COLORS
 from .parser import _optional_token_count, cache_read_share, spawned_child_session_id
 from .styles import WORKFLOW_CSS
 from .telemetry_quality import field_observed
+from .tool_failure import tool_call_failed
 from .tool_output import tool_output_text
 from .workflow_role import workflow_role
 from ..awe.summary import attribution_summary_html, primary_fault
@@ -779,11 +780,13 @@ def _format_tool_call_detail(p: dict) -> str:
 
     meta_line = f"<div class='dp-tool-meta'>{' &middot; '.join(meta_parts)}</div>" if meta_parts else ""
 
-    has_error = p.get("error") or p.get("status") == "error"
+    has_error = tool_call_failed(p)
     section_cls = "dp-section dp-section-tool-error" if has_error else "dp-section dp-section-tool"
 
     tool_name = html.escape(p.get("tool_name", "?"))
-    status = html.escape(p.get("status", "?"))
+    recorded_status = p.get("status", "?")
+    status = (ui_text("Error") if has_error and recorded_status in ("completed", "success")
+              else html.escape(recorded_status))
     # Build a meaningful title: prefer explicit title, fall back to tool_name + key arg
     raw_title = p.get("title") or ""
     if not raw_title and isinstance(inp, dict):
@@ -812,11 +815,17 @@ def _format_tool_call_detail(p: dict) -> str:
 
     error_detail = ""
     tc_error = p.get("error")
+    exit_code = tc_meta.get("exit") if isinstance(tc_meta, dict) else None
+    error_html = ""
     if tc_error:
         err_str = tc_error if isinstance(tc_error, str) else json.dumps(tc_error, indent=2, ensure_ascii=False)
+        error_html = html.escape(err_str)
+    elif type(exit_code) is int and exit_code != 0:
+        error_html = ui_text("Exit code {code}", code=exit_code)
+    if error_html:
         error_detail = (
             f"<details class='dp-details' open><summary>{ui_text('Error')}</summary>"
-            f"<div class='dp-details-body'><pre>{html.escape(err_str)}</pre></div>"
+            f"<div class='dp-details-body'><pre>{error_html}</pre></div>"
             f"</details>"
         )
 

@@ -10,13 +10,15 @@ from agent_trajviz.tool_vocab import (
 )
 
 import os
+import posixpath
 import re
 import shlex
 import statistics
 
 from .shell_cmd import (
-    _cmd_script_tokens, _is_shell_assignment, _powershell_payload,
-    _shell_segments, _skip_wrapper_options, tool_chart_name,
+    _SHELL_PUNCTUATION, _cmd_script_tokens, _is_shell_assignment, _powershell_payload,
+    _read_operands, _search_operands, _shell_name, _shell_segments, _shell_tokens,
+    _skip_wrapper_options, tool_chart_name,
 )
 from .tool_failure import FAILURE_STATUSES, tool_call_error_kind, tool_call_failed
 from .tool_output import tool_output_text
@@ -50,6 +52,9 @@ _TOOL_SEARCH_FIELDS: dict[str, tuple[str, str]] = {
 }
 
 _QUALIFIED_PATH = re.compile(r"^(?:/|\.\.?/|[A-Za-z]:[/\\])")
+_ABSOLUTE_PATH = re.compile(r"^(?:/|[A-Za-z]:/)")
+_FILE_READ_COMMANDS = {"cat", "head", "tail", "sed"}
+_FILE_SEARCH_COMMANDS = {"grep", "egrep", "fgrep", "rg", "ripgrep"}
 _HEREDOC = re.compile(r"<<(-?)\s*(?:'([^']+)'|\"([^\"]+)\"|([A-Za-z_][A-Za-z0-9_]*))")
 
 
@@ -161,6 +166,68 @@ def _is_skill_definition_path(path: str) -> bool:
     return bool(name) and name.lower() == "skill.md"
 
 
+def _literal_shell_path(value: object) -> str:
+    """Use a recorded literal without expanding variables, globs, or home paths."""
+    if not isinstance(value, str) or value.startswith("~") or re.search(r"[$`*?\[\]\x00\r\n]", value):
+        return ""
+    return value.replace("\\", "/")
+
+
+def _shell_file_operands(command: str, workdir: object) -> list[tuple[str, str, str]]:
+    """Return literal reader/search operands under a recorded shell directory.
+
+    A leading, literal ``cd ... &&`` establishes the directory for its
+    guarded command chain. Stop at branch separators or directory changes.
+    Paths are resolved lexically so foreign captures need no local files.
+    """
+    directory = _literal_shell_path(workdir)
+    paths = []
+    parts: list[str] = []
+    first_stage = True
+    for token in [*_shell_tokens(_without_heredoc_bodies(command)), "\n"]:
+        if token.startswith("#"):
+            token = "\n"
+        if not token or not all(char in _SHELL_PUNCTUATION for char in token):
+            parts.append(token)
+            continue
+        if not parts:
+            if not token.strip():
+                continue
+            break
+
+        name = _shell_name(parts[0])
+        if first_stage and parts[0] == "cd" and token.strip() == "&&":
+            args = parts[2:] if parts[1:2] == ["--"] else parts[1:]
+            directory = _literal_shell_path(args[0]) if len(args) == 1 else ""
+            if not _ABSOLUTE_PATH.match(directory):
+                break
+        elif not _ABSOLUTE_PATH.match(directory) or name in {"cd", "pushd", "popd", "source", ".", "eval", "exec"}:
+            break
+        else:
+            if name in _FILE_SEARCH_COMMANDS:
+                _, operands = _search_operands(parts)
+                interaction = "search"
+            elif name in _FILE_READ_COMMANDS and not (
+                name == "sed" and any(option.startswith(("-i", "--in-place")) for option in parts[1:])
+            ):
+                operands = _read_operands(parts)
+                interaction = "read"
+            else:
+                operands = []
+                interaction = ""
+            for operand in operands:
+                path = _literal_shell_path(operand)
+                if path.rstrip("/") not in {"", "-", ".", ".."}:
+                    resolved = path if _ABSOLUTE_PATH.match(path) else posixpath.join(directory, path)
+                    paths.append((path, posixpath.normpath(resolved), interaction))
+
+        first_stage = False
+        parts = []
+        if token.strip() not in {"&&", "|"}:
+            break
+    return paths
+
+
 def extract_file_interactions(steps: list[dict]) -> list[dict]:
     """Extract file path references from every tool call in parsed steps.
 
@@ -206,8 +273,14 @@ def extract_file_interactions(steps: list[dict]) -> list[dict]:
             # Bash — heuristic path extraction
             elif tool_name in BASH_TOOL_NAMES:
                 command = inp.get("command", "")
-                if command:
+                if isinstance(command, str) and command:
+                    workdir = inp.get("workdir") or inp.get("cwd") or step.get("cwd")
+                    operands = _shell_file_operands(command, workdir)
+                    found_paths.extend(dict.fromkeys((path, kind) for _, path, kind in operands))
+                    covered = {operand for operand, _, _ in operands}
                     for p in _extract_bash_paths(command):
+                        if p.replace("\\", "/") in covered:
+                            continue
                         # Classify: if command looks like a write operation
                         write_cmds = ("mv ", "cp ", "rm ", "mkdir ", "touch ",
                                       "> ", ">> ", "tee ")

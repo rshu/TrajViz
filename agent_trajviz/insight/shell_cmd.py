@@ -61,7 +61,8 @@ def _shell_segments_cached(command: str) -> tuple[tuple[str, ...], ...]:
     return tuple(tuple(segment) for segment in _shell_segments_uncached(command))
 
 
-def _shell_segments_uncached(command: str) -> list[list[str]]:
+def _shell_tokens(command: str) -> list[str]:
+    """Lex shell words while keeping control operators for scope-aware callers."""
     if "\\" in command and _WIN_CMD_HINT_RE.search(command):
         command = command.replace("\\", "/")
     lexer = shlex.shlex(command, posix=True, punctuation_chars=_SHELL_PUNCTUATION)
@@ -70,14 +71,16 @@ def _shell_segments_uncached(command: str) -> list[list[str]]:
     lexer.whitespace_split = True
     lexer.commenters = ""
     try:
-        tokens = list(lexer)
+        return list(lexer)
     except ValueError:
         # Be conservative for malformed/unclosed quoting.
         return []
 
+
+def _shell_segments_uncached(command: str) -> list[list[str]]:
     segments: list[list[str]] = []
     current: list[str] = []
-    for token in tokens:
+    for token in _shell_tokens(command):
         if token and all(char in _SHELL_PUNCTUATION for char in token):
             if current:
                 segments.append(current)
@@ -87,6 +90,95 @@ def _shell_segments_uncached(command: str) -> list[list[str]]:
     if current:
         segments.append(current)
     return segments
+
+
+_RG_SEARCH_VALUE_OPTIONS = frozenset({
+    "-A", "-B", "-C", "-m", "-g", "-t", "-T", "-j", "--after-context", "--before-context", "--context",
+    "--max-count", "--glob", "--iglob", "--type", "--type-not", "--type-add", "--type-clear", "--threads",
+    "--encoding", "--max-columns", "--max-depth", "--max-filesize", "--sort", "--sortr", "--ignore-file",
+    "--include", "--exclude", "--exclude-dir", "--label", "--color", "--colors", "--pre", "--pre-glob",
+})
+_GREP_SEARCH_VALUE_OPTIONS = frozenset({
+    "-A", "-B", "-C", "-m", "-D", "-d", "--after-context", "--before-context", "--context", "--max-count",
+    "--include", "--exclude", "--exclude-dir", "--label", "--devices", "--directories",
+})
+
+
+def _command_operands(parts: list[str], value_options: frozenset[str]) -> list[str]:
+    """Positional operands of one shell stage, excluding flags and redirects."""
+    operands = []
+    index, options = 1, True
+    while index < len(parts):
+        token = parts[index]
+        if re.fullmatch(r"[0-9]*[<>]+", token):
+            index += 2
+        elif re.match(r"^[0-9]*[<>]", token):
+            index += 1
+        elif options and token == "--":
+            options = False
+            index += 1
+        elif options and token.startswith("-") and token != "-":
+            option, separator, _ = token.partition("=")
+            index += 2 if option in value_options and not separator else 1
+        else:
+            operands.append(token)
+            index += 1
+    return operands
+
+
+def _search_operands(parts: list[str]) -> tuple[str, list[str]]:
+    """Keep search patterns/scopes separate from option values and later pipes."""
+    operands = []
+    name = parts[0].rsplit("/", 1)[-1] if parts else ""
+    value_options = _RG_SEARCH_VALUE_OPTIONS if name in {"rg", "ripgrep"} else _GREP_SEARCH_VALUE_OPTIONS
+    pattern = ""
+    has_pattern = False
+    index, options = 1, True
+    while index < len(parts):
+        token = parts[index]
+        option, separator, value = token.partition("=")
+        if options and option in {"-e", "--regexp", "-f", "--file"}:
+            if not separator and index + 1 < len(parts):
+                value = parts[index + 1]
+            if not has_pattern:
+                pattern = value
+            has_pattern = True
+            index += 1 if separator else 2
+        elif options and token.startswith(("-e", "-f")) and len(token) > 2:
+            if not has_pattern:
+                pattern = token[2:]
+            has_pattern = True
+            index += 1
+        elif re.fullmatch(r"[0-9]*[<>]+", token):
+            index += 2
+        elif re.match(r"^[0-9]*[<>]", token):
+            index += 1
+        elif options and token == "--":
+            options = False
+            index += 1
+        elif options and token.startswith("-") and token != "-":
+            index += 2 if option in value_options and not separator else 1
+        else:
+            operands.append(token)
+            index += 1
+    if not has_pattern and operands:
+        pattern = operands.pop(0)
+    return pattern, operands
+
+
+def _read_operands(parts: list[str]) -> list[str]:
+    """Keep reader options and sed programs out of the file operands."""
+    reader = parts[0].rsplit("/", 1)[-1] if parts else ""
+    values = frozenset({"-n", "--lines", "-c", "--bytes"}) if reader in {"head", "tail"} else frozenset()
+    if reader == "sed":
+        values = frozenset({"-e", "--expression", "-f", "--file"})
+    operands = _command_operands(parts, values)
+    if reader == "sed" and not any(
+        option.partition("=")[0] in values or option.startswith(("-e", "-f"))
+        for option in parts[1:] if option.startswith("-")
+    ):
+        operands = operands[1:]  # the first positional operand is sed's program
+    return operands
 
 
 def _path_basename(path: str) -> str:

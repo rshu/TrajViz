@@ -289,7 +289,7 @@ def layout(overview_kpi_html: gr.HTML) -> OverviewRefs:
                         elem_classes=["resizable-chart"],
                     )
                     diag_rootcause_html = gr.HTML("")
-                    plan_timeline_chart = gr.Plot(show_label=False, label="Plan Progress Timeline")
+                    plan_timeline_chart = gr.Plot(show_label=False, label="Plan Progress Timeline", visible=False)
 
                 with gr.Column(visible=False) as deep_dive_section:
                     gr.HTML(render_section_guide("deep_dive_section"))
@@ -443,7 +443,7 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
             "diag_pressure_chart": fig,
             "diag_file_chart": fig,
             "diag_rootcause_html": "",
-            "plan_timeline_chart": fig,
+            "plan_timeline_chart": gr.update(value=None, visible=False),
             "hotspots_md": "",
             "per_message_md": "",
         }
@@ -488,7 +488,9 @@ def pack_load(session: LoadedSession | None = None, *, dark: bool = False, banne
         "diag_pressure_chart": dg["diag_pressure_chart"],
         "diag_file_chart": dg["diag_file_chart"],
         "diag_rootcause_html": dg["diag_rootcause_html"],
-        "plan_timeline_chart": ch["plan_timeline_fig"],
+        "plan_timeline_chart": gr.update(
+            value=ch["plan_timeline_fig"], visible=bool(session.plan_metrics.get("items")),
+        ),
         "hotspots_md": ov["hotspots_text"],
         "per_message_md": ov["per_message_text"],
     }
@@ -815,7 +817,7 @@ def bind(
                         or bool(run is not None and load_warnings_html(session_from_run(run, "")).strip()))
 
         def no_charts(badge, message, visible):
-            return (badge, message, gr.update(visible=False), empty, empty,
+            return (gr.update(value=badge, visible=bool(badge)), message, gr.update(visible=False), empty, empty,
                     gr.update(visible=False), empty, empty, gr.update(visible=False), empty,
                     gr.update(visible=visible))
 
@@ -830,7 +832,7 @@ def bind(
                      f"Labels could not be loaded: {html.escape(str(exc))}</div>")
             return no_charts(error, error, True)
 
-        return (payload["badge_html"], payload["status_html"], gr.update(visible=True),
+        return (gr.update(value=payload["badge_html"], visible=True), payload["status_html"], gr.update(visible=True),
                 payload["phase_count_fig"], payload["action_count_fig"], gr.update(visible=True),
                 payload["phase_duration_fig"], payload["action_duration_fig"], gr.update(visible=True),
                 payload["timeline_fig"], gr.update(visible=True))

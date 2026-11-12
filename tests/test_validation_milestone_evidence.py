@@ -72,6 +72,34 @@ def test_failed_running_and_unobserved_validation_cannot_pass(changes):
     assert _milestone(_step(5, "pytest -q", **changes)) is None
 
 
+@pytest.mark.parametrize("command", [
+    "cd work && timeout 30 python -m pytest -q 2>&1 | tail -30",
+    "cd work && python - <<'PY'\nprint('prepare')\nPY\npython -m pytest -q 2>&1 | tail -4",
+])
+def test_pytest_piped_to_tail_uses_the_runner_summary_instead_of_the_pipeline_exit(command):
+    failed = _step(5, command, metadata={"exit": 0}, output="1 failed, 3 passed in 0.31s")
+    passed = _step(9, command, metadata={"exit": 0}, output="24 passed in 4.90s\n")
+    assert _milestone(failed) is None
+    assert _milestone(failed, passed) == 9
+
+
+@pytest.mark.parametrize("changes", [
+    {"output": ""},
+    {"output": "4 skipped in 0.02s"},
+    {"output": "2 passed in 0.07s\n2 passed in 0.09s"},
+    {"output": "2 passed in 0.07s\ninterrupted"},
+    {"metadata": {"exit": 1}},
+    {"metadata": {"truncated": True}},
+    {"metadata": {"_outcome_observed": False}},
+    {"command": "pytest && echo summary | tail -4"},
+    {"command": "pytest | tail input.log"},
+    {"command": "pytest | tail -4 || true"},
+])
+def test_pytest_pipeline_abstains_when_the_pass_summary_is_missing_or_ambiguous(changes):
+    args = {"command": "pytest | tail -4", "output": "2 passed in 0.07s", **changes}
+    assert _milestone(_step(5, **args)) is None
+
+
 def _launch(index=67, *, session="root"):
     return _step(index, "python -m pytest -q tests/test_sample.py",
                  output="Process running with session ID 7011\nOutput:\n", session=session)
