@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import math
+from bisect import bisect_right
 
 import plotly.graph_objects as go
 
@@ -39,6 +40,8 @@ _IDLE_GAP_SPAN_FRACTION = 0.05
 # the busy time (with a floor), so a weekend away cannot flatten the chart.
 _COMPRESSED_GAP_MIN_S = 15.0
 _COMPRESSED_GAP_FRACTION = 0.08
+_USER_PROMPT_WINDOW_S = 5.0
+_COMPRESSED_USER_WAIT_S = 15.0
 
 
 def _epoch_ms(value) -> float | None:
@@ -61,13 +64,12 @@ def _step_end_ms(step: dict, start_ms: float) -> float | None:
 class _IdleGapAxis:
     """Piecewise-linear x mapping that collapses long idle gaps.
 
-    Real seconds in, plot seconds out. Every gap longer than the threshold
-    shrinks to a fixed visible band; everything else keeps true scale. Hover
-    text keeps real values, so no information is lost — only the axis is
-    compressed. With no qualifying gaps the mapping is the identity.
+    Real seconds in, plot seconds out. Qualifying gaps can shrink to a
+    visible band while all recorded activity keeps its true duration.
+    Hover text always uses elapsed time.
     """
 
-    def __init__(self, spans: list[tuple[float, float]], compress: bool):
+    def __init__(self, spans: list[tuple[float, float]], user_times: list[float], compress: bool):
         merged: list[list[float]] = []
         for s, e in sorted(spans):
             if merged and s <= merged[-1][1]:
@@ -81,25 +83,30 @@ class _IdleGapAxis:
             self._shifts = []
             return
         threshold = max(_MIN_IDLE_GAP_S, (merged[-1][1] - merged[0][0]) * _IDLE_GAP_SPAN_FRACTION)
-        # (real_start, real_end, shown_width). Real gap width = end - start.
-        self.gaps: list[tuple[float, float, float]] = []
+        user_times = sorted(user_times)
+        self.gaps: list[tuple[float, float, float, bool]] = []
         for i in range(len(merged) - 1):
             gap_start, gap_end = merged[i][1], merged[i + 1][0]
             gap = gap_end - gap_start
-            if gap < threshold:
+            prompt = bisect_right(user_times, gap_end) - 1
+            ends_with_prompt = (
+                prompt >= 0 and gap_start < user_times[prompt] and gap_end - user_times[prompt] <= _USER_PROMPT_WINDOW_S
+            )
+            # A new prompt is evidence for a pause even in a long session.
+            if gap < (_MIN_IDLE_GAP_S if ends_with_prompt else threshold):
                 continue
-            shown = min(gap, max(_COMPRESSED_GAP_MIN_S, busy * _COMPRESSED_GAP_FRACTION)) if compress else gap
-            self.gaps.append((gap_start, gap_end, shown))
+            cap = _COMPRESSED_USER_WAIT_S if ends_with_prompt else max(_COMPRESSED_GAP_MIN_S, busy * _COMPRESSED_GAP_FRACTION)
+            self.gaps.append((gap_start, gap_end, min(gap, cap) if compress else gap, ends_with_prompt))
         self._shifts = [
             (gap_start, gap_end, gap_end - gap_start - shown)
-            for gap_start, gap_end, shown in self.gaps
+            for gap_start, gap_end, shown, _ in self.gaps
         ]
 
     @property
     def compressed(self) -> bool:
         return any(
             (gap_end - gap_start) - shown > 0.5
-            for gap_start, gap_end, shown in self.gaps
+            for gap_start, gap_end, shown, _ in self.gaps
         )
 
     def map(self, t: float) -> float:
@@ -108,10 +115,8 @@ class _IdleGapAxis:
             if t >= gap_end:
                 out -= shift
             elif t > gap_start:
-                # Inside the gap: scale to the shown band width.
-                real = gap_end - gap_start
-                shown = real - shift
-                out = gap_start + shown * (t - gap_start) / real
+                # Keep earlier shifts while applying part of this gap's shift.
+                out -= shift * (t - gap_start) / (gap_end - gap_start)
                 break
         return out
 
@@ -130,11 +135,11 @@ def _axis_ticks(axis: _IdleGapAxis, real_max: float) -> tuple[list[float], list[
     mag = 10.0 ** math.floor(math.log10(raw_step))
     step = next(s * mag for s in (1, 2, 5, 10) if s * mag >= raw_step)
     times: list[float] = [float(t) for t in range(0, int(real_max) + 1, int(step))]
-    for gap_start, gap_end, _shown in axis.gaps:
+    for gap_start, gap_end, _, _ in axis.gaps:
         times += [gap_start, gap_end]
 
     def inside_gap(t: float) -> bool:
-        return any(gs < t < ge for gs, ge, _ in axis.gaps)
+        return any(gs < t < ge for gs, ge, _, _ in axis.gaps)
 
     ticks: list[float] = []
     seen: set[float] = set()
@@ -259,7 +264,7 @@ def build_execution_gantt_chart(
                     f"{wait_note}"
                 ),
             ))
-    axis = _IdleGapAxis(spans, compress=axis_mode != GANTT_AXIS_WALLCLOCK)
+    axis = _IdleGapAxis(spans, [t for t, _ in user_marks], compress=axis_mode != GANTT_AXIS_WALLCLOCK)
     real_max = max((e for _, e in spans), default=0.0)
 
     fig = go.Figure()
@@ -284,8 +289,7 @@ def build_execution_gantt_chart(
     _add_bars(step_bars, color=STEP_BAR_COLOR, name=_STEP_LEGEND)
     _add_bars(tool_bars, color=TOOL_BAR_COLOR, name=_TOOL_LEGEND)
 
-    # User prompts become markers on a dedicated top lane: they explain the
-    # idle gaps between steps (the human was away, not the model stalling).
+    # User prompts become markers on a dedicated top lane.
     if user_marks:
         fig.add_trace(
             go.Scatter(
@@ -310,12 +314,10 @@ def build_execution_gantt_chart(
     # band is narrow — the axis break is visible, the truth is on the label.
     if axis.gaps:
         y_labels = y_labels + [_WAIT_LANE_LABEL]
-    user_times = [t for t, _ in user_marks]
     wait_legend_shown = False
-    for gap_start, gap_end, shown in axis.gaps:
+    for gap_start, gap_end, shown, ends_with_prompt in axis.gaps:
         gap = gap_end - gap_start
-        waiting = any(gap_end - 5.0 <= t <= gap_end + 5.0 for t in user_times)
-        label = f"idle {_fmt_duration(gap)}" + (" — waiting for user" if waiting else "")
+        label = f"idle {_fmt_duration(gap)}" + (" before user message" if ends_with_prompt else "")
         if shown < gap - 0.5:
             label += f"<br>(axis compressed, real {gap_start:.0f}s → {gap_end:.0f}s)"
         x0, x1 = axis.map(gap_start), axis.map(gap_end)
@@ -344,13 +346,15 @@ def build_execution_gantt_chart(
             yanchor="middle",
         )
 
+    chart_title = "Execution Timeline (wall-clock)"
     x_title = "Time (s) — relative to the first message"
     if axis.compressed:
-        x_title += " · idle gaps compressed"
+        chart_title = "Execution Timeline (compressed)"
+        x_title = "Elapsed time from the first message · idle gaps compressed"
     height = min(2400, max(260, 90 * len(y_labels) + 110))
     _apply_chart_layout(
         fig,
-        "Execution Timeline (wall-clock)",
+        chart_title,
         xaxis=x_title,
         height=height,
         barmode="overlay",

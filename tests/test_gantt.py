@@ -357,7 +357,7 @@ class IdleGapShadingTest(unittest.TestCase):
         self.assertEqual({"main"}, {b["lane"] for b in _bars(fig)} - {"user wait"})
         labels = [a.text for a in fig.layout.annotations]
         self.assertTrue(
-            any("idle 5m 40s" in t and "waiting for user" in t for t in labels),
+            any("idle 5m 40s" in t and "before user message" in t for t in labels),
             labels,
         )
         self.assertTrue(any("axis compressed" in t for t in labels), labels)
@@ -384,6 +384,38 @@ class IdleGapShadingTest(unittest.TestCase):
         self.assertAlmostEqual(342.1, bars[1]["start"], places=1)
         labels = [a.text for a in fig.layout.annotations]
         self.assertTrue(labels and "axis compressed" not in labels[0], labels)
+
+    def test_pause_before_a_prompt_is_compressed_in_a_long_run(self):
+        steps = [
+            step(0, role="user", created_ms=10_000),
+            step(1, created_ms=10_007, completed_ms=871_346),
+            step(2, role="user", created_ms=918_033),
+            step(3, created_ms=918_043, completed_ms=1_202_833),
+        ]
+        wall = build_execution_gantt_chart(steps, axis_mode=GANTT_AXIS_WALLCLOCK)
+        compressed = build_execution_gantt_chart(steps)
+        wall_bars, compressed_bars = _bars(wall), _bars(compressed)
+        self.assertAlmostEqual(46.697, wall_bars[-1]["end"] - wall_bars[-1]["start"])
+        self.assertAlmostEqual(15.0, compressed_bars[-1]["end"] - compressed_bars[-1]["start"])
+        self.assertAlmostEqual(31.697, wall_bars[1]["start"] - compressed_bars[1]["start"])
+        self.assertAlmostEqual(wall_bars[1]["end"] - compressed_bars[1]["end"], 31.697)
+        self.assertEqual(wall_bars[1]["hovertext"], compressed_bars[1]["hovertext"])
+        self.assertIn("47s before user message", compressed.layout.annotations[0].text)
+
+    def test_prompt_inside_the_second_compressed_gap_stays_inside_it(self):
+        steps = [
+            step(0, created_ms=10_000, completed_ms=12_000),
+            step(1, created_ms=112_000, completed_ms=114_000),
+            step(2, role="user", created_ms=212_000),
+            step(3, created_ms=214_000, completed_ms=216_000),
+        ]
+        fig = build_execution_gantt_chart(steps)
+        prompt = next(trace for trace in fig.data if trace.type == "scatter")
+        second_gap = _bars(fig)[-1]
+        self.assertLess(second_gap["start"], prompt.x[0])
+        self.assertLess(prompt.x[0], second_gap["end"])
+        self.assertAlmostEqual(33.7, prompt.x[0])
+        self.assertIn("+202.0s", prompt.hovertext[0])
 
     def test_weekend_scale_gap_gets_day_label(self):
         two_days_ms = 2 * 24 * 3600 * 1000

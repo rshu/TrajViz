@@ -63,23 +63,27 @@ _METHOD_DETAILS_HTML = (
     "<div style='padding:4px 0 2px 14px;line-height:1.7;'>"
     + "<br>".join((
         paired_text(
-            "Values marked ≈ are independent estimates. Their sum can differ from the reported usage.",
-            "带 ≈ 的项均为独立估算，相加不必等于服务端记录的用量。",
+            "Values marked ≈ are estimates based on the available content. The components can add up to a different count than the provider reports.",
+            "带 ≈ 的项根据可见内容估算，各项合计可能与提供商记录的用量不同。",
         ),
         paired_text(
-            f"1. Text: CJK characters ÷ {CJK_CHARS_PER_TOKEN} plus other characters ÷ {OTHER_CHARS_PER_TOKEN}.",
-            f"1. 文本：中文字符数 ÷ {CJK_CHARS_PER_TOKEN} + 其他字符数 ÷ {OTHER_CHARS_PER_TOKEN}。",
+            f"1. Text: basic CJK ideographs (U+4E00–U+9FFF) ÷ {CJK_CHARS_PER_TOKEN} plus other characters ÷ {OTHER_CHARS_PER_TOKEN}. "
+            "The result is rounded to a whole number, with a minimum of 1 for nonempty text.",
+            f"1. 文本：基本中日韩统一表意文字（U+4E00–U+9FFF）数量 ÷ {CJK_CHARS_PER_TOKEN} + 其他字符数 ÷ {OTHER_CHARS_PER_TOKEN}。"
+            "结果取最接近的整数，非空文本至少计 1 个 token。",
         ),
         paired_text(
-            f"2. Message framing: roughly {TOOL_RESULT_WRAPPER_TOKENS} tokens per result, "
-            f"{TOOL_BATCH_WRAPPER_TOKENS} per batch, {USER_MSG_WRAPPER_TOKENS} per user message, "
-            f"{TOOL_CALL_SYNTAX_TOKENS} per tool call, and {ASSISTANT_MSG_WRAPPER_TOKENS} per assistant message.",
-            f"2. 消息框架：每条工具结果约 {TOOL_RESULT_WRAPPER_TOKENS} token，"
-            f"每批结果约 {TOOL_BATCH_WRAPPER_TOKENS} token，每条用户消息约 {USER_MSG_WRAPPER_TOKENS} token，"
-            f"每次工具调用约 {TOOL_CALL_SYNTAX_TOKENS} token，每条助手消息约 {ASSISTANT_MSG_WRAPPER_TOKENS} token。",
+            f"2. Input framing adds about {TOOL_RESULT_WRAPPER_TOKENS} tokens per listed tool result, "
+            f"{TOOL_BATCH_WRAPPER_TOKENS} for the group of results from the previous step, "
+            f"and {USER_MSG_WRAPPER_TOKENS} per user message. Output framing adds about {TOOL_CALL_SYNTAX_TOKENS} per tool call "
+            f"plus {ASSISTANT_MSG_WRAPPER_TOKENS} once for an assistant message with tool calls.",
+            f"2. 输入框架按每条列出的工具结果约 {TOOL_RESULT_WRAPPER_TOKENS} 个 token、上一步的整组结果约 {TOOL_BATCH_WRAPPER_TOKENS} 个、"
+            f"每条用户消息约 {USER_MSG_WRAPPER_TOKENS} 个估算。输出框架按每次工具调用约 {TOOL_CALL_SYNTAX_TOKENS} 个估算，"
+            f"有工具调用的助手消息另计一次约 {ASSISTANT_MSG_WRAPPER_TOKENS} 个。",
         ),
         paired_text(
-            f"3. When SGLang and the recorded cache counts support it, estimates assume {RADIX_PAGE_TOKENS} tokens per page.",
+            f"3. For recorded SGLang calls, a partial cache page is estimated only when the cache-hit count matches "
+            f"the previous call’s full pages at {RADIX_PAGE_TOKENS} tokens per page.",
             f"3. 若提供商记录为 SGLang 且命中量与上一步整页数一致，则用 {RADIX_PAGE_TOKENS} token/页估算缓存页尾重算。",
         ),
     ))
@@ -220,8 +224,8 @@ def _first_call_lines(users: list[dict], fresh_input: int) -> list[str]:
     rest = max(0, fresh_input - est_total)
     lines.append(
         _IND1 + paired_text(
-            f"- System prompt and tool definitions ≈ {_fmt(rest)} tok (inferred by subtracting estimated items)",
-            f"- 系统提示 + 工具定义 ≈ {_fmt(rest)} tok：导出中不可见，由实际值减去可估算项推知",
+            f"- Other input ≈ {_fmt(rest)} tok (remainder after estimated user messages and framing, may include system prompts and tool definitions)",
+            f"- 其他输入 ≈ {_fmt(rest)} tok（扣除用户消息及其框架的估算后所得，可能包含系统提示和工具定义）",
         )
     )
     return lines

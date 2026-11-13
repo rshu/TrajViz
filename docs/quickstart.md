@@ -114,8 +114,9 @@ Simplified Chinese. The browser remembers the interface language.
 In **Overview**, follow issue links to their evidence in **Workflow**, or select
 **Export issues into JSON** to save the findings. Under **Summary**, click a bar
 in **Token Usage** to inspect its recorded token breakdown. The **Execution
-Timeline** skips idle gaps by default. Choose **True wall-clock** to include
-the elapsed gaps.
+Timeline** compresses long idle gaps by default. Tick labels and hover details
+still show elapsed time from the first message. Choose **True wall-clock** to
+show idle gaps at their full width.
 
 Loading a trajectory computes the dashboard locally. To request model assistance,
 open **AI Trajectory Analysis → Settings**, enter the provider details, and select

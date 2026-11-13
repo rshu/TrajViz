@@ -32,7 +32,7 @@ class TokenStepExplanationTests(unittest.TestCase):
         self.assertIn("未找到该步骤", build_token_step_explanation_html([_step()], 5))
         self.assertIn("未找到该步骤", build_token_step_explanation_html([_step()], -1))
 
-    def test_first_call_lists_user_message_and_derives_system_prompt(self):
+    def test_first_call_lists_user_message_and_estimates_other_input(self):
         steps = [
             _step(role="user", text_preview="帮我做六步编码任务"),
             _step(total=19270, inp=8373, output=303, reasoning=10594, cache_read=0),
@@ -43,9 +43,8 @@ class TokenStepExplanationTests(unittest.TestCase):
         self.assertIn("8,373", html_out)
         # The user message is estimable (9 CJK chars ≈ 6 tok + 3 wrapper)...
         self.assertIn("用户消息 ≈ 6 tok + 包装 3 tok", html_out)
-        # ...and the invisible system prompt + tool defs are derived by
-        # subtraction rather than silently dropped.
-        self.assertIn("系统提示 + 工具定义 ≈ 8,364 tok", html_out)
+        self.assertIn("其他输入 ≈ 8,364 tok", html_out)
+        self.assertIn("may include system prompts and tool definitions", html_out)
 
     def test_second_call_decomposes_fresh_input(self):
         # Mirrors the verified sglang numbers: prev total 19270 = 75*256 + 70,
@@ -140,7 +139,8 @@ class TokenStepExplanationTests(unittest.TestCase):
         # The estimation method stays visible below whichever step is shown.
         self.assertIn("tv-token-method", panel)
         self.assertIn("估算方法", panel)
-        self.assertIn("中文字符数 ÷ 1.4", panel)
+        self.assertIn("basic CJK ideographs (U+4E00–U+9FFF) ÷ 1.4", panel)
+        self.assertIn("once for an assistant message with tool calls", panel)
 
     def test_empty_panel_is_just_the_hint(self):
         panel = build_token_step_panel_html([])

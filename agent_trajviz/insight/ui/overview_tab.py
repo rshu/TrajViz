@@ -204,7 +204,7 @@ def layout(overview_kpi_html: gr.HTML) -> OverviewRefs:
                     gantt_axis_mode = gr.Radio(
                         label="Timeline axis",
                         choices=[
-                            ("Skip idle gaps (default)", GANTT_AXIS_SKIP_IDLE),
+                            ("Compress idle gaps (default)", GANTT_AXIS_SKIP_IDLE),
                             ("True wall-clock", GANTT_AXIS_WALLCLOCK),
                         ],
                         value=GANTT_AXIS_SKIP_IDLE,
