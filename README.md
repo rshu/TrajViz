@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/rshu/TrajViz/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/rshu/TrajViz/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/agent-trajviz)](https://pypi.org/project/agent-trajviz/)
-[![Homebrew](https://raw.githubusercontent.com/rshu/TrajViz/main/.github/homebrew-badge.svg)](https://github.com/rshu/homebrew-tap#readme)
+[![Homebrew](https://raw.githubusercontent.com/rshu/TrajViz/main/.github/homebrew-badge.svg)](https://github.com/rshu/homebrew-trajviz#readme)
 [![Python](https://img.shields.io/pypi/pyversions/agent-trajviz)](https://pypi.org/project/agent-trajviz/)
 [![Downloads](https://static.pepy.tech/badge/agent-trajviz)](https://pepy.tech/projects/agent-trajviz)
 [![License](https://img.shields.io/pypi/l/agent-trajviz)](https://github.com/rshu/TrajViz/blob/main/LICENSE)
@@ -26,13 +26,12 @@ pip install "agent-trajviz[app]"   # dashboards, figures, reports and LLM featur
 
 For the library and collection tools alone: `pip install agent-trajviz`.
 
-[Homebrew](https://github.com/rshu/homebrew-tap) includes the dashboards and
-Python runtime. The first two commands are one-time setup. The trust step
-applies to Homebrew 6 and later.
+[Homebrew](https://github.com/rshu/homebrew-trajviz) installs the dashboards,
+CLI, and Python runtime. Tap once and trust the formula on Homebrew 6 or later.
 
 ```sh
-brew tap rshu/tap
-brew trust --formula rshu/tap/trajviz
+brew tap rshu/trajviz
+brew trust --formula rshu/trajviz/trajviz
 brew install trajviz
 ```
 

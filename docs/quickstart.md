@@ -24,8 +24,8 @@ The first two commands are one-time setup. The trust step applies to Homebrew 6
 and later.
 
 ```bash
-brew tap rshu/tap
-brew trust --formula rshu/tap/trajviz
+brew tap rshu/trajviz
+brew trust --formula rshu/trajviz/trajviz
 brew install trajviz
 ```
 

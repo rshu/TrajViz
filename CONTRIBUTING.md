@@ -54,10 +54,9 @@ run without an external checkout.
    release `vX.Y.Z` with focused notes and the same tested distributions. Check
    that the Documentation workflow publishes the stable site and archives its
    versioned snapshot on the release.
-5. Run the [Homebrew Update formula workflow](https://github.com/rshu/homebrew-tap/actions/workflows/update.yml)
-   with the same `X.Y.Z`. Review its prepared branch and passing macOS/Linux
-   checks, then merge it into the tap's `main`. Confirm the formula reports the
-   same upstream version.
+5. Run the [Homebrew Update formula workflow](https://github.com/rshu/homebrew-trajviz/actions/workflows/update.yml)
+   with the same `X.Y.Z`. Follow the [tap's release steps](https://github.com/rshu/homebrew-trajviz#maintaining-the-formula)
+   to test and publish bottles, then confirm the formula reports the same version.
 
 ## Documentation
 
