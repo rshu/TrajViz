@@ -19,10 +19,14 @@ pip install "agent-trajviz[charts]"
 On Python 3.11–3.13, install the `zstd` extra to read compressed DeepSeek
 Harness sessions. Python 3.14 and newer can read them with the core package.
 
-For the dashboards and CLI, Homebrew includes Python and the app dependencies:
+Homebrew includes Python and the app dependencies for the dashboards and CLI.
+The first two commands are one-time setup. The trust step applies to Homebrew 6
+and later.
 
 ```bash
-brew install rshu/tap/trajviz
+brew tap rshu/tap
+brew trust --formula rshu/tap/trajviz
+brew install trajviz
 ```
 
 Use pip in your project environment for the Python examples below; Homebrew
