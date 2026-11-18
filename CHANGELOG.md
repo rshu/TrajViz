@@ -7,13 +7,19 @@ change the public API (the names exported from `agent_trajviz`).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-18
+
+### Added
+
+- Import Pi single-session ZIPs and completed JSON progress streams.
+
 ### Fixed
 
-- Load Pi's active session branch, single-session ZIPs, and completed JSON
-  progress records while retaining full-session usage in raw metadata.
+- Follow Pi's active history branch while retaining full-session usage in raw metadata.
 - Preserve Pi system and extension messages, manual shell commands, and nested
   codemode calls without duplicating tokens or tool execution time.
 - Keep missing Pi tool outcomes unknown and retain recorded tool durations.
+- Clarify token estimates and preserve elapsed time when compressing timeline idle gaps.
 - Resize dashboard charts when their section becomes visible or changes width.
 - Preserve evaluation timeout results when macOS cannot confirm final descendant cleanup.
 
@@ -466,7 +472,8 @@ First release as the `agent-trajviz` package.
   passwords, authorization headers and generated-looking values of
   secret-named assignments become `[REDACTED]`.
 
-[Unreleased]: https://github.com/rshu/TrajViz/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/rshu/TrajViz/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/rshu/TrajViz/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/rshu/TrajViz/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/rshu/TrajViz/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/rshu/TrajViz/compare/v0.4.1...v0.4.2
