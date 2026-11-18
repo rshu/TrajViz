@@ -47,6 +47,7 @@ brew install trajviz
 
 ### Python
 
+<!-- trajviz:run -->
 ```python
 import agent_trajviz as tv
 
@@ -323,8 +324,8 @@ Workflow steps. Optional failure attribution uses the bundled evaluation engine
 and canonical reference data. **Saved runs & evaluation** provides provenance
 graphs, symptoms, recommendations and reports. Evaluation settings configure
 explicit operations and optional model connections. See the
-[AWE guide](https://github.com/rshu/TrajViz/blob/main/docs/awe.md) for the Python
-API and CLI.
+[AWE API reference](https://rshu.github.io/TrajViz/dev/api/agent_trajviz/awe.html)
+for Python interfaces and `agent-trajviz-awe --help` for the CLI.
 
 ## Development
 
@@ -333,7 +334,7 @@ git clone https://github.com/rshu/TrajViz.git
 cd TrajViz
 uv sync --locked --extra dev
 uv run --locked pytest
-uv run --locked ruff check agent_trajviz tests examples
+uv run --locked ruff check agent_trajviz tests examples .github/scripts
 ```
 
 See [CONTRIBUTING.md](https://github.com/rshu/TrajViz/blob/main/CONTRIBUTING.md)

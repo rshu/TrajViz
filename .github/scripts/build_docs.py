@@ -1,4 +1,4 @@
-"""Build public guides, API reference and schemas without importing private modules recursively."""
+"""Build README-based guides, public API reference and schemas."""
 from __future__ import annotations
 
 import argparse
@@ -9,7 +9,6 @@ import importlib.metadata
 import json
 from pathlib import Path
 import re
-import shutil
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -18,6 +17,7 @@ from urllib.parse import unquote, urlsplit, urlunsplit
 PUBLIC_MODULES = ("agent_trajviz", "agent_trajviz.figures", "agent_trajviz.dashboard",
                   "agent_trajviz.llm", "agent_trajviz.attribution", "agent_trajviz.awe")
 GUIDES = ("index", "quickstart", "guides", "data-reference", "awe")
+SOURCE_MODE = "readme"
 TEMPLATES = Path(__file__).resolve().parents[1] / "docs"
 EXCLUDED_TERM = re.compile("de" + "caf", re.IGNORECASE)
 
@@ -94,6 +94,36 @@ def rewrite_markdown_links(rendered: str) -> str:
             target = urlunsplit(("", "", parts.path[:-3] + ".html", parts.query, parts.fragment))
         return match.group(1) + html.escape(target, quote=True) + match.group(3)
     return re.sub(r'(href=["\'])([^"\']+)(["\'])', replace, rendered)
+
+
+def readme_pages(source: Path) -> dict[str, str]:
+    """Derive navigation pages from the maintained README, never local notes."""
+    text = source.read_text(encoding="utf-8")
+    guard_public_text(text, source.name)
+    sections = {}
+    for match in re.finditer(r"(?m)^## (.+)\n", text):
+        end = re.search(r"(?m)^## ", text[match.end():])
+        sections[match[1]] = text[match.end():match.end() + end.start() if end else len(text)].strip()
+
+    def section(name: str) -> str:
+        value = sections.get(name)
+        return f"## {name}\n\n{value}\n" if value else ""
+
+    return {
+        "index": text,
+        "quickstart": "# Quickstart\n\n" + section("Install") + sections.get("Quickstart", "")
+                      + "\n\n[Python API reference](api/agent_trajviz.html).\n",
+        "guides": "# Guides\n\n" + "\n".join(section(name) for name in (
+            "Supported inputs", "Saved OTLP captures", "Optional LLM features", "AWE inspection and evaluation"))
+                  + "\n[Python API reference](api/agent_trajviz.html).\n",
+        "data-reference": "# Data reference\n\n"
+                          "The view catalog and JSON schemas below are generated from the installed public API.\n\n"
+                          "[Views and JSON schemas](data/views.html) · "
+                          "[Trajectory and view API](api/agent_trajviz.html).\n",
+        "awe": "# Workflow inspection and evaluation\n\n" + sections.get("AWE inspection and evaluation", "")
+               + "\n\n[Workflow evaluation API](api/agent_trajviz/awe.html) · "
+               "[Reference-based attribution API](api/agent_trajviz/attribution.html).\n",
+    }
 
 
 class _Links(HTMLParser):
@@ -239,12 +269,22 @@ def _write(output: Path, relative: Path | str, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def build(output: Path, docs_root: Path, *, package_root: Path | None = None,
+def build(output: Path, docs_root: Path | None = None, *, package_root: Path | None = None,
           version_label: str = "development", expected_version: str | None = None,
-          base_url: str = "../", check_examples: bool = False) -> dict:
-    output, docs_root = output.resolve(), docs_root.resolve()
-    if output == docs_root or output.is_relative_to(docs_root) or docs_root.is_relative_to(output):
-        raise DocsError("Keep generated output separate from Markdown sources.")
+          base_url: str = "../", check_examples: bool = False, readme: Path | None = None) -> dict:
+    output = output.resolve()
+    if docs_root is not None:
+        docs_root = docs_root.resolve()
+        if output == docs_root or output.is_relative_to(docs_root) or docs_root.is_relative_to(output):
+            raise DocsError("Keep generated output separate from Markdown sources.")
+    # The legacy --docs-root argument remains accepted so the release workflow
+    # can invoke old and new tagged builders uniformly. New builders read only
+    # the README beside that source layout; ignored docs/ files stay private.
+    readme = (readme or (docs_root.parent / "README.md" if docs_root is not None
+                        else Path(__file__).resolve().parents[2] / "README.md")).resolve()
+    if output == readme:
+        raise DocsError("Keep generated output separate from the README source.")
+    pages = readme_pages(readme)
     if package_root is not None:
         package_root = package_root.resolve()
         sys.path.insert(0, str(package_root))
@@ -263,24 +303,15 @@ def build(output: Path, docs_root: Path, *, package_root: Path | None = None,
     _write(output, "assets/docs.css", (TEMPLATES / "site.css").read_text())
     _write(output, "assets/versions.js", (TEMPLATES / "versions.js").read_text())
     for name in GUIDES:
-        source = docs_root / (name + ".md")
-        text = source.read_text(encoding="utf-8")
+        text = pages[name]
         if name == "awe" and "agent_trajviz.awe" not in modules:
             text = ("# Workflow evaluation\n\nSaved evaluation runs and the bundled evaluator were added in TrajViz 0.4.0. "
                     "This documentation describes an earlier package. See the development or latest stable documentation.")
-        guard_public_text(text, source.name)
+        guard_public_text(text, name + ".html")
         body = rewrite_markdown_links(str(markdown2.markdown(text, extras=["fenced-code-blocks", "tables", "header-ids", "code-friendly"])))
         title = next((line.lstrip("# ").strip() for line in text.splitlines() if line.startswith("# ")), name)
         page = Path(name + ".html")
         _write(output, page, page_html(page, title, body, version, version_label, base_url))
-    if (docs_root / "assets").is_dir():
-        for asset in (docs_root / "assets").rglob("*"):
-            if asset.is_file():
-                if not asset.resolve().is_relative_to(docs_root):
-                    raise DocsError("Documentation assets must stay inside the docs source directory.")
-                destination = output / asset.relative_to(docs_root)
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(asset, destination)
     for name, documented in modules.items():
         page = Path("api") / (name.replace(".", "/") + ".html")
         _write(output, page, _inject_api(page, render.html_module(documented, modules), version, version_label, base_url))
@@ -320,11 +351,12 @@ def build(output: Path, docs_root: Path, *, package_root: Path | None = None,
     page = Path("data/views.html")
     _write(output, page, page_html(page, "Views and schemas", body, version, version_label, base_url))
     report = {"version": version, "version_label": version_label, "package": str(package_file),
+              "source_mode": SOURCE_MODE,
               "api_modules": list(modules), "catalog_views": len(package.VIEW_CATALOG), "schemas": len(schemas),
               **check_site(output, allow_version_links=True)}
     _write(output, "build-info.json", json.dumps({key: value for key, value in report.items() if key != "package"}, indent=2) + "\n")
     if check_examples:
-        command = [sys.executable, str(Path(__file__).with_name("check_docs_examples.py")), "--docs-root", str(docs_root),
+        command = [sys.executable, str(Path(__file__).with_name("check_docs_examples.py")), "--readme", str(readme),
                    "--expected-version", version, "--extras", "charts,llm,app", "--api-html", str(output / "api/agent_trajviz.html")]
         if package_root is not None:
             command += ["--package-root", str(package_root)]
@@ -335,7 +367,9 @@ def build(output: Path, docs_root: Path, *, package_root: Path | None = None,
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=Path("site"))
-    parser.add_argument("--docs-root", "--docs-dir", type=Path, default=Path("docs"))
+    parser.add_argument("--docs-root", "--docs-dir", type=Path,
+                        help="Legacy source-layout hint: use README.md beside this directory, without reading its contents")
+    parser.add_argument("--readme", type=Path, help="README source (defaults to the selected builder's repository)")
     parser.add_argument("--package-root", type=Path)
     parser.add_argument("--version-label", default="development")
     parser.add_argument("--expected-version", "--version")
@@ -349,7 +383,7 @@ def main(argv=None) -> int:
         else:
             report = build(args.output, args.docs_root, package_root=args.package_root,
                            version_label=args.version_label, expected_version=args.expected_version,
-                           base_url=args.base_url, check_examples=args.check_examples)
+                           base_url=args.base_url, check_examples=args.check_examples, readme=args.readme)
         print(json.dumps(report))
     except (DocsError, OSError, ImportError) as error:
         print(str(error), file=sys.stderr)

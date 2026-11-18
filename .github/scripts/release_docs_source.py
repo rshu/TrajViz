@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 
 PAGES = ("docs/index.md", "docs/quickstart.md", "docs/guides.md", "docs/data-reference.md")
 OPTIONAL_PAGES = ("docs/awe.md",)
+README = "README.md"
 SCRIPTS = (".github/scripts/build_docs.py", ".github/scripts/check_docs_examples.py")
 
 
@@ -22,12 +23,18 @@ def _git(root: Path, *args: str) -> bytes:
 def _allowed(name: str) -> bool:
     path = PurePosixPath(name)
     return (not path.is_absolute() and ".." not in path.parts and "\\" not in name
-            and (name in (*PAGES, *OPTIONAL_PAGES) or name in SCRIPTS or name.startswith(".github/docs/")))
+            and (name in (*PAGES, *OPTIONAL_PAGES, README) or name in SCRIPTS or name.startswith(".github/docs/")))
 
 
 def _required_pages(builder: bytes) -> tuple[str, ...]:
     """Read the selected builder's declared guides without executing source code."""
-    for node in ast.parse(builder).body:
+    declarations = ast.parse(builder).body
+    for node in declarations:
+        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "SOURCE_MODE"
+                                               for target in node.targets):
+            if ast.literal_eval(node.value) == "readme":
+                return (README,)
+    for node in declarations:
         if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "GUIDES"
                                                for target in node.targets):
             guides = ast.literal_eval(node.value)
@@ -45,15 +52,16 @@ def prepare(root: Path, tag: str, output: Path, bootstrap_version: str = "0.3.1"
         raise ValueError("Documentation release tag must be vX.Y.Z")
     if output.exists() and any(output.iterdir()):
         raise ValueError("Documentation source output must be empty")
-    names = _git(root, "ls-tree", "-r", "--name-only", tag, "--", "docs", ".github/scripts", ".github/docs")
+    names = _git(root, "ls-tree", "-r", "--name-only", tag, "--", README, "docs", ".github/scripts", ".github/docs")
     release_files = [name for name in names.decode("utf-8").splitlines() if _allowed(name)]
-    complete = all(name in release_files for name in (*PAGES, *SCRIPTS))
+    builder = _git(root, "show", f"{tag}:{SCRIPTS[0]}") if SCRIPTS[0] in release_files else None
+    required = _required_pages(builder) if builder is not None else PAGES
+    complete = all(name in release_files for name in (*required, *SCRIPTS))
     output.mkdir(parents=True, exist_ok=True)
     if complete and not current_guides:
-        required = _required_pages(_git(root, "show", f"{tag}:{SCRIPTS[0]}"))
-        if any(name not in release_files for name in required):
-            raise ValueError("The published tag is missing a guide required by its documentation builder")
         for name in release_files:
+            if required == (README,) and name.startswith("docs/"):
+                continue
             target = output / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(_git(root, "show", f"{tag}:{name}"))
@@ -64,7 +72,8 @@ def prepare(root: Path, tag: str, output: Path, bootstrap_version: str = "0.3.1"
         # validated against the published package before they are archived.
         required = _required_pages((root / SCRIPTS[0]).read_bytes())
         files = [root / name for name in (*required, *SCRIPTS)]
-        files.extend(root / name for name in OPTIONAL_PAGES if name not in required and (root / name).exists())
+        if required != (README,):
+            files.extend(root / name for name in OPTIONAL_PAGES if name not in required and (root / name).exists())
         templates = root / ".github/docs"
         if templates.is_dir():
             files.extend(path for path in templates.rglob("*") if path.is_file())
@@ -77,7 +86,7 @@ def prepare(root: Path, tag: str, output: Path, bootstrap_version: str = "0.3.1"
         mode = "documentation-update" if current_guides else "initial-release-bootstrap"
         source = _git(root, "rev-parse", "HEAD").decode("utf-8").strip()
     else:
-        raise ValueError("The published tag has no complete documentation sources")
+        raise ValueError("The published tag has no complete documentation sources or is missing a guide required by its builder")
     result = {"package_tag": tag, "docs_source": source, "source_mode": mode}
     (output / "build-info.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     return result

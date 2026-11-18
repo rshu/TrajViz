@@ -139,6 +139,9 @@ def seed_inputs(directory: Path, tv: ModuleType) -> None:
         archive.writestr("manifest.json", json.dumps(manifest))
         archive.writestr("traces.json", json.dumps(traces))
     run = tv.load(directory / "capture.jsonl")
+    # The README's format-neutral quickstart uses this filename. Generate it
+    # from the public API instead of depending on a saved local trajectory.
+    (directory / "trajectory.json").write_text(json.dumps(run.to_dict(include_raw=True)), encoding="utf-8")
     labels = {"schema_version": 2, "taxonomy_version": "docs-v1", "model": "docs-fixture",
               "trajectory_file": "capture.jsonl", "steps": [
                   {"index": step["index"], "raw_index": step.get("raw_index", step["index"]), "role": step["role"],
@@ -224,7 +227,9 @@ def _extras(raw: str) -> frozenset[str]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--docs-root", "--docs-dir", dest="docs_dir", type=Path, default=Path(__file__).resolve().parents[2] / "docs")
+    parser.add_argument("--docs-root", "--docs-dir", dest="docs_dir", type=Path,
+                        help="Explicit directory of opted-in Markdown examples")
+    parser.add_argument("--readme", type=Path, help="Check only this maintained README (default: repository README.md)")
     parser.add_argument("--package-root", type=Path)
     parser.add_argument("--expected-version")
     parser.add_argument("--extras", default="")
@@ -236,7 +241,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.run_page:
             print(json.dumps(run_page(args.run_page.resolve(), args.package_root, extras, args.expected_version)))
             return 0
-        docs = sorted(args.docs_dir.resolve().glob("*.md"))
+        if args.docs_dir is not None and args.readme is not None:
+            raise ExampleError("Choose either --docs-root or --readme")
+        docs = (sorted(args.docs_dir.resolve().glob("*.md")) if args.docs_dir is not None
+                else [(args.readme or Path(__file__).resolve().parents[2] / "README.md").resolve()])
         if not docs or not any(read_examples(path) for path in docs):
             raise ExampleError("no explicitly marked Python examples found")
         results = []

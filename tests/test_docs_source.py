@@ -117,6 +117,42 @@ def test_optional_guide_does_not_make_historical_release_incomplete(tmp_path):
     assert not (tmp_path / "output/docs/awe.md").exists()
 
 
+def test_new_release_uses_matching_readme_without_copying_docs_directory(tmp_path):
+    files = ["README.md", *source.SCRIPTS, ".github/docs/site.css", "docs/index.md", "docs/private-note.md"]
+    def git(_root, *args):
+        if args[0] == "ls-tree":
+            return "\n".join(files).encode("utf-8")
+        if args[0] == "show":
+            return b"SOURCE_MODE = 'readme'\nGUIDES = ('index',)\n" if args[1].endswith(source.SCRIPTS[0]) else b"release README source"
+        return b"release-sha"
+    with patch.object(source, "_git", side_effect=git):
+        result = source.prepare(tmp_path, "v0.5.2", tmp_path / "output")
+    assert result["source_mode"] == "release-tag"
+    assert (tmp_path / "output/README.md").read_bytes() == b"release README source"
+    assert not (tmp_path / "output/docs").exists()
+    assert (tmp_path / "output/.github/docs/site.css").is_file()
+
+
+def test_current_readme_correction_never_reads_ignored_local_guides(tmp_path):
+    root = tmp_path / "repository"
+    _current(root)
+    (root / source.SCRIPTS[0]).write_text("SOURCE_MODE = 'readme'\nGUIDES = ('index',)\n", encoding="utf-8")
+    (root / "README.md").write_text("Current maintained README", encoding="utf-8")
+    with patch.object(source, "_git", return_value=b"current-sha"):
+        result = source.prepare(root, "v0.5.1", tmp_path / "output", current_guides=True)
+    assert result["source_mode"] == "documentation-update"
+    assert (tmp_path / "output/README.md").read_text() == "Current maintained README"
+    assert not (tmp_path / "output/docs").exists()
+
+
+def test_readme_builder_without_matching_readme_is_not_a_complete_release(tmp_path):
+    files = [*source.PAGES, *source.SCRIPTS]
+    def git(_root, *args):
+        return "\n".join(files).encode() if args[0] == "ls-tree" else b"SOURCE_MODE = 'readme'\n"
+    with patch.object(source, "_git", side_effect=git), pytest.raises(ValueError, match="no complete"):
+        source.prepare(tmp_path, "v0.5.2", tmp_path / "output")
+
+
 @pytest.mark.parametrize("tag", ["main", "v0.3.1; touch other", "v../notes", "--all"] )
 def test_unsafe_tag_is_rejected_before_git(tmp_path, tag):
     with patch.object(source, "_git") as git:

@@ -60,9 +60,9 @@ run without an external checkout.
 
 ## Documentation
 
-Keep public API descriptions in docstrings and task guides in the maintained
-Markdown files under `docs/`. Local notes in that directory remain ignored.
-Generated HTML is built in `site/` and is never committed.
+Keep usage instructions in `README.md` and public API descriptions in docstrings.
+The documentation site is generated from those sources. The local `docs/` folder
+stays untracked; generated HTML is built in `site/` and is never committed.
 
 ```bash
 uv run --locked --extra dev --with pdoc==16.0.0 python .github/scripts/build_docs.py \
@@ -74,9 +74,9 @@ on `main`, the Documentation workflow publishes the development docs. Stable
 API pages come from the latest published package. Versioned docs starting at
 0.3.1 are also archived as ZIP assets on their GitHub releases.
 
-To publish a correction to the current stable guides, land it on `main` and run
-the Documentation workflow with `rebuild_stable=true`. The workflow validates
-the current guides against the released package and refreshes its docs archive.
+To publish a correction to the current stable instructions, land it on `main` and
+run the Documentation workflow with `rebuild_stable=true`. The workflow validates
+the current README examples against the released package and refreshes its docs archive.
 
 ```bash
 gh workflow run docs.yml --ref main -f rebuild_stable=true

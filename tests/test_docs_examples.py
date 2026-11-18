@@ -87,6 +87,22 @@ tv.register_format(tv.Format(
     assert json.loads(result.stdout)["executed"] == 2
 
 
+def test_explicit_readme_executes_quickstart_without_local_docs(tmp_path):
+    readme = tmp_path / "README.md"
+    readme.write_text("<!-- trajviz:run -->\n```python\nimport agent_trajviz as tv\n"
+                      "run = tv.load('trajectory.json')\nassert run.format == 'claude_code'\n"
+                      "tv.export_json(run, 'out/')\n```\n", encoding="utf-8")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "private.md").write_text("<!-- trajviz:run -->\n```python\nraise AssertionError('local notes')\n```\n")
+    result = subprocess.run([sys.executable, "-I", str(CHECKER), "--package-root", str(ROOT),
+                             "--readme", str(readme)], text=True, capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["executed"] == 1 and report["pages"] == 1
+    assert report["results"][0]["page"] == "README.md"
+
+
 @pytest.mark.parametrize("code", [
     "import socket\nsocket.create_connection(('example.invalid', 443))\n",
     "import subprocess\nsubprocess.run(['echo', 'unexpected'], check=True)\n",

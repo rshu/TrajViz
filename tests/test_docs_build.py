@@ -90,13 +90,37 @@ def test_generator_refuses_to_mix_output_and_markdown_source(tmp_path):
         builder.build(docs / "generated", docs)
 
 
+def test_navigation_pages_are_derived_from_readme_only(tmp_path):
+    readme = tmp_path / "README.md"
+    readme.write_text("# TrajViz\n\n## Install\n\nInstall the package.\n\n"
+                      "## Quickstart\n\nUse the public API.\n\n## Supported inputs\n\nNative sessions.\n\n"
+                      "## AWE inspection and evaluation\n\nInspect recorded evidence.\n", encoding="utf-8")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "index.md").write_text("PRIVATE LOCAL NOTES", encoding="utf-8")
+    pages = builder.readme_pages(readme)
+    assert set(pages) == set(builder.GUIDES)
+    assert "Install the package." in pages["quickstart"]
+    assert "Native sessions." in pages["guides"]
+    assert "api/agent_trajviz/awe.html" in pages["awe"]
+    assert "data/views.html" in pages["data-reference"]
+    assert "PRIVATE LOCAL NOTES" not in "".join(pages.values())
+
+
 @pytest.mark.skipif(importlib.util.find_spec("pdoc") is None, reason="pdoc is a docs-job tool")
 def test_full_public_site_build_has_all_exports_schemas_and_no_source(tmp_path):
     import agent_trajviz as tv
 
     output = tmp_path / "site"
-    report = builder.build(output, ROOT / "docs", package_root=ROOT,
+    # An absent source docs/ is the clean-checkout layout. Even an explicitly
+    # passed legacy --docs-root hint reads only its sibling README.
+    readme = tmp_path / "sources/README.md"
+    readme.parent.mkdir()
+    readme.write_bytes((ROOT / "README.md").read_bytes())
+    report = builder.build(output, readme.parent / "docs", package_root=ROOT,
                            version_label="test", expected_version=tv.__version__)
+    assert report["source_mode"] == "readme"
+    assert not (readme.parent / "docs").exists()
     assert (output / "assets/versions.js").is_file()
     assert '<script defer src="assets/versions.js">' in (output / "index.html").read_text()
     assert report["api_modules"] == list(builder.PUBLIC_MODULES)
@@ -122,3 +146,19 @@ def test_full_public_site_build_has_all_exports_schemas_and_no_source(tmp_path):
     assert "Per-step tokens" in catalog
     assert "../schema/token_usage.json" in catalog
     assert "Search" in (output / "api/search.js").read_text() or (output / "api/search.js").stat().st_size > 100
+
+
+@pytest.mark.skipif(importlib.util.find_spec("pdoc") is None, reason="pdoc is a docs-job tool")
+def test_legacy_source_hint_does_not_publish_local_guide_text_or_assets(tmp_path):
+    sources = tmp_path / "sources"
+    docs = sources / "docs"
+    (docs / "assets").mkdir(parents=True)
+    (sources / "README.md").write_text("# Public README\n\n## Quickstart\n\nPublic usage.\n", encoding="utf-8")
+    for name in builder.GUIDES:
+        (docs / f"{name}.md").write_text("PRIVATE GUIDE", encoding="utf-8")
+    (docs / "assets/private.txt").write_text("PRIVATE ASSET", encoding="utf-8")
+    output = tmp_path / "site"
+    builder.build(output, docs, package_root=ROOT)
+    assert "Public README" in (output / "index.html").read_text()
+    assert not (output / "assets/private.txt").exists()
+    assert all("PRIVATE GUIDE" not in path.read_text() for path in output.glob("*.html"))

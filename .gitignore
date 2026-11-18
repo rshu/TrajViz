@@ -48,13 +48,8 @@ htmlcov/
 .DS_Store
 
 # Project-specific
-# Local notes remain private; only these maintained documentation sources ship.
-docs/*
-!docs/index.md
-!docs/quickstart.md
-!docs/guides.md
-!docs/data-reference.md
-!docs/awe.md
+# Local documentation and notes stay off the remote.
+docs/
 gradio_cached_examples/
 *.log
 *.db
