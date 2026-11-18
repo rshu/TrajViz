@@ -49,7 +49,7 @@ htmlcov/
 
 # Project-specific
 # Local documentation and notes stay off the remote.
-docs/
+/docs/
 gradio_cached_examples/
 *.log
 *.db

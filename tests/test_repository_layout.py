@@ -1,5 +1,6 @@
 """Local documentation must stay outside the repository's tracked files."""
 
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -47,3 +48,11 @@ def test_local_docs_are_ignored_by_repository_policy(repository_git):
     assert (ROOT / fields[0]).resolve() == ROOT / ".gitignore", (
         "The docs/ ignore policy must come from the tracked root .gitignore"
     )
+
+
+def test_public_documentation_build_templates_remain_trackable(repository_git):
+    result = repository_git(
+        "-c", f"core.excludesFile={os.devnull}",
+        "check-ignore", "--no-index", ".github/docs/__trajviz_template_probe__.css",
+    )
+    assert result.returncode == 1, "Only root docs/ is private; documentation build assets must remain trackable"
