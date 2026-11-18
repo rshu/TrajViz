@@ -35,6 +35,13 @@ brew trust --formula rshu/trajviz/trajviz
 brew install trajviz
 ```
 
+To upgrade an existing Homebrew installation:
+
+```sh
+brew update
+brew upgrade trajviz
+```
+
 | Extra | Features |
 |---|---|
 | `charts` | Plotly figures and HTML reports |
