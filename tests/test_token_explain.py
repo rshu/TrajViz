@@ -125,6 +125,23 @@ class TokenStepExplanationTests(unittest.TestCase):
         html_out = build_token_step_explanation_html([prev, cur], 1)
         self.assertIn("没有工具结果或新用户消息", html_out)
 
+    def test_pi_nested_calls_are_excluded_from_model_output_and_result_framing(self):
+        previous = _step(
+            total=100, inp=80, output=20,
+            tool_calls=[
+                {"tool_name": "codemode", "input": {"code": "text(1)"}, "output": "1"},
+                {"tool_name": "Read", "input": {"path": "nested-only.txt"}, "output": "",
+                 "metadata": {"pi_nested_parent_id": "outer"}},
+            ],
+        )
+        current = _step(total=120, inp=10, output=10, cache_read=100)
+        output = build_token_step_explanation_html([previous, current], 0)
+        self.assertIn("Tool call syntax ≈ 27 tok", output)
+        self.assertNotIn("nested-only.txt", output)
+        result = build_token_step_explanation_html([previous, current], 1)
+        self.assertIn("Message framing ≈ 13 tok", result)
+        self.assertNotIn("nested-only.txt", result)
+
     def test_panel_embeds_one_hidden_div_per_step_and_the_method(self):
         steps = [
             _step(role="user", text_preview="hi"),

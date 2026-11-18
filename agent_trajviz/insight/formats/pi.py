@@ -28,7 +28,7 @@ def _pi_event_ts_ms(event: dict) -> int | None:
     msg = event.get("message")
     if isinstance(msg, dict):
         nested = msg.get("timestamp")
-        if isinstance(nested, (int, float)) and not isinstance(nested, bool):
+        if isinstance(nested, (int, float)) and not isinstance(nested, bool) and math.isfinite(nested):
             value = int(nested)
             # Pi stores nested timestamps as epoch milliseconds.
             return value if value > 10**12 else value * 1000
@@ -99,7 +99,20 @@ def _pi_content_text(content: Any) -> str:
     for item in _pi_iter_content(content):
         if item.get("type") == "text":
             chunks.append(str(item.get("text") or ""))
+        elif item.get("type") == "image":
+            chunks.append(f"[Image: {item.get('mimeType') or 'unknown type'}]")
     return "\n".join(chunks)
+
+
+def _pi_text_parts(content: Any, *, synthetic: bool = False) -> list[dict]:
+    parts = []
+    for item in _pi_iter_content(content):
+        if item.get("type") == "text":
+            parts.append({"type": "text", "text": item.get("text", ""), "synthetic": synthetic})
+        elif item.get("type") == "image":
+            parts.append({"type": "text", "text": f"[Image: {item.get('mimeType') or 'unknown type'}]",
+                          "synthetic": synthetic, "metadata": {"pi_image": {"mimeType": item.get("mimeType")}}})
+    return parts
 
 
 def _pi_message_created_ms(message: dict) -> int | None:
@@ -127,6 +140,30 @@ def _pi_normalize_tool(name: str, arguments: Any) -> tuple[str, dict]:
     return canonical, args
 
 
+def _pi_nested_tool_parts(nested: Any, parent_id: str) -> list[dict]:
+    """Expose recorded nested calls without inventing result text or windows."""
+    if not isinstance(nested, dict) or not isinstance(nested.get("calls"), list):
+        return []
+    parts = []
+    for call in nested["calls"]:
+        if not isinstance(call, dict):
+            continue
+        name, arguments = _pi_normalize_tool(call.get("name") or "?", call.get("arguments"))
+        recorded_status = call.get("status")
+        status = {"ok": "success", "error": "error"}.get(recorded_status, "unknown")
+        metadata = {"pi_nested_parent_id": parent_id, "pi_nested_call": call,
+                    "_outcome_observed": recorded_status in {"ok", "error"},
+                    "_input_observed": isinstance(call.get("arguments"), (dict, str)),
+                    "_output_observed": False}
+        duration = call.get("durationMs")
+        if isinstance(duration, (int, float)) and not isinstance(duration, bool) and math.isfinite(duration) and duration >= 0:
+            metadata["totalDurationMs"] = duration
+        parts.append({"type": "tool_call", "tool_name": name, "tool_id": call.get("id") or "",
+                      "state": {"status": status, "input": arguments, "output": "",
+                                "error": call.get("error"), "metadata": metadata}})
+    return parts
+
+
 def _convert_pi_to_internal(events: list[dict]) -> dict:
     """Convert Pi coding-agent JSONL events into the TrajViz internal format.
 
@@ -142,6 +179,10 @@ def _convert_pi_to_internal(events: list[dict]) -> dict:
     session: dict = {}
     messages: list[dict] = []
     pending_tools: dict[str, dict] = {}
+    tools_by_entry: dict[str, dict[str, dict]] = {}
+    tool_owner_parts: dict[int, list[dict]] = {}
+    entries_by_id = {event["id"]: event for event in events
+                     if isinstance(event, dict) and isinstance(event.get("id"), str)}
     current_model = ""
     current_provider = ""
     title = ""
@@ -180,6 +221,15 @@ def _convert_pi_to_internal(events: list[dict]) -> dict:
             if isinstance(event.get("name"), str):
                 title = event["name"]
             continue
+        if etype == "custom_message":
+            parts = _pi_text_parts(event.get("content"), synthetic=True)
+            if parts:
+                parts[0]["metadata"] = {**parts[0].get("metadata", {}),
+                                        "pi_custom": {"customType": event.get("customType"),
+                                                      "display": event.get("display"), "details": event.get("details")}}
+                _append("user", ts, parts, extra={"id": event.get("id") or "",
+                                               "parentID": event.get("parentId") or "", "type": etype})
+            continue
         if etype in {"usage", "compaction", "branch_summary"}:
             tokens = _pi_extract_usage(event.get("usage"))
             extra = {
@@ -210,14 +260,47 @@ def _convert_pi_to_internal(events: list[dict]) -> dict:
         role = msg.get("role")
         created = _pi_message_created_ms(msg)
 
-        if role == "user":
-            parts = []
-            for item in _pi_iter_content(msg.get("content")):
-                if item.get("type") == "text":
-                    parts.append({"type": "text", "text": item.get("text", "")})
+        if role in {"user", "custom", "hookMessage", "system"}:
+            synthetic = role in {"custom", "hookMessage"}
+            parts = _pi_text_parts(msg.get("content"), synthetic=synthetic)
+            if role == "system":
+                sections = msg.get("sections")
+                if isinstance(sections, dict):
+                    for name, content in sections.items():
+                        text = f"[Prompt section removed: {name}]" if content is None else f"[{name}]\n{content}"
+                        parts.append({"type": "text", "text": text})
+                for field, label in (("toolsAdded", "Tools added"), ("toolsRemoved", "Tools removed")):
+                    tools = msg.get(field)
+                    if isinstance(tools, list) and tools:
+                        names = ", ".join(str(tool.get("name") or "?") for tool in tools if isinstance(tool, dict))
+                        parts.append({"type": "text", "text": f"[{label}: {names}]",
+                                      "metadata": {f"pi_{field}": tools}})
+            elif synthetic and parts:
+                parts[0]["metadata"] = {**parts[0].get("metadata", {}),
+                                        "pi_custom": {"customType": msg.get("customType"),
+                                                      "display": msg.get("display"), "details": msg.get("details")}}
             if parts:
-                _append("user", created if created is not None else ts, parts,
-                        extra={"id": event.get("id") or "", "parentID": event.get("parentId") or ""})
+                _append("system" if role == "system" else "user", created if created is not None else ts, parts,
+                        extra={"id": event.get("id") or "", "parentID": event.get("parentId") or "",
+                               "type": "custom_message" if synthetic else role})
+
+        elif role == "bashExecution":
+            exit_code = msg.get("exitCode")
+            has_exit = isinstance(exit_code, (int, float)) and not isinstance(exit_code, bool) and math.isfinite(exit_code)
+            cancelled = msg.get("cancelled") is True
+            failed = cancelled or (has_exit and exit_code != 0)
+            error = "Command cancelled" if cancelled else f"exit {exit_code}" if failed else None
+            metadata = {"exit": exit_code if has_exit else None, "cancelled": cancelled,
+                        "truncated": msg.get("truncated") is True, "fullOutputPath": msg.get("fullOutputPath"),
+                        "excludeFromContext": msg.get("excludeFromContext") is True,
+                        "_outcome_observed": cancelled or has_exit, "pi_user_command": True}
+            _append("system", created if created is not None else ts,
+                    [{"type": "tool", "tool_name": "Bash", "tool_id": event.get("id") or "",
+                      "state": {"status": "error" if failed else "success" if has_exit else "unknown",
+                                "input": {"command": msg.get("command") or ""}, "output": msg.get("output") or "",
+                                "error": error, "metadata": metadata}}],
+                    extra={"id": event.get("id") or "", "parentID": event.get("parentId") or "",
+                           "type": "bash_execution"})
 
         elif role == "assistant":
             if msg.get("model"):
@@ -247,8 +330,12 @@ def _convert_pi_to_internal(events: list[dict]) -> dict:
                         "output": "",
                     }
                     parts.append(part)
+                    tool_owner_parts[id(part)] = parts
                     if call_id:
                         pending_tools[call_id] = part
+                        entry_id = event.get("id")
+                        if isinstance(entry_id, str):
+                            tools_by_entry.setdefault(entry_id, {})[call_id] = part
             error_message = msg.get("errorMessage")
             if error_message:
                 parts.append({"type": "text", "text": f"[error] {error_message}"})
@@ -263,36 +350,57 @@ def _convert_pi_to_internal(events: list[dict]) -> dict:
             stop = msg.get("stopReason")
             if stop:
                 extra["finish"] = stop
-            if parts or tokens or stop == "error":
-                if not parts and stop == "error":
-                    parts = [{"type": "text", "text": "[error]"}]
+            if not parts and stop in {"error", "aborted", "deferred", "pending"}:
+                parts = [{"type": "text", "text": f"[Response {stop}]"}]
+            if parts or tokens:
                 _append("assistant", created if created is not None else ts, parts, tokens=tokens, extra=extra)
                 # The outer timestamp is stamped by SessionManager when the
                 # settled message is persisted; nested timestamp starts it.
                 # A later message may be another branch or follow human idle.
-                if created is not None and ts is not None and ts >= created:
-                    messages[-1]["info"]["time"]["completed"] = ts
+                duration = msg.get("durationMs")
+                if (created is not None and isinstance(duration, (int, float)) and not isinstance(duration, bool)
+                        and math.isfinite(duration) and duration >= 0):
+                    messages[-1]["info"]["time"]["completed"] = created + duration
+                else:
+                    persisted = _iso_to_epoch_ms(event.get("timestamp") if isinstance(event.get("timestamp"), str) else None)
+                    if created is not None and persisted is not None and persisted >= created:
+                        messages[-1]["info"]["time"]["completed"] = persisted
 
         elif role == "toolResult":
             call_id = msg.get("toolCallId") or ""
             output = _pi_content_text(msg.get("content"))
             is_error = bool(msg.get("isError"))
             status = "error" if is_error else "success"
-            part = pending_tools.pop(call_id, None) if call_id else None
+            result_metadata = {"pi_result": {key: msg[key] for key in ("details", "usage", "nestedCalls") if key in msg}}
+            result_state = {"status": status, "output": output, "metadata": result_metadata}
+            duration = msg.get("durationMs")
+            if (isinstance(duration, (int, float)) and not isinstance(duration, bool)
+                    and math.isfinite(duration) and duration >= 0):
+                result_metadata["totalDurationMs"] = duration
+                end = created if created is not None else ts
+                if end is not None:
+                    result_state["time"] = {"start": end - duration, "end": end}
+            part = None
+            parent_id = event.get("parentId")
+            seen = set()
+            while call_id and isinstance(parent_id, str) and parent_id and parent_id not in seen:
+                seen.add(parent_id)
+                part = tools_by_entry.get(parent_id, {}).get(call_id)
+                if part is not None:
+                    break
+                parent_id = (entries_by_id.get(parent_id) or {}).get("parentId")
+            if part is None and ("parentId" not in event or not event.get("id")):
+                part = pending_tools.get(call_id)
+            if part is not None and pending_tools.get(call_id) is part:
+                pending_tools.pop(call_id, None)
             if part is not None:
                 part["output"] = output
                 part["status"] = status
                 if is_error:
                     part["error"] = output
-                duration = msg.get("durationMs")
-                if (isinstance(duration, (int, float)) and not isinstance(duration, bool)
-                        and math.isfinite(duration) and duration >= 0):
-                    end = created if created is not None else ts
-                    state = part.setdefault("state", {})
-                    state["status"], state["input"], state["output"] = status, part["input"], output
-                    state["metadata"] = {"totalDurationMs": duration}
-                    if end is not None:
-                        state["time"] = {"start": end - duration, "end": end}
+                state = part.setdefault("state", {})
+                state.update(result_state, input=part["input"])
+                tool_owner_parts[id(part)].extend(_pi_nested_tool_parts(msg.get("nestedCalls"), call_id))
             else:
                 tool_name, _ = _pi_normalize_tool(msg.get("toolName") or "?", {})
                 _append(
@@ -307,13 +415,27 @@ def _convert_pi_to_internal(events: list[dict]) -> dict:
                             "input": {},
                             "output": output,
                             **({"error": output} if is_error else {}),
+                            "state": result_state,
                         }
                     ],
+                    extra={"id": event.get("id") or "", "parentID": event.get("parentId") or "",
+                           "type": "tool_result"},
                 )
+                messages[-1]["parts"].extend(_pi_nested_tool_parts(msg.get("nestedCalls"), call_id))
+            tokens = _pi_extract_usage(msg.get("usage"))
+            if tokens:
+                _append("tool", created if created is not None else ts,
+                        [{"type": "step_finish", "name": "tool_usage", "reason": msg.get("toolName") or ""}],
+                        tokens=tokens, extra={"id": f"{event.get('id') or call_id}:usage",
+                                              "parentID": event.get("id") or "", "type": "usage"})
 
-    for part in pending_tools.values():
-        if part.get("status") == "pending":
-            part["status"] = "error"
+    for message in messages:
+        for part in message["parts"]:
+            if part.get("type") == "tool_call" and part.get("status") == "pending":
+                part["status"] = "unknown"
+                state = part.setdefault("state", {})
+                state.update(status="unknown", input=part.get("input", {}), output=part.get("output", ""))
+                state.setdefault("metadata", {}).update(_outcome_observed=False, _output_observed=False)
 
     first_ts_iso = None
     last_ts_iso = None
@@ -360,6 +482,7 @@ def _convert_pi_to_internal(events: list[dict]) -> dict:
             "server_version": str(session.get("version", "") or ""),
             "timestamp_utc": first_ts_iso or "",
             "title": title,
+            "parent_session_path": session.get("parentSession") or "",
         },
         "timing": {
             "total_duration": total_duration,

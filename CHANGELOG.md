@@ -7,6 +7,15 @@ change the public API (the names exported from `agent_trajviz`).
 
 ## [Unreleased]
 
+### Fixed
+
+- Load Pi's active session branch, single-session ZIPs, and completed JSON
+  progress records while retaining full-session usage in raw metadata.
+- Preserve Pi system and extension messages, manual shell commands, and nested
+  codemode calls without duplicating tokens or tool execution time.
+- Keep missing Pi tool outcomes unknown and retain recorded tool durations.
+- Resize dashboard charts when their section becomes visible or changes width.
+
 ## [0.5.1] - 2026-11-12
 
 ### Fixed

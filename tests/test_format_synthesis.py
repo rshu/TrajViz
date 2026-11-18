@@ -440,8 +440,8 @@ class PiSyntheticExportTests(unittest.TestCase):
     def test_tool_results_are_paired_back_onto_their_call_by_id(self):
         """Pi delivers results as separate ``toolResult`` messages.
 
-        A failed pairing would both lose the output and leave the call
-        permanently ``pending`` -> reported as an error that never happened.
+        A failed pairing would lose the output and leave the call's outcome
+        unknown despite a recorded result.
         """
         by_id = {tc["tool_id"]: tc for tc in _tool_calls(self.steps)}
         self.assertEqual(sorted(by_id), ["tc-1", "tc-2", "tc-3"])
@@ -455,8 +455,15 @@ class PiSyntheticExportTests(unittest.TestCase):
         self.assertEqual(by_id["tc-2"]["error"], "grep: /w/proj: Is a directory")
 
     def test_a_call_that_never_returned_is_not_a_success(self):
+        from agent_trajviz.insight.telemetry_quality import tool_field_observed
+        from agent_trajviz.insight.tool_failure import tool_call_failed
+
         by_id = {tc["tool_id"]: tc for tc in _tool_calls(self.steps)}
-        self.assertEqual(by_id["tc-3"]["status"], "error")
+        tool = by_id["tc-3"]
+        self.assertEqual(tool["status"], "unknown")
+        self.assertFalse(tool_call_failed(tool))
+        self.assertFalse(tool_field_observed(tool, "tool_outcomes"))
+        self.assertFalse(tool_field_observed(tool, "tool_outputs"))
         self.assertNotEqual(self.metrics["tool_success_rate"], 100.0)
 
     def test_string_content_is_not_iterated_character_by_character(self):

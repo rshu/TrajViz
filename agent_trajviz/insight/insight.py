@@ -254,6 +254,31 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                             }
                         });
                     };
+                    const chartResizes = new WeakSet();
+                    window.tvResizeVisibleCharts = function () {
+                        if (!window.Plotly || !window.Plotly.Plots) return;
+                        document.querySelectorAll('.js-plotly-plot').forEach((plot) => {
+                            /* Hidden sections initially render at Plotly's 700px
+                               default. Gradio does not always resize them when
+                               revealed into a half-width row. Reconcile width
+                               only once visible; keep each chart's own height. */
+                            if (!plot.layout || !plot._fullLayout
+                                    || plot.layout.autosize === false
+                                    || !plot.getClientRects().length
+                                    || chartResizes.has(plot)) return;
+                            const width = plot.clientWidth;
+                            if (!width || Math.abs(plot._fullLayout.width - width) < 2) return;
+                            chartResizes.add(plot);
+                            try {
+                                Promise.resolve(window.Plotly.Plots.resize(plot))
+                                    .catch(() => {})
+                                    .finally(() => chartResizes.delete(plot));
+                            } catch (_) {
+                                /* The section may disappear while resize starts. */
+                                chartResizes.delete(plot);
+                            }
+                        });
+                    };
                     window.tvMainTabButtons = function () {
                         const root = document.getElementById('main-tabs');
                         const wrapper = root && root.querySelector(':scope > .tab-wrapper');
@@ -526,6 +551,7 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                         if (timer) clearTimeout(timer);
                         timer = setTimeout(() => {
                             window.tvExpandFileTimeline();
+                            window.tvResizeVisibleCharts();
                             window.tvBindChartWorkflowJumps();
                             window.tvBindTokenStepExplain();
                         }, 60);

@@ -256,7 +256,7 @@ def _fresh_input_lines(previous: dict | None, users: list[dict], fresh_input: in
     est_total = 0
     n_tools = 0
     for tc in previous.get("tool_calls") or []:
-        if not isinstance(tc, dict):
+        if not isinstance(tc, dict) or (tc.get("metadata") or {}).get("pi_nested_parent_id"):
             continue
         est = _est_tokens(tc.get("output"))
         est_total += est
@@ -351,7 +351,7 @@ def _output_lines(step: dict, output: int) -> list[str]:
         ))
     n_calls = 0
     for tc in step.get("tool_calls") or []:
-        if not isinstance(tc, dict):
+        if not isinstance(tc, dict) or (tc.get("metadata") or {}).get("pi_nested_parent_id"):
             continue
         est = _est_tokens(tc.get("input"))
         est_total += est

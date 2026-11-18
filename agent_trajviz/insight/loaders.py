@@ -99,7 +99,22 @@ def _convert_dsh_events(payload: list, *, source_path: str | None = None) -> dic
 
 def _convert_pi_events(payload: list, *, source_path: str | None = None) -> dict:
     del source_path
-    return _convert_pi_to_internal(payload)
+    from .formats.pi_files import normalize_pi_stream, pi_session_usage, select_pi_branch
+
+    events, streamed, warnings = normalize_pi_stream(payload)
+    if streamed:
+        if not any(event.get("type") == "message" for event in events):
+            return {"_error": "Pi JSON stream has no completed messages; load the native session JSONL or wait for message_end."}
+        selected = events
+        context = {"history_scope": "event_stream", "pi_session_usage": pi_session_usage(events)}
+    else:
+        selected, context, warnings = select_pi_branch(events)
+    result = _convert_pi_to_internal(selected)
+    result["_pi_entries"] = payload
+    result.setdefault("metadata", {}).update(context)
+    if warnings:
+        result.setdefault("_load_warnings", []).extend(warnings)
+    return result
 
 
 def _convert_claude_events(payload: list, *, source_path: str | None = None) -> dict:
@@ -293,6 +308,20 @@ def _load_zip_trajectory(file_path: str, format_hint: str | None, source_sha: st
         result["_input_files"] = [str(Path(file_path).resolve())]
         result["_source_sha256"] = source_sha
         return result
+    if not is_dsh:
+        from .formats.pi_files import parse_pi_zip
+
+        pi = parse_pi_zip(file_path, data=source_data)
+        if isinstance(pi, dict):
+            return pi
+        if isinstance(pi, list):
+            if format_hint in FORMAT_LABELS and format_hint != "pi":
+                return _format_mismatch_error(format_hint, "pi")
+            result = _convert_pi_events(pi)
+            result["_source_path"] = file_path
+            result["_input_files"] = [str(Path(file_path).resolve())]
+            result["_source_sha256"] = source_sha
+            return result
     if not isinstance(parsed, DshZipContents):
         return parsed
     events = parsed.parent_events

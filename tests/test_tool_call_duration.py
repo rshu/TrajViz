@@ -114,6 +114,17 @@ class ToolCallDurationMsTests(unittest.TestCase):
             90.0,
         )
 
+    def test_duration_only_rejects_placeholder_zero_and_invalid_values(self):
+        for field in ("duration_ms", "totalDurationMs"):
+            for value in (0, True, -1, float("nan"), float("inf")):
+                call = {field: value} if field == "duration_ms" else {"metadata": {field: value}}
+                with self.subTest(field=field, value=value):
+                    self.assertIsNone(tool_call_duration_ms(call))
+
+        nested = {"metadata": {"pi_nested_parent_id": "codemode-1", "totalDurationMs": 0}}
+        self.assertEqual(tool_call_duration_ms(nested), 0.0)
+        self.assertIsNone(tool_call_stats_duration_ms(nested))
+
     def test_parse_steps_keeps_part_and_state_times(self):
         raw = {
             "messages": [
@@ -154,6 +165,24 @@ class ToolCallDurationMsTests(unittest.TestCase):
         self.assertIsNone(tool_call_stats_duration_ms(task))
         self.assertEqual(tool_call_stats_duration_ms(bash), 1_000.0)
         self.assertEqual(tool_call_duration_ms(task), 80_000.0)
+
+    def test_pi_nested_tools_keep_duration_without_double_counting_parent(self):
+        from agent_trajviz.insight.telemetry_quality import tool_field_observed
+
+        nested = {
+            "tool_name": "Read", "status": "success", "duration_ms": 500,
+            "metadata": {"pi_nested_parent_id": "codemode-call", "_output_observed": False},
+        }
+        self.assertEqual(tool_call_duration_ms(nested), 500)
+        self.assertIsNone(tool_call_stats_duration_ms(nested))
+        self.assertFalse(tool_field_observed(nested, "tool_outputs"))
+        parent = _assistant_step(
+            0, duration=4, time_created_ms=1_000, time_completed_ms=5_000,
+            tool_calls=[{"tool_name": "codemode", "status": "success", "duration_ms": 2_000}, nested],
+        )
+        metrics = compute_metrics([parent], {})
+        self.assertEqual(metrics["tool_time_total"], 2)
+        self.assertEqual(metrics["tool_wait_share"], 50)
 
 
 class ToolWaitShareSubagentTests(unittest.TestCase):

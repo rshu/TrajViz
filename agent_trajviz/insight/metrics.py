@@ -273,10 +273,13 @@ def tool_call_duration_ms(tc: dict) -> float | None:
     if _num_ms(ts) and _num_ms(te) and te >= ts:
         return float(te - ts)
     dm = tc.get("duration_ms")
-    if not isinstance(dm, (int, float)):
-        meta = tc.get("metadata")
+    meta = tc.get("metadata")
+    if not _num_ms(dm):
         dm = meta.get("totalDurationMs") if isinstance(meta, dict) else None
-    return float(dm) if isinstance(dm, (int, float)) and dm > 0 else None
+    # Generic normalized zero can be a placeholder for missing telemetry.
+    # Pi records monotonic durationMs explicitly, including rounded 0ms calls.
+    pi_recorded = isinstance(meta, dict) and ("pi_nested_parent_id" in meta or "pi_result" in meta)
+    return float(dm) if _num_ms(dm) and math.isfinite(dm) and (dm > 0 or (dm == 0 and pi_recorded)) else None
 
 
 def is_spawn_tool_call(tc: dict) -> bool:
@@ -284,12 +287,14 @@ def is_spawn_tool_call(tc: dict) -> bool:
 
 
 def tool_call_stats_duration_ms(tc: dict) -> float | None:
-    """Duration for aggregate tool stats (excludes spawn/delegation tools).
+    """Duration for aggregate stats, excluding delegation and nested work.
 
     Spawn wall-clock is the child's run and is already reflected in child
     steps' tools/durations; counting it again inflates Tool time / wait %.
+    Pi codemode's nested tool durations overlap their containing call and
+    remain available individually through ``tool_call_duration_ms``.
     """
-    if is_spawn_tool_call(tc):
+    if is_spawn_tool_call(tc) or (tc.get("metadata") or {}).get("pi_nested_parent_id"):
         return None
     return tool_call_duration_ms(tc)
 

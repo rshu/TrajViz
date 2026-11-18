@@ -115,11 +115,16 @@ use `agent-trajviz-converge --help`. Every command provides `--help`.
 | Cursor | CLI `stream-json`, or a consolidated Agent transcript family with Composer metadata |
 | OpenCode | Native v1/v2, desktop and Windows session JSON, including parent/child families from the collector |
 | Codex CLI | Persisted `rollout-*.jsonl` under `~/.codex/sessions/`, or a collected session family |
-| Pi | Native JSONL under `~/.pi/agent/sessions/`, using the active history branch |
+| Pi | Native session JSONL, single-session ZIP, or JSON progress stream; session files use the active history branch |
 | DeepSeek Harness | Native session directories, `session.jsonl`, `session.vN.jsonl[.zstd]`, or legacy session exports |
 | CodeArts | AgentKernel session exports from its `opencode.db` store |
 | CodeAgent | Session JSON exports with `session` + `child_sessions` (data-wrapped messages/parts) |
 | ICode | Chrys expanded-session JSON with nested subagent sessions |
+
+Pi sessions live under `~/.pi/agent/sessions/` or your configured session directory.
+For branched sessions, charts and token totals cover the latest recorded branch.
+The raw export retains all entries and full-session usage in `metadata.pi_session_usage`.
+JSON progress imports use completed `message_end` records to avoid counting streaming updates twice.
 
 Session files with a UTF-16 byte order mark are supported. For OpenTelemetry
 files, see [Saved OTLP captures](https://github.com/rshu/TrajViz#saved-otlp-captures).

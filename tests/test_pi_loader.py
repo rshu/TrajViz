@@ -260,6 +260,154 @@ class PiLoaderTests(unittest.TestCase):
         branch = next(step for step in steps if step["id"] == "branch")
         self.assertEqual(branch["parent_id"], "answer")
 
+    def test_system_prompt_sections_and_tool_changes_remain_inspectable(self):
+        events = [_session(parentSession="/unreadable/parent.jsonl"),
+                  _msg("system", "2026-08-24T01:30:33.026Z", "Base prompt", id="system",
+                       sections={"cwd": "/project", "skills": None},
+                       toolsAdded=[{"name": "read", "description": "Read a file", "parameters": {"type": "object"}}],
+                       toolsRemoved=[{"name": "write"}])]
+        raw = self._load(events)
+        step = parse_steps(raw)[0]
+        self.assertEqual(step["role"], "system")
+        text = "\n".join(part.get("text", "") for part in step["parts"])
+        for expected in ("Base prompt", "[cwd]\n/project", "[Prompt section removed: skills]",
+                         "[Tools added: read]", "[Tools removed: write]"):
+            self.assertIn(expected, text)
+        self.assertEqual(raw["metadata"]["parent_session_path"], "/unreadable/parent.jsonl")
+        self.assertEqual(raw["_pi_entries"], events)
+
+    def test_custom_context_and_images_are_visible_without_image_payload(self):
+        from agent_trajviz.insight.workflow_role import workflow_role
+
+        image = {"type": "image", "mimeType": "image/png", "data": "private-base64-payload"}
+        events = [_session(),
+                  _msg("user", "2026-08-24T01:30:33.026Z", [image], id="image"),
+                  {"type": "custom_message", "id": "injected", "parentId": "image",
+                   "timestamp": "2026-08-24T01:30:34.000Z", "customType": "review-context",
+                   "content": [{"type": "text", "text": "Injected context"}, image], "display": False},
+                  _msg("custom", "2026-08-24T01:30:35.000Z", "Legacy custom context", id="custom")]
+        raw = self._load(events)
+        steps = parse_steps(raw)
+        self.assertEqual(len(steps), 3)
+        self.assertEqual([workflow_role(step) for step in steps], ["user", "system", "system"])
+        self.assertEqual(steps[0]["text_preview"], "[Image: image/png]")
+        self.assertIn("Injected context", steps[1]["text_preview"])
+        self.assertNotIn("private-base64-payload", json.dumps(steps))
+        self.assertIn("private-base64-payload", json.dumps(raw["_pi_entries"]))
+
+    def test_user_bash_execution_retains_outcome_and_context_exclusion(self):
+        events = [_session()]
+        for index, extra in enumerate(({"exitCode": 0}, {"exitCode": 7}, {"cancelled": True}, {})):
+            events.append(_msg("bashExecution", "2026-08-24T01:30:33.026Z", None, id=f"bash-{index}",
+                               command="pytest -q", output="recorded output", truncated=True,
+                               fullOutputPath="/tmp/output.log", excludeFromContext=True, **extra))
+        steps = parse_steps(self._load(events))
+        self.assertEqual([step["role"] for step in steps], ["system"] * 4)
+        self.assertEqual([step["tool_calls"][0]["status"] for step in steps], ["success", "error", "error", "unknown"])
+        self.assertEqual([step["error_count"] for step in steps], [0, 1, 1, 0])
+        self.assertEqual(sum(step["tokens"]["total"] for step in steps), 0)
+        for step in steps:
+            tool = step["tool_calls"][0]
+            self.assertEqual(tool["input"], {"command": "pytest -q"})
+            self.assertTrue(tool["metadata"]["excludeFromContext"])
+            self.assertTrue(tool["metadata"]["truncated"])
+            self.assertIsNone(tool["duration_ms"])
+        self.assertFalse(steps[-1]["tool_calls"][0]["metadata"]["_outcome_observed"])
+
+    def test_native_monotonic_request_duration_overrides_persistence_delay(self):
+        events = [_session(),
+                  _msg("assistant", "2026-08-24T01:34:00.000Z", "done", id="request",
+                       timestamp=1787535180000, durationMs=1200,
+                       usage={"input": 100, "output": 20, "totalTokens": 120})]
+        step = parse_steps(self._load(events))[0]
+        self.assertEqual(step["duration"], 1.2)
+        self.assertEqual(step["time_completed_ms"], 1787535181200)
+
+    def test_empty_aborted_and_deferred_responses_preserve_finish(self):
+        events = [_session(),
+                  _msg("assistant", "2026-08-24T01:30:33.026Z", [], stopReason="aborted", id="aborted"),
+                  _msg("assistant", "2026-08-24T01:30:34.000Z", [], stopReason="deferred", id="deferred")]
+        steps = parse_steps(self._load(events))
+        self.assertEqual([step["finish"] for step in steps], ["aborted", "deferred"])
+        self.assertEqual([step["text_preview"] for step in steps], ["[Response aborted]", "[Response deferred]"])
+
+    def test_tool_usage_and_nested_call_metadata_are_preserved_once(self):
+        events = [_session(),
+                  _msg("assistant", "2026-08-24T01:30:33.026Z",
+                       [{"type": "toolCall", "id": "code-call", "name": "code", "arguments": {"code": "read()"}}],
+                       id="request", usage={"input": 10, "output": 2, "totalTokens": 12}),
+                  _msg("toolResult", "2026-08-24T01:30:34.000Z", [{"type": "text", "text": "done"}],
+                       id="result", toolCallId="code-call", toolName="code", durationMs=500, isError=False,
+                       usage={"input": 20, "output": 3, "totalTokens": 23},
+                       nestedCalls={"calls": [{"id": "inner", "name": "read", "status": "ok", "durationMs": 15}],
+                                    "complete": True})]
+        raw = self._load(events)
+        steps = parse_steps(raw)
+        self.assertEqual(sum(step["tokens"]["total"] for step in steps), 35)
+        self.assertEqual(sum(len(step["tool_calls"]) for step in steps), 2)
+        self.assertEqual(steps[1]["role"], "tool")
+        tool = steps[0]["tool_calls"][0]
+        self.assertEqual(tool["duration_ms"], 500)
+        self.assertEqual(tool["metadata"]["pi_result"]["nestedCalls"]["calls"][0]["name"], "read")
+        nested = steps[0]["tool_calls"][1]
+        self.assertEqual(nested["tool_name"], "Read")
+        self.assertEqual(nested["metadata"]["pi_nested_parent_id"], "code-call")
+        self.assertEqual(nested["duration_ms"], 15)
+        self.assertIsNone(nested["time_start"])
+        self.assertIsNone(nested["time_end"])
+
+    def test_nested_calls_keep_arguments_failures_and_unfinished_outcomes(self):
+        events = [_session(),
+                  _msg("assistant", "2026-08-24T01:30:33.026Z",
+                       [{"type": "toolCall", "id": "code-call", "name": "codemode", "arguments": {"code": "write()"}}],
+                       id="request"),
+                  _msg("toolResult", "2026-08-24T01:30:34.000Z", "done", id="result",
+                       toolCallId="code-call", toolName="codemode", isError=False,
+                       nestedCalls={"calls": [
+                           {"id": "write-1", "name": "write", "arguments": {"path": "result.py", "content": "ok"},
+                            "status": "error", "error": "permission denied", "durationMs": 5},
+                           {"id": "unfinished", "name": "bash", "argumentsBytes": 250, "status": "unfinished"}],
+                           "complete": False})]
+        step = parse_steps(self._load(events))[0]
+        self.assertEqual(step["error_count"], 1)
+        write, unfinished = step["tool_calls"][1:]
+        self.assertEqual(write["input"]["file_path"], "result.py")
+        self.assertEqual(write["error"], "permission denied")
+        self.assertTrue(write["metadata"]["_input_observed"])
+        self.assertEqual(unfinished["status"], "unknown")
+        self.assertFalse(unfinished["metadata"]["_outcome_observed"])
+        self.assertFalse(unfinished["metadata"]["_input_observed"])
+        self.assertEqual(unfinished["metadata"]["pi_nested_call"]["argumentsBytes"], 250)
+
+    def test_message_without_persistence_time_keeps_missing_duration_unknown(self):
+        events = [_session(), {"type": "message", "id": "streamed", "message": {
+            "role": "assistant", "timestamp": 1787535180000,
+            "content": [{"type": "text", "text": "done"}], "stopReason": "stop"}}]
+        step = parse_steps(self._load(events))[0]
+        self.assertIsNone(step["duration"])
+        self.assertIsNone(step["time_completed_ms"])
+
+    def test_tool_results_follow_parent_links_when_call_ids_repeat(self):
+        from agent_trajviz.insight.formats.pi import _convert_pi_to_internal
+
+        def call(ident, parent):
+            event = _msg("assistant", "2026-08-24T01:30:33.026Z",
+                         [{"type": "toolCall", "id": "same-call", "name": "read", "arguments": {"path": ident}}],
+                         id=ident)
+            event["parentId"] = parent
+            return event
+
+        first_result = _msg("toolResult", "2026-08-24T01:30:34.000Z", "first output",
+                            id="r1", toolCallId="same-call", toolName="read", isError=False)
+        first_result["parentId"] = "a1"
+        second_result = _msg("toolResult", "2026-08-24T01:30:35.000Z", "second output",
+                             id="r2", toolCallId="same-call", toolName="read", isError=False)
+        second_result["parentId"] = "a2"
+        raw = _convert_pi_to_internal([_session(), call("a1", None), call("a2", None), first_result, second_result])
+        tools = [tool for step in parse_steps(raw) for tool in step["tool_calls"]]
+        self.assertEqual([tool["output"] for tool in tools], ["first output", "second output"])
+        self.assertEqual([tool["status"] for tool in tools], ["success", "success"])
+
     def test_string_content_is_one_text_part(self):
         events = [
             _session(),
@@ -290,7 +438,9 @@ class PiLoaderTests(unittest.TestCase):
             self.assertIsInstance(s["time_created_ms"], int)
             self.assertGreater(s["time_created_ms"], 10**12)
 
-    def test_dangling_tool_call_marked_error(self):
+    def test_dangling_tool_call_keeps_outcome_unknown(self):
+        import agent_trajviz as tv
+
         events = [
             _session(),
             _msg("assistant", "2026-08-24T01:33:02.137Z", [
@@ -298,10 +448,57 @@ class PiLoaderTests(unittest.TestCase):
                  "arguments": {"command": "pwd"}},
             ]),
         ]
-        steps = parse_steps(self._load(events, name="dangling.jsonl"))
-        tool = next(tc for s in steps for tc in s["tool_calls"])
-        self.assertEqual(tool["status"], "error")
+        run = tv.load(_write(self.tmp, "dangling.jsonl", events))
+        tool = next(tc for s in run.steps for tc in s["tool_calls"])
+        self.assertEqual(tool["status"], "unknown")
         self.assertEqual(tool["tool_id"], "call-x")
+        self.assertEqual(tool["input"], {"command": "pwd"})
+        self.assertFalse(tool["metadata"]["_outcome_observed"])
+        self.assertFalse(tool["metadata"]["_output_observed"])
+        self.assertEqual(run.steps[0]["error_count"], 0)
+
+    def test_partial_stream_with_unfinished_tool_result_has_no_false_failure(self):
+        import agent_trajviz as tv
+        from agent_trajviz.insight.telemetry_quality import tool_field_observed
+        from agent_trajviz.insight.tool_failure import tool_call_failed
+
+        assistant = {"role": "assistant", "timestamp": 1787535180000, "durationMs": 250,
+                     "content": [{"type": "toolCall", "id": "running", "name": "bash",
+                                  "arguments": {"command": "pytest -q"}}], "stopReason": "toolUse",
+                     "usage": {"input": 10, "output": 2, "totalTokens": 12}}
+        events = [_session(), {"type": "message_start", "message": assistant},
+                  {"type": "message_end", "message": assistant},
+                  {"type": "message_start", "message": {"role": "toolResult", "toolCallId": "running",
+                   "toolName": "bash", "content": [], "isError": False, "timestamp": 1787535180250}}]
+        run = tv.load(_write(self.tmp, "partial-stream.jsonl", events))
+        self.assertEqual(len(run.steps), 1)
+        self.assertEqual(run.metrics["tokens"]["total"], 12)
+        tool = run.steps[0]["tool_calls"][0]
+        self.assertEqual(tool["status"], "unknown")
+        self.assertFalse(tool_call_failed(tool))
+        self.assertFalse(tool_field_observed(tool, "tool_outcomes"))
+        self.assertFalse(tool_field_observed(tool, "tool_outputs"))
+        self.assertEqual(run.steps[0]["error_count"], 0)
+        self.assertTrue(any("unfinished messages" in warning for warning in run.warnings))
+
+    def test_orphan_tool_result_preserves_native_execution_duration(self):
+        import agent_trajviz as tv
+        from agent_trajviz.insight.metrics import tool_call_duration_ms
+
+        events = [_session(),
+                  _msg("toolResult", "2026-08-24T01:33:03.000Z", "completed", id="orphan",
+                       timestamp=1787535183000, toolCallId="missing-call", toolName="read", isError=False,
+                       durationMs=5)]
+        run = tv.load(_write(self.tmp, "orphan-result.jsonl", events))
+        self.assertEqual(run.steps[0]["id"], "orphan")
+        self.assertIsNone(run.steps[0]["duration"])
+        tool = run.steps[0]["tool_calls"][0]
+        self.assertEqual(tool["duration_ms"], 5)
+        self.assertEqual(tool_call_duration_ms(tool), 5)
+        self.assertEqual(tool["time_start"], 1787535182995)
+        self.assertEqual(tool["time_end"], 1787535183000)
+        self.assertEqual(tool["tool_name"], "Read")
+        self.assertEqual(tool["status"], "success")
 
     def test_failed_tool_result_status(self):
         events = [

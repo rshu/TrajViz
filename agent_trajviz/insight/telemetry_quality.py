@@ -30,6 +30,10 @@ def tool_field_observed(tool: dict, field: str) -> bool:
     native_metadata = tool.get("metadata") or {}
     if field == "tool_outcomes" and native_metadata.get("_outcome_observed") is False:
         return False
+    if field == "tool_inputs" and native_metadata.get("_input_observed") is False:
+        return False
+    if field == "tool_outputs" and native_metadata.get("_output_observed") is False:
+        return False
     metadata = native_metadata.get("_otel")
     return not isinstance(metadata, dict) or metadata.get("fields", {}).get(field) == "observed"
 
