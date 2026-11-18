@@ -15,6 +15,7 @@ change the public API (the names exported from `agent_trajviz`).
   codemode calls without duplicating tokens or tool execution time.
 - Keep missing Pi tool outcomes unknown and retain recorded tool durations.
 - Resize dashboard charts when their section becomes visible or changes width.
+- Preserve evaluation timeout results when macOS cannot confirm final descendant cleanup.
 
 ## [0.5.1] - 2026-11-12
 

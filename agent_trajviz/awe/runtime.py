@@ -354,6 +354,12 @@ def _stop_process_tree(process: subprocess.Popen, *, force: bool = False) -> boo
         os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
     except ProcessLookupError:
         pass  # The worker or its last descendant exited during timeout handling.
+    except PermissionError:
+        # Some platforms retain an unsignalable group after its worker exits.
+        # The worker is already reaped, but the group's state is unconfirmed.
+        if process.poll() is None:
+            raise
+        return False
     return True
 
 

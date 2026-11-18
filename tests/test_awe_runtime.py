@@ -262,6 +262,42 @@ def test_posix_cleanup_tolerates_worker_exit_races(monkeypatch):
     killpg.assert_called_once_with(4321, runtime.signal.SIGKILL)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group cleanup check")
+@pytest.mark.parametrize("force", [False, True])
+def test_posix_exited_worker_permission_error_leaves_descendants_unconfirmed(monkeypatch, force):
+    process = Mock(pid=4321)
+    process.poll.return_value = -runtime.signal.SIGTERM
+    killpg = Mock(side_effect=PermissionError(1, "process group cannot be signaled"))
+    monkeypatch.setattr(runtime.os, "killpg", killpg)
+    assert not runtime._stop_process_tree(process, force=force)
+    killpg.assert_called_once_with(4321, runtime.signal.SIGKILL if force else runtime.signal.SIGTERM)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group cleanup check")
+@pytest.mark.parametrize("force", [False, True])
+def test_posix_live_worker_permission_error_still_fails_closed(monkeypatch, force):
+    process = Mock(pid=4321)
+    process.poll.return_value = None
+    monkeypatch.setattr(runtime.os, "killpg", Mock(side_effect=PermissionError(1, "cannot signal live group")))
+    with pytest.raises(PermissionError):
+        runtime._stop_process_tree(process, force=force)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group cleanup check")
+def test_timeout_reports_unconfirmed_descendants_after_reaped_worker_permission_error(engine, monkeypatch):
+    _, settings = engine
+    process = Mock(pid=4321)
+    process.communicate.side_effect = subprocess.TimeoutExpired("worker", 1)
+    process.poll.return_value = -runtime.signal.SIGTERM
+    monkeypatch.setattr(runtime.subprocess, "Popen", Mock(return_value=process))
+    monkeypatch.setattr(runtime.os, "killpg", Mock(side_effect=[None, PermissionError(1, "group exited")]))
+    result = runtime.run_operation("pipeline", dataclasses.replace(settings, timeout=1))
+    assert result.available and not result.success
+    assert "timed out" in result.reason
+    assert "descendant termination could not be confirmed" in result.reason
+    process.wait.assert_called_once_with(timeout=2)
+
+
 def test_symlinked_backend_code_is_rejected(engine, tmp_path):
     root, settings = engine
     target = tmp_path / "external.py"
