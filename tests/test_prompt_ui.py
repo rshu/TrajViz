@@ -37,7 +37,7 @@ class Run:
 def test_prompt_html_escapes_evidence_but_request_json_keeps_original_content():
     data = _data()
     run = Run(data)
-    selector, _chart, summary, _limits, components, _changes, detail = prompt_tab.outputs(run, "request-1")
+    selector, _chart, summary, components, _changes, detail = prompt_tab.outputs(run, "request-1")
     assert run.selection == "request-1" and selector["value"] == "request-1"
     assert "Reconstructed" in summary and "#tv-step-0" in summary
     assert "&lt;script&gt;" in components and "<script>" not in components
@@ -58,7 +58,7 @@ def test_unload_or_failed_selection_clears_every_previous_prompt():
     values = prompt_tab.outputs(None)
     assert values[0]["value"] is None and values[-1] is None
     assert values[1]["visible"] is False
-    assert not values[3] and not values[4] and not values[5]
+    assert not values[3] and not values[4]
 
     class BrokenRun(Run):
         def view(self, name, **options):
@@ -108,7 +108,7 @@ def test_large_prompt_preview_is_bounded_without_truncating_export_data():
              for index in range(100)]
     data["selected_request"]["components"] = parts
     values = prompt_tab.outputs(Run(data))
-    assert "Showing" in values[4] and "Preview shortened" in values[4]
-    assert len(values[4]) < 350000
+    assert "Showing" in values[3] and "Preview shortened" in values[3]
+    assert len(values[3]) < 350000
     assert len(values[-1]["components"]) == 100
     assert len(values[-1]["components"][50]["content"]) == 20000

@@ -62,7 +62,6 @@ class PromptRefs:
     request: gr.Dropdown
     chart: gr.Plot
     summary: gr.HTML
-    limitations: gr.HTML
     components: gr.HTML
     changes: gr.HTML
     detail: gr.JSON
@@ -86,8 +85,6 @@ def layout() -> PromptRefs:
         bridge = gr.Textbox(value="", elem_id="pc-request-bridge", elem_classes=["pc-bridge"])
         select = gr.Button("Select prompt request", elem_id="pc-select-request", elem_classes=["pc-bridge"])
         summary = gr.HTML(_empty(), elem_id="prompt-summary")
-        with gr.Accordion("Evidence and limitations", open=True):
-            limitations = gr.HTML("", elem_id="prompt-limitations")
         with gr.Tabs(selected="changes"):
             with gr.Tab("Changes", id="changes"):
                 changes = gr.HTML("", elem_id="prompt-changes")
@@ -96,7 +93,7 @@ def layout() -> PromptRefs:
             with gr.Tab("Evidence JSON", id="evidence"):
                 gr.Markdown("Original prompt content is shown as recorded and is never translated.")
                 detail = gr.JSON(value=None, show_label=False, elem_id="prompt-request-json")
-    return PromptRefs(request, chart, summary, limitations, components, changes, detail,
+    return PromptRefs(request, chart, summary, components, changes, detail,
                       previous, next_button, bridge, select)
 
 
@@ -145,20 +142,6 @@ def _summary(detail: dict, run: Any) -> str:
             + "</strong><span class='pc-badge pc-" + html.escape(badge_class, quote=True) + "'>"
             + text(badge) + "</span></div><div class='pc-stats'>"
             + stats + "</div><div class='pc-meta'>" + meta + link + "</div></div>")
-
-
-def _limitations(data: dict, detail: dict) -> str:
-    warnings = list(dict.fromkeys([*data.get("limitations", []), *detail.get("limitations", [])]))
-    warnings.append("Token estimates describe visible content, not billed usage or hidden provider input.")
-    body = "".join("<li>" + text(str(value)) + "</li>" for value in warnings)
-    missing = detail.get("missing_references", [])
-    if missing:
-        body += "<li>" + text("Missing or unsupported references") + ": <code>" + html.escape(
-            ", ".join(str(item) for item in missing)) + "</code></li>"
-    provenance = {"parameters": detail.get("parameters", {}), "sources": detail.get("sources", [])[:40]}
-    sources = ("<details><summary>" + text("Parameters and source records") + "</summary><pre style='max-height:280px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere'>"
-               + html.escape(_json(provenance)) + "</pre></details>" if detail else "")
-    return "<div class='pc-note'><ul>" + body + "</ul>" + sources + "</div>"
 
 
 def _components(detail: dict) -> str:
@@ -283,7 +266,7 @@ def _changes(detail: dict) -> str:
 
 def outputs(run: Any, request_id: str | None = None, language: str = "en") -> tuple:
     """Render one selection, clearing every previous result on unload or failure."""
-    empty = (gr.update(choices=[], value=None, interactive=False), gr.update(value=None, visible=False), _empty(), "", "", "", None)
+    empty = (gr.update(choices=[], value=None, interactive=False), gr.update(value=None, visible=False), _empty(), "", "", None)
     if run is None:
         return empty
     try:
@@ -292,7 +275,7 @@ def outputs(run: Any, request_id: str | None = None, language: str = "en") -> tu
         detail = data.get("selected_request")
         if not detail:
             return (empty[0], empty[1], "<div class='pc-note'>" + text("Prompt evidence is unavailable for this trajectory.")
-                    + "</div>", _limitations(data, {}), "", "", None)
+                    + "</div>", "", "", None)
         choices = []
         for index, row in enumerate(rows):
             scope = translate(_SCOPES.get(row.get("scope"), "Unavailable"), language)
@@ -301,17 +284,17 @@ def outputs(run: Any, request_id: str | None = None, language: str = "en") -> tu
         figure = evolution_chart(data, detail["id"], language)
         return (gr.update(choices=choices, value=detail["id"], interactive=True),
                 gr.update(value=figure, visible=figure is not None), _summary(detail, run),
-                _limitations(data, detail), _components(detail), _changes(detail), detail)
+                _components(detail), _changes(detail), detail)
     except Exception:  # noqa: BLE001 -- never leave stale evidence from another loaded run
         logger.exception("Prompt construction inspection failed")
         return (empty[0], empty[1], "<div class='pc-note' role='status'>" + text(
             "Prompt inspection could not be completed. Reload the trajectory; details are in the server log.")
-                + "</div>", "", "", "", None)
+                + "</div>", "", "", None)
 
 
 def bind(refs: PromptRefs, shared: SharedState, load_events, *, language: Any) -> None:
     """Refresh after loads, explicit request selections and language changes."""
-    targets = [refs.request, refs.chart, refs.summary, refs.limitations, refs.components, refs.changes, refs.detail]
+    targets = [refs.request, refs.chart, refs.summary, refs.components, refs.changes, refs.detail]
 
     def on_prompt_load(run, locale="en"):
         return outputs(run, language=locale)
