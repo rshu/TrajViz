@@ -91,7 +91,7 @@ def test_custom_steps_complete_malformed_parts_without_crashing(parts):
     run = tv.Trajectory.from_steps([original])
     assert run.steps[0]["parts"] == []
     assert original == {"role": "assistant", "parts": parts}
-    assert len(run.views()) == 36
+    assert len(run.views()) == len(tv.VIEW_CATALOG)
 
 
 def test_incomplete_custom_tool_call_gets_its_name_before_preview_rendering():
@@ -99,7 +99,7 @@ def test_incomplete_custom_tool_call_gets_its_name_before_preview_rendering():
     run = tv.Trajectory.from_steps([original])
     assert original == {"role": "assistant", "tool_calls": [{}]}
     assert run.steps[0]["tool_calls"][0]["tool_name"] == "?"
-    assert len(run.views()) == 36
+    assert len(run.views()) == len(tv.VIEW_CATALOG)
     restored = tv.Trajectory.from_dict(run.to_dict(include_raw=True))
     assert restored.steps == run.steps
 
@@ -125,7 +125,7 @@ def test_custom_steps_handle_unrepresentable_counts_without_an_overflow(field):
     tokens[field] = 10 ** 400
     run = tv.Trajectory.from_steps([{"role": "assistant", "tokens": tokens}])
     assert tokens[field] == 10 ** 400
-    assert len(run.views()) == 36
+    assert len(run.views()) == len(tv.VIEW_CATALOG)
     json.dumps({name: view.to_dict() for name, view in run.views().items()}, allow_nan=False)
     if field == "total":
         # A valid total can still be derived from the four observed components.
@@ -140,7 +140,7 @@ def test_custom_steps_handle_unrepresentable_counts_without_an_overflow(field):
 def test_custom_steps_drop_unrepresentable_clocks(field):
     run = tv.Trajectory.from_steps([{"role": "assistant", field: 10 ** 400}])
     assert run.steps[0][field] is None
-    assert len(run.views()) == 36
+    assert len(run.views()) == len(tv.VIEW_CATALOG)
 
 
 @pytest.mark.parametrize(("field", "value"), [("type", []), ("text", None)])
@@ -165,4 +165,4 @@ def test_absent_optional_source_index_stays_absent_on_roundtrip():
     restored = tv.Trajectory.from_dict(document)
     assert restored.to_dict(include_raw=True) == document
     assert all("raw_index" not in step for step in restored.steps)
-    assert len(restored.views()) == 36
+    assert len(restored.views()) == len(tv.VIEW_CATALOG)

@@ -19,6 +19,7 @@ from .ui import (
     comparison_tab,
     overview_tab,
     patterns_tab,
+    prompt_tab,
     raw_tab,
     sidebar,
     settings,
@@ -35,7 +36,7 @@ from .ui.shared import SharedState
 # deliberately unstyled and every embedder must spread this at launch — without
 # it the page is served bare, including the light-mode pinning below.
 LAUNCH_PRESENTATION = presentation({
-    "css": APP_CSS,
+    "css": APP_CSS + prompt_tab.CSS,
     "head": '<meta name="color-scheme" content="light">',
     # The application has its own Settings panel; avoid a second settings menu.
     "footer_links": ["gradio"],
@@ -100,6 +101,7 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                         awe = awe_tab.layout(allow_server_paths=allow_server_paths, embedded=True)
             comparison = comparison_tab.layout()
             workflow = workflow_tab.layout()
+            prompt = prompt_tab.layout()
             raw = raw_tab.layout()
             # Only when views were registered (by the application or a plugin).
             views = views_tab.layout()
@@ -171,6 +173,7 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
         comparison_tab.bind(comparison, shared, upload_refs)
         workflow_tab.bind(workflow, shared)
         views_tab.bind(views, shared, load_events)
+        prompt_tab.bind(prompt, shared, load_events, language=upload_refs.language)
         bind_language(app, upload_refs.language)
 
         app.load(
@@ -490,6 +493,26 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                         });
                     };
                     /* __TV_BIND_JUMPS_END__ */
+                    window.tvBindPromptEvolution = function () {
+                        const root = document.getElementById('prompt-evolution-chart');
+                        const gd = root && root.querySelector('.js-plotly-plot');
+                        if (!gd || typeof gd.on !== 'function') return;
+                        if (gd.__tvPromptHandler && typeof gd.removeListener === 'function') {
+                            gd.removeListener('plotly_click', gd.__tvPromptHandler);
+                        }
+                        const handler = function (data) {
+                            const point = data && data.points && data.points[0];
+                            const id = point && Array.isArray(point.customdata) && point.customdata[0];
+                            if (typeof id !== 'string' || !id) return;
+                            const button = document.querySelector('#pc-select-request button, button#pc-select-request');
+                            if (button && window.tvSetGradioText('#pc-request-bridge', id)) {
+                                queueMicrotask(() => button.click());
+                            }
+                        };
+                        gd.__tvPromptHandler = handler;
+                        gd.on('plotly_click', handler);
+                        gd.style.cursor = 'pointer';
+                    };
                     /* Click a Token Usage bar -> reveal that step's pre-rendered
                        token decomposition (one hidden div per step). */
                     window.tvBindTokenStepExplain = function () {
@@ -553,6 +576,7 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                             window.tvExpandFileTimeline();
                             window.tvResizeVisibleCharts();
                             window.tvBindChartWorkflowJumps();
+                            window.tvBindPromptEvolution();
                             window.tvBindTokenStepExplain();
                         }, 60);
                     };

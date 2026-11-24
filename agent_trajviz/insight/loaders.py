@@ -98,7 +98,6 @@ def _convert_dsh_events(payload: list, *, source_path: str | None = None) -> dic
 
 
 def _convert_pi_events(payload: list, *, source_path: str | None = None) -> dict:
-    del source_path
     from .formats.pi_files import normalize_pi_stream, pi_session_usage, select_pi_branch
 
     events, streamed, warnings = normalize_pi_stream(payload)
@@ -111,6 +110,9 @@ def _convert_pi_events(payload: list, *, source_path: str | None = None) -> dict
         selected, context, warnings = select_pi_branch(events)
     result = _convert_pi_to_internal(selected)
     result["_pi_entries"] = payload
+    if source_path:
+        result["_input_files"] = [source_path]
+        result["_pi_prompt_source"] = source_path
     result.setdefault("metadata", {}).update(context)
     if warnings:
         result.setdefault("_load_warnings", []).extend(warnings)

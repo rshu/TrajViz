@@ -223,6 +223,12 @@ def _plan(run: Trajectory, a: Analysis) -> dict[str, Any]:
     return {"metrics": a.plan_metrics, "history": a.plan_history}
 
 
+def _prompt_construction(run: Trajectory, a: Analysis, *, request_id: str | None = None) -> dict[str, Any]:
+    from .insight.prompt_construction import inspect_prompt_construction
+
+    return inspect_prompt_construction(run.raw, _steps(run), request_id, format_name=run.format)
+
+
 def _failure_chains(run: Trajectory, a: Analysis) -> dict[str, Any]:
     return {"metrics": a.chain_metrics, "chains": a.failure_chains}
 
@@ -336,6 +342,12 @@ _SPECS: dict[str, _Spec] = {
         {"agent": "agent key (default: all agents)",
          "snapshot_step": "a step from `snapshots` (default: the current window)",
          "window_limit": "context window in tokens"}),
+    "prompt_construction": _Spec(
+        "table", "Prompt evolution",
+        "How prompt evidence evolves across recorded boundaries: request sequence, recorded changes, observed "
+        "input sizes where mapped, and selected component evidence or explicitly estimated transcript candidates.",
+        _prompt_construction,
+        {"request_id": "request id from `requests` (default: the last recorded boundary)"}),
     "workflow": _Spec(
         "table", "Workflow",
         "One entry per step for a step browser: workflow role, what the step leads with, its agent, "
@@ -543,10 +555,16 @@ def build_view(run: Trajectory, analysis: Analysis, view_id: str, options: Mappi
     if bad:
         raise TypeError(f"view {view_id!r} takes no option(s) {', '.join(bad)}; "
                         f"it takes: {', '.join(spec.options) or 'none'}")
-    return View(
-        view_id, spec.title, spec.kind, spec.description, _jsonable(spec.build(run, analysis, **options)),
-        view_availability(view_id, analysis.data_quality, _steps(run)),
-    )
+    data = _jsonable(spec.build(run, analysis, **options))
+    availability = view_availability(view_id, analysis.data_quality, _steps(run))
+    if view_id == "prompt_construction":
+        selected = data.get("selected_request") or {}
+        availability = {
+            "status": ("unavailable" if not data.get("available") else "observed"
+                       if selected.get("evidence") == "captured" and not selected.get("missing_references") else "partial"),
+            "basis": selected.get("scope") or "prompt_evidence", "fields": {},
+        }
+    return View(view_id, spec.title, spec.kind, spec.description, data, availability)
 
 
 def build_views(run: Trajectory, analysis: Analysis, only: Iterable[str] | None = None) -> dict[str, View]:

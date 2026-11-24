@@ -297,6 +297,7 @@ def convert_claude_code_events(events: list[dict], *, source_path: str | None = 
     inline: dict[str, list[dict]] = {}
     info: dict[str, dict] = {"": {"source_path": source_path or ""}}
     control_events: list[dict] = []
+    prompt_records: list[dict] = []
 
     def note_agent(agent_id: str, *, parent: str = "", spawned_by: str = "", **fields):
         if not agent_id:
@@ -330,6 +331,16 @@ def convert_claude_code_events(events: list[dict], *, source_path: str | None = 
                                        "source_index": record["_source_index"]})
                 continue
             kind = record.get("type")
+            if kind in ("api-request-shape", "api-request-blob", "api-request"):
+                # These describe requests, not additional conversation turns.
+                # Keep their native ordering and owner, independently of the
+                # timestamp-sorted transcript used for charts and accounting.
+                from ..prompt_claude import preserve_prompt_record
+
+                prompt_records.append(preserve_prompt_record(
+                    original, source_path=stream_path, raw_index=record["_source_index"],
+                    session_id=as_text(record.get("sessionId")) or root_sid, agent_id=own_agent,
+                ))
             if kind in ("user", "assistant", "system"):
                 target.setdefault(own_agent, []).append(record)
             # Parent tool-result records often carry the child's native ID even
@@ -539,5 +550,6 @@ def convert_claude_code_events(events: list[dict], *, source_path: str | None = 
         "trajectory": [], "_claude_code_format": True, "_claude_code_parsed_steps": steps,
         "_claude_code_sub_agents": sub_agents, "_claude_code_turn_durations": turn_durations,
         "_claude_code_control_events": control_events,
+        "_claude_prompt_records": prompt_records,
         "_load_warnings": list(dict.fromkeys(warnings)),
     }

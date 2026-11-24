@@ -38,7 +38,7 @@ def _native(tmp_path, before, after, request=173142):
 def _validate(run):
     for name, view in run.views().items():
         jsonschema.Draft202012Validator(tv.view_schema(name)).validate(json.loads(view.to_json()))
-    assert len(run.views()) == 36
+    assert len(run.views()) == len(tv.VIEW_CATALOG)
     rendered = figures(run.views())
     assert len(rendered) == 12
     for chart in rendered.values():
