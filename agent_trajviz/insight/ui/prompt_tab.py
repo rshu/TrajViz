@@ -43,6 +43,8 @@ body:has(#prompt-construction-tab-button[aria-selected="true"]) .overview-kpi-st
 .pc-parts .pc-source {font-size:11px;color:#475569;overflow-wrap:anywhere;margin-top:8px;}
 .pc-change-grid {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;}
 .pc-change-grid section {border:1px solid #dce3ef;border-radius:8px;padding:14px;overflow-wrap:anywhere;}
+.pc-change-grid section:has(details[open]) {grid-column:1 / -1;}
+.pc-change-grid pre {max-height:250px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#f8fafc;color:#0f172a;padding:12px;}
 .pc-rewrite {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;}
 .pc-rewrite pre {max-height:250px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#f8fafc;padding:12px;color:#0f172a;}
 .pc-bridge {display:none!important;}
