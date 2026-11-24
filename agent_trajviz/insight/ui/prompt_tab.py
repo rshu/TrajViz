@@ -194,7 +194,10 @@ def _recorded_events(detail: dict) -> str:
         if type(count) is int and count > 1:
             label += f" ×{count}"
         items.append("<li>" + label + "</li>")
-    return "<div class='pc-note'><strong>" + text("Recorded changes before this boundary") + "</strong><ul>" + "".join(items) + "</ul></div>"
+    heading = ("Observed transcript events before this boundary"
+               if any(event.get("evidence") == "observed_transcript" for event in events)
+               else "Recorded changes before this boundary")
+    return "<div class='pc-note'><strong>" + text(heading) + "</strong><ul>" + "".join(items) + "</ul></div>"
 
 
 def _component_label_html(component: dict) -> str:

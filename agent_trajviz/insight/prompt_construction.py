@@ -8,6 +8,7 @@ tool definitions, pruning policy or hidden instructions are inferred.
 from __future__ import annotations
 
 import hashlib
+import heapq
 import json
 import math
 from collections import Counter
@@ -28,6 +29,13 @@ _TOKEN_BASIS = (
     "This is not billed usage; provider framing and opaque or non-text inputs are not measured."
 )
 _OMITTED_RESULT = "Tool results without a proven completion before this boundary are omitted."
+_TRANSCRIPT_EVENT_LABELS = {
+    "transcript_user_message": "User message recorded in transcript",
+    "transcript_system_message": "System or developer message recorded in transcript",
+    "transcript_tool_result": "Completed tool result recorded in transcript",
+    "transcript_compaction": "Compaction checkpoint recorded in transcript",
+}
+_EVENT_SOURCE_LIMIT = 8
 
 
 def _number(value: Any) -> int | float | None:
@@ -82,6 +90,14 @@ def _step_text(step: dict) -> list[dict]:
     return parts
 
 
+def _tool_observed(call: dict, field: str) -> bool:
+    metadata = call.get("metadata") if isinstance(call.get("metadata"), dict) else {}
+    telemetry = metadata.get("_otel")
+    if isinstance(telemetry, dict) and not isinstance(telemetry.get("fields"), dict):
+        return False
+    return tool_field_observed({"metadata": metadata}, field)
+
+
 def _step_messages(step: dict, before_ms: int | float | None = None, omissions: list[str] | None = None) -> list[dict]:
     role = str(step.get("role") or "")
     if role not in {"user", "assistant", "system", "developer", "tool"}:
@@ -96,11 +112,11 @@ def _step_messages(step: dict, before_ms: int | float | None = None, omissions: 
         started = _number(call.get("time_start"))
         if started is not None and before_ms is not None and started > before_ms:
             continue
-        if tool_field_observed(call, "tool_inputs"):
+        if _tool_observed(call, "tool_inputs"):
             content.append({"type": "tool_use", "id": str(call.get("tool_id") or ""),
                             "name": str(call.get("tool_name") or ""), "input": call.get("input", {})})
         end = _number(call.get("time_end"))
-        if tool_field_observed(call, "tool_outputs") and call.get("output") not in (None, ""):
+        if _tool_observed(call, "tool_outputs") and call.get("output") not in (None, ""):
             if end is not None and before_ms is not None and end <= before_ms:
                 results.append({"type": "tool_result", "tool_use_id": str(call.get("tool_id") or ""),
                                 "content": call["output"]})
@@ -119,11 +135,115 @@ def _summary(step: dict) -> str:
     return "\n".join(part["text"] for part in _step_text(step))
 
 
+def _child_checkpoint_key(step: dict) -> tuple | None:
+    sid, parent = step.get("session_id"), step.get("parent_session_id")
+    if not isinstance(sid, str) or not sid or not isinstance(parent, str) or not parent or sid == parent:
+        return None
+    return ("child_checkpoint", sid, parent, str(step.get("source_path") or ""), str(step.get("branch_id") or ""))
+
+
+def _queue_event(pending: dict, key: tuple, event: dict, ready_at: int | float | None,
+                 serial: int, *, requires_clock: bool = False) -> None:
+    queues = pending.setdefault(key, {"untimed": [], "timed": [], "results": []})
+    if ready_at is None:
+        queues["untimed"].append((serial, event))
+    else:
+        heapq.heappush(queues["results" if requires_clock else "timed"], (ready_at, serial, event))
+
+
+def _take_events(pending: dict, key: tuple | None, boundary_ms: int | float | None) -> list[tuple]:
+    queues = pending.get(key)
+    if queues is None:
+        return []
+    ready = queues["untimed"]
+    queues["untimed"] = []
+    for field in ("timed", "results"):
+        if field == "results" and boundary_ms is None:
+            continue
+        heap = queues[field]
+        while heap and (boundary_ms is None or heap[0][0] <= boundary_ms):
+            _when, serial, event = heapq.heappop(heap)
+            ready.append((serial, event))
+    if not any(queues.values()):
+        pending.pop(key, None)
+    return ready
+
+
+def _event_source(step: dict, position: int, field: str, **extra: Any) -> dict:
+    return {"record": "normalized_step", **_source(step, position), "field": field, **extra}
+
+
+def _enqueue_transcript_events(step: dict, position: int, pending: dict, serial: int) -> int:
+    key = ("context", *_identity(step, position))
+    role = step.get("role")
+    kind = ("transcript_compaction" if _is_compaction(step) else
+            "transcript_user_message" if role == "user" and _step_text(step) else
+            "transcript_system_message" if role in {"system", "developer"} and _step_text(step) else None)
+    if kind:
+        event = {"kind": kind, "label": _TRANSCRIPT_EVENT_LABELS[kind], "evidence": "observed_transcript", "count": 1,
+                 "source_refs": [_event_source(step, position, "parts")], "source_refs_truncated": False}
+        # A distinct native child session identifies its mode-labelled checkpoint;
+        # shared-session or unidentified children never receive that association.
+        event_key = (_child_checkpoint_key(step) or key) if _is_compaction(step) else key
+        _queue_event(pending, event_key, event, _number(step.get("time_created_ms")), serial)
+        serial += 1
+    for index, call in enumerate(step.get("tool_calls", [])):
+        if not isinstance(call, dict) or not _tool_observed(call, "tool_outputs"):
+            continue
+        end, start = _number(call.get("time_end")), _number(call.get("time_start"))
+        if end is None or end < 0 or start is not None and start > end:
+            continue
+        metadata = call.get("metadata") if isinstance(call.get("metadata"), dict) else {}
+        telemetry = metadata.get("_otel") if isinstance(metadata.get("_otel"), dict) else {}
+        fields = telemetry.get("fields") if isinstance(telemetry.get("fields"), dict) else {}
+        explicit_empty = (metadata.get("_output_observed") is True
+                          or fields.get("tool_outputs") == "observed")
+        if call.get("output") in (None, "") and not explicit_empty:
+            continue
+        name = str(call.get("tool_name") or "")
+        event = {"kind": "transcript_tool_result", "label": _TRANSCRIPT_EVENT_LABELS["transcript_tool_result"],
+                 "evidence": "observed_transcript", "count": 1, "tool_name": name,
+                 "source_refs": [_event_source(step, position, "tool_calls", index=index, tool_name=name,
+                                               tool_id=str(call.get("tool_id") or ""),
+                                               part_id=str(call.get("part_id") or ""))],
+                 "source_refs_truncated": False}
+        source_created = _number(step.get("time_created_ms"))
+        ready_at = max(end, source_created) if source_created is not None else end
+        _queue_event(pending, key, event, ready_at, serial, requires_clock=True)
+        serial += 1
+    return serial
+
+
+def _compact_events(events: list[tuple]) -> list[dict]:
+    """At most four event groups per boundary; counts retain omitted references."""
+    grouped: dict[str, dict] = {}
+    names: dict[str, set[str]] = {}
+    for _serial, event in sorted(events, key=lambda item: item[0]):
+        kind = event["kind"]
+        group = grouped.setdefault(kind, {"kind": kind, "label": event["label"], "evidence": "observed_transcript",
+                                          "count": 0, "source_refs": [], "source_refs_truncated": False})
+        group["count"] += event["count"]
+        if event.get("tool_name"):
+            names.setdefault(kind, set()).add(event["tool_name"])
+        for source in event["source_refs"]:
+            if len(group["source_refs"]) < _EVENT_SOURCE_LIMIT:
+                group["source_refs"].append(source)
+            else:
+                group["source_refs_truncated"] = True
+    for kind, values in names.items():
+        if len(values) == 1:
+            grouped[kind]["tool_name"] = next(iter(values))
+    return list(grouped.values())
+
+
 def _transcript_catalog(steps: list[dict]) -> list[dict]:
     rows = []
     previous: dict[tuple[str, str, str, str, str, str], str] = {}
+    pending: dict[tuple, dict] = {}
+    serial = 0
     for position, step in enumerate(steps):
         if step.get("role") != "assistant" or _is_compaction(step):
+            serial = _enqueue_transcript_events(step, position, pending, serial)
             continue
         identity_key = _identity(step, position)
         sid, path, parent, agent, owner, branch = identity_key
@@ -131,16 +251,22 @@ def _transcript_catalog(steps: list[dict]) -> list[dict]:
         index = step.get("index", position)
         identifier = f"transcript:{identity}:{position}"
         actor_kind = "unknown_child" if owner.startswith("unidentified-child") else "subagent" if owner == "child" else "main"
+        boundary_ms = _number(step.get("time_created_ms"))
+        observed = _take_events(pending, ("context", *identity_key), boundary_ms)
+        observed += _take_events(pending, _child_checkpoint_key(step), boundary_ms)
         rows.append({"id": identifier, "label": f"Step #{index} · transcript candidates",
                      "evidence": "estimated", "scope": "trajectory_estimate", "model": str(step.get("model_id") or ""),
                      "session_id": sid, "agent_id": agent, "step_index": index,
-                     "timestamp_ms": _number(step.get("time_created_ms")), "missing_references": [],
+                     "timestamp_ms": boundary_ms, "missing_references": [],
                      "context_id": f"candidate:{identity}", "actor_kind": actor_kind,
                      "actor_name": (agent or sid) if actor_kind == "subagent" else "",
                      "branch_id": branch or None,
+                     "prompt_events": _compact_events(observed),
                      "previous_candidate_id": previous.get(identity_key),
                      "_position": position})
         previous[identity_key] = identifier
+        # This response's attached results can only belong to a later boundary.
+        serial = _enqueue_transcript_events(step, position, pending, serial)
     return rows
 
 

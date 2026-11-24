@@ -21,6 +21,10 @@ EVENT_LABELS = {
     "context_prefix_unavailable": "Retained prefix unavailable", "message_tail_recorded": "Message tail recorded",
     "context_reset": "Context reset", "context_prefix_retained": "Context prefix retained",
     "message_tail_replaced": "Message tail replaced",
+    "transcript_user_message": "User prompt recorded (transcript)",
+    "transcript_system_message": "System/developer message recorded (transcript)",
+    "transcript_tool_result": "Tool result recorded (transcript)",
+    "transcript_compaction": "Compaction recorded (transcript)",
 }
 
 
@@ -31,11 +35,12 @@ def event_label(event: dict) -> str:
 
 def _lane(event: dict) -> str:
     kind = event.get("kind", "")
-    if kind.startswith("tool_") or kind == "tools_changed":
+    if kind.startswith("tool_") or kind in {"tools_changed", "transcript_tool_result"}:
         return "Tools"
-    if kind.startswith("system_") or kind == "system_changed" or kind == "prompt_shape_recorded":
+    if kind.startswith("system_") or kind in {"system_changed", "prompt_shape_recorded",
+                                             "transcript_user_message", "transcript_system_message"}:
         return "Instructions"
-    if kind in {"context_edit", "compaction", "branch_summary", "context_reset"}:
+    if kind in {"context_edit", "compaction", "branch_summary", "context_reset", "transcript_compaction"}:
         return "Context edits / compaction"
     return "Request sequence"
 
@@ -91,9 +96,15 @@ def evolution_chart(data: dict, selected_id: str, language: str = "en"):
                 name += ": " + html.escape(str(target))
             if type(count) is int and count > 1:
                 name += f" ×{count}"
+            source_steps = list(dict.fromkeys(ref["step_index"] for ref in event.get("source_refs", [])
+                                              if isinstance(ref, dict) and type(ref.get("step_index")) is int))
+            if source_steps:
+                name += "<br>" + translate("Source steps: {steps}", language,
+                                           steps=", ".join(f"#{step}" for step in source_steps[:3]))
             grouped[_lane(event)].append(name)
         for lane, labels in grouped.items():
-            lanes[lane].append((row, "<br>".join(labels) or translate("Response boundary", language)))
+            boundary = ("Estimated response boundary" if row.get("scope") == "trajectory_estimate" else "Response boundary")
+            lanes[lane].append((row, "<br>".join(labels) or translate(boundary, language)))
     for lane, points in lanes.items():
         if not points:
             continue
@@ -117,12 +128,24 @@ def evolution_chart(data: dict, selected_id: str, language: str = "en"):
         legend={"orientation": "h", "y": 1.12, "x": 0},
         clickmode="event", uirevision="prompt-evolution", meta={"tv_prompt_evolution": True},
     )
+    if any(event.get("evidence") == "observed_transcript" for row in rows for event in row.get("prompt_events", [])):
+        figure.add_annotation(x=1, y=1.13, xref="paper", yref="paper", xanchor="right", showarrow=False,
+                              text=translate("Transcript events; prompt membership unverified", language),
+                              font={"size": 9, "color": "#64748b"})
+    for lane, points in lanes.items():
+        if not points:
+            figure.add_annotation(x=1, y=translate(lane, language),
+                                  xref="x2 domain" if measured else "x domain", yref="y2" if measured else "y",
+                                  xanchor="right", showarrow=False, text=translate("Not recorded", language),
+                                  font={"size": 10, "color": "#94a3b8"})
     selected = next((row for row in rows if row["id"] == selected_id), None)
     if selected:
         figure.add_vline(x=selected["order"], line_width=1, line_dash="dot", line_color="#2563eb")
     figure.update_xaxes(title_text=translate("Workflow response boundary", language), tickformat="d",
                         gridcolor="#e5eaf2", **({"row": 2, "col": 1} if measured else {}))
     figure.update_yaxes(type="category", categoryorder="array",
-                        categoryarray=[translate(lane, language) for lane in reversed(lanes) if lanes[lane]],
+                        categoryarray=[translate(lane, language) for lane in reversed(lanes)],
+                        tickmode="array", tickvals=[translate(lane, language) for lane in lanes],
+                        range=[-0.5, len(lanes) - 0.5],
                         **({"row": 2, "col": 1} if measured else {}))
     return figure

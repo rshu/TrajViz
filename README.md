@@ -96,7 +96,8 @@ Patterns snapshot that loads Plotly from a CDN. Use `--inline-plotly` with
 **Prompt Evolution** follows recorded request boundaries and shows additions,
 removals, proven rewrites, and native context-change events. Select a boundary
 to inspect its evidence and sources. Claude Code request records and Pi prompt
-state support reconstruction; other inputs show explicit transcript estimates.
+state support reconstruction; other inputs show explicit transcript estimates
+and recorded transcript events in separate lanes. Unrecorded lanes stay marked.
 Candidate differences do not verify actual request lineage or context membership.
 Missing evidence and token estimates are marked. Python exposes the same data
 through `run.view("prompt_construction", request_id=...)`.

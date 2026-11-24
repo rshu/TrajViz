@@ -302,6 +302,90 @@ def test_loaded_native_sessions_without_usage_do_not_plot_normalized_zero(tmp_pa
     assert opencode.view("prompt_construction").data["evolution"][0]["observed_prompt_tokens"] is None
 
 
+def test_transcript_events_follow_response_boundaries_without_claiming_prompt_assembly():
+    steps = [step(0, "user", "Task", time_created_ms=1),
+             step(1, "assistant", "Earlier answer", time_created_ms=10, tool_calls=[{
+                 "tool_name": "Read", "tool_id": "call", "output": "TOOL BODY NOT IN EVENT METADATA",
+                 "time_start": 15, "time_end": 20}]),
+             step(2, "system", "Recorded system update", time_created_ms=21),
+             step(3, "assistant", "Current answer", time_created_ms=25)]
+    data = inspect_prompt_construction({}, steps)
+    first, second = data["requests"]
+    assert [event["kind"] for event in first["prompt_events"]] == ["transcript_user_message"]
+    events = {event["kind"]: event for event in second["prompt_events"]}
+    assert set(events) == {"transcript_tool_result", "transcript_system_message"}
+    assert events["transcript_tool_result"]["source_refs"][0]["step_index"] == 1
+    assert events["transcript_tool_result"]["source_refs"][0]["record"] == "normalized_step"
+    assert events["transcript_tool_result"]["tool_name"] == "Read"
+    assert all(event["evidence"] == "observed_transcript" for event in events.values())
+    assert data["selected_request"]["prompt_events"] == data["evolution"][-1]["prompt_events"] == second["prompt_events"]
+    assert "TOOL BODY NOT IN EVENT METADATA" not in json.dumps(data["requests"] + data["evolution"])
+    assert data["selected_request"]["changes"]["evidence"] == "estimated"
+
+
+def test_tool_result_event_waits_for_first_proven_subsequent_boundary():
+    steps = [step(0, "assistant", time_created_ms=10, tool_calls=[{
+        "tool_name": "Run", "tool_id": "late", "output": "Late result", "time_end": 50}]),
+        step(1, "assistant", time_created_ms=25), step(2, "assistant"),
+        step(3, "assistant", time_created_ms=70), step(4, "assistant", time_created_ms=80)]
+    rows = inspect_prompt_construction({}, steps)["evolution"]
+    assert [sum(event["count"] for event in row["prompt_events"] if event["kind"] == "transcript_tool_result")
+            for row in rows] == [0, 0, 0, 1, 0]
+
+
+def test_tool_result_event_cannot_precede_its_future_source_message():
+    steps = [step(0, "assistant", time_created_ms=1000, tool_calls=[{
+        "tool_name": "Read", "output": "Result", "time_end": 900}]),
+        step(1, "assistant", time_created_ms=950), step(2, "assistant", time_created_ms=1100)]
+    rows = inspect_prompt_construction({}, steps)["requests"]
+    assert rows[1]["prompt_events"] == []
+    assert rows[2]["prompt_events"][0]["kind"] == "transcript_tool_result"
+
+
+@pytest.mark.parametrize("fields", [None, [], "invalid"])
+def test_malformed_tool_evidence_fields_are_unavailable_not_event_proof(fields):
+    steps = [step(0, "assistant", time_created_ms=10, tool_calls=[{
+        "tool_name": "Read", "output": "UNVERIFIED RESULT", "time_end": 20,
+        "metadata": {"_otel": {"fields": fields}}}]), step(1, "assistant", time_created_ms=30)]
+    data = inspect_prompt_construction({}, steps)
+    assert data["requests"][-1]["prompt_events"] == []
+    assert "UNVERIFIED RESULT" not in json.dumps(data["selected_request"])
+
+
+def test_transcript_event_contexts_and_compaction_are_source_backed_and_isolated():
+    child = {"session_id": "child", "parent_session_id": "root", "is_sub_agent": True, "agent": "worker"}
+    steps = [step(0, "user", "Parent task"), step(1, "user", "Child task", **child),
+             step(2, "assistant", time_created_ms=10, **child),
+             step(3, "compaction", "Child checkpoint", **{**child, "agent": "compaction"},
+                  is_compaction_checkpoint=True), step(4, "assistant", time_created_ms=20, **child),
+             step(5, "user", "UNKNOWN CHILD", is_sub_agent=True),
+             step(6, "assistant", time_created_ms=30, tokens={"context_window": 1000}),
+             step(7, "assistant", time_created_ms=40, tokens={"context_window": 5})]
+    rows = inspect_prompt_construction({}, steps)["requests"]
+    assert rows[0]["prompt_events"][0]["source_refs"][0]["step_index"] == 1
+    assert [event["kind"] for event in rows[1]["prompt_events"]] == ["transcript_compaction"]
+    assert rows[1]["prompt_events"][0]["source_refs"][0]["step_index"] == 3
+    assert rows[2]["prompt_events"][0]["source_refs"][0]["step_index"] == 0
+    assert rows[3]["prompt_events"] == []  # a token drop is not compaction evidence
+    assert not any(source["step_index"] == 5 for row in rows for event in row["prompt_events"]
+                   for source in event["source_refs"])
+
+
+def test_transcript_event_metadata_is_bounded_and_missing_results_stay_unrecorded():
+    calls = [{"tool_name": "Read", "tool_id": f"read-{index}", "output": "Result", "time_end": 20}
+             for index in range(50)]
+    calls += [{"tool_name": "NoTime", "output": "Pending", "time_end": None},
+              {"tool_name": "Unobserved", "output": "Hidden", "time_end": 20, "metadata": {"_output_observed": False}},
+              {"tool_name": "DefaultEmpty", "output": "", "time_end": 20},
+              {"tool_name": "ObservedEmpty", "output": "", "time_end": 20, "metadata": {"_output_observed": True}}]
+    steps = [step(0, "assistant", time_created_ms=10, tool_calls=calls), step(1, "assistant", time_created_ms=30)]
+    event = inspect_prompt_construction({}, steps)["requests"][-1]["prompt_events"][0]
+    assert event["kind"] == "transcript_tool_result" and event["count"] == 51
+    assert len(event["source_refs"]) == 8 and event["source_refs_truncated"]
+    assert "tool_name" not in event  # mixed tool names are not mislabelled as one tool
+    assert all(source["tool_name"] == "Read" for source in event["source_refs"])
+
+
 def test_large_opaque_image_content_is_preserved_but_not_counted_as_text_tokens():
     raw = pi_raw()
     raw["_pi_entries"][2]["message"]["content"] = [

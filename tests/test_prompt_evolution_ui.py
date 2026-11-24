@@ -30,7 +30,29 @@ def test_transcript_only_chart_does_not_suggest_unrecorded_instruction_events():
     for row in data["evolution"]:
         row["prompt_events"] = []
     chart = evolution_chart(data, "r1")
-    assert list(chart.layout.yaxis2.categoryarray) == ["Request sequence"]
+    assert list(chart.layout.yaxis2.categoryarray) == ["Context edits / compaction", "Tools", "Instructions", "Request sequence"]
+    assert sum(annotation.text == "Not recorded" for annotation in chart.layout.annotations) == 3
+    assert all(trace.name not in {"Instructions", "Tools", "Context edits / compaction"} for trace in chart.data)
+
+
+def test_transcript_events_have_separate_lanes_and_explicit_evidence_labels():
+    data = _data([100, 200])
+    data["evolution"][0].update(scope="trajectory_estimate", prompt_events=[
+        {"kind": "transcript_user_message", "evidence": "observed_transcript", "count": 1}])
+    data["evolution"][1].update(scope="trajectory_estimate", prompt_events=[
+        {"kind": "transcript_tool_result", "evidence": "observed_transcript", "count": 2, "tool_name": "read",
+         "source_refs": [{"step_index": 12}]}])
+    chart = evolution_chart(data, "r1")
+    assert any(trace.name == "Instructions" and list(trace.x) == [1] for trace in chart.data)
+    assert any(trace.name == "Tools" and list(trace.x) == [2] for trace in chart.data)
+    assert any("Tool result recorded (transcript)" in str(trace.customdata) for trace in chart.data)
+    assert any("Source steps: #12" in str(trace.customdata) for trace in chart.data)
+    assert any("prompt membership unverified" in annotation.text for annotation in chart.layout.annotations)
+    localized = evolution_chart(data, "r1", "zh-CN")
+    assert any("事件来自对话记录" in annotation.text for annotation in localized.layout.annotations)
+    assert any("已记录用户提示" in str(trace.customdata) for trace in localized.data)
+    rendered = _changes({"prompt_events": data["evolution"][1]["prompt_events"]})
+    assert "Observed transcript events before this boundary" in rendered
 
 
 def test_prompt_growth_lines_do_not_mix_child_ownership_or_distinct_branches():

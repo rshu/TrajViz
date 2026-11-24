@@ -136,6 +136,43 @@
               },
               "actor_name": {
                 "type": "string"
+              },
+              "prompt_events": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "kind": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "evidence": {
+                      "type": "string",
+                      "description": "observed_transcript marks an observed normalized record, not native prompt assembly."
+                    },
+                    "count": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "source_refs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                      }
+                    },
+                    "source_refs_truncated": {
+                      "type": "boolean"
+                    },
+                    "tool_name": {
+                      "type": "string"
+                    }
+                  },
+                  "description": "Compact native or explicitly transcript-derived event annotation. Observed transcript records do not establish inclusion in a model request."
+                }
               }
             },
             "additionalProperties": true,
@@ -619,6 +656,43 @@
             },
             "actor_name": {
               "type": "string"
+            },
+            "prompt_events": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {
+                  "kind": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "evidence": {
+                    "type": "string",
+                    "description": "observed_transcript marks an observed normalized record, not native prompt assembly."
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "source_refs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  },
+                  "source_refs_truncated": {
+                    "type": "boolean"
+                  },
+                  "tool_name": {
+                    "type": "string"
+                  }
+                },
+                "description": "Compact native or explicitly transcript-derived event annotation. Observed transcript records do not establish inclusion in a model request."
+              }
             }
           },
           "additionalProperties": true
@@ -739,9 +813,30 @@
                     },
                     "label": {
                       "type": "string"
+                    },
+                    "evidence": {
+                      "type": "string",
+                      "description": "observed_transcript marks an observed normalized record, not native prompt assembly."
+                    },
+                    "count": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "source_refs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                      }
+                    },
+                    "source_refs_truncated": {
+                      "type": "boolean"
+                    },
+                    "tool_name": {
+                      "type": "string"
                     }
                   },
-                  "description": "Compact native change annotation; source references and counts depend on the recording format."
+                  "description": "Compact native or explicitly transcript-derived event annotation. Observed transcript records do not establish inclusion in a model request."
                 }
               },
               "transition": {
