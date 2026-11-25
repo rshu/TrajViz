@@ -26,11 +26,15 @@ print. It is built to keep them on your machine.
   Gradio's usage telemetry is disabled. A `--share` link uses Gradio's tunnel
   service; standalone reports load plotly.js from its CDN unless built with
   `--inline-plotly`.
-- **Model assistance uses the configured endpoint.** Select **Analyze trajectory**,
-  submit a question, select **Suggest fixes with LLM** or **Analyze issue with AI**, or run
-  `agent-trajviz-label` to request model assistance. These actions can send a
-  statistics brief and relevant step text to the configured provider. **Test API
-  key** sends a small prompt without trajectory data. Gateway headers apply only
+- **Model assistance uses the configured endpoint.** In the packaged Insight
+  dashboard, select **Analyze trajectory**, submit a question, or select
+  **Suggest fixes with LLM** or **Analyze issue with AI** to send a statistics
+  brief and relevant step text to the configured provider. Opening its sidebar
+  alone stays local. The dashboard example in `examples/trajviz_app/app.py`
+  automatically sends its first request when its sidebar opens with a loaded
+  run, an empty chat and a configured model. Running `agent-trajviz-label` also
+  requests model assistance. **Test API key** in Insight sends a small prompt
+  without trajectory data. Gateway headers apply only
   to their configured base URL and provider. Before a model request leaves,
   credential-shaped text in it -- provider API keys, tokens, private keys,
   passwords in URLs and authorization headers, values of secret-named
@@ -41,14 +45,20 @@ print. It is built to keep them on your machine.
   requests in AWE require network permission for that operation. Official
   evaluation also requires confirmation before it pulls images or runs
   Docker trials.
-- **Dashboards are local by default.** Both bind to `127.0.0.1`. If you expose
-  a dashboard (`--host 0.0.0.0` or `--share`) without a login, anyone who can
-  reach it can upload files and use the LLM key configured on your machine. Set
-  `TRAJVIZ_AUTH=user:password` first; TrajViz warns at startup if you do not.
-  An exposed Insight dashboard drops its server-path inputs, Converge
-  resolves manifest paths inside `--data-root` only, uploads are capped by
-  `--max-file-size` (default 500 MB), and error messages shown in the
-  browser never carry a traceback.
+- **Packaged dashboards are local by default.** Insight and Converge bind to
+  `127.0.0.1`. If you expose one (`--host 0.0.0.0` or `--share`) without a login,
+  anyone who can reach it can upload files and use the LLM key configured on
+  your machine. Set `TRAJVIZ_AUTH=user:password` first; the packaged launchers
+  warn at startup if you do not. An exposed Insight dashboard drops its
+  server-path inputs, Converge resolves manifest paths inside `--data-root`
+  only, uploads are capped by `--max-file-size` (default 500 MB), and error
+  messages shown in the browser never carry a traceback.
+- **Example launchers are for local use.** The two apps in `examples/` bind to
+  `127.0.0.1` by default and call Gradio directly. They do not apply the packaged
+  launchers' `TRAJVIZ_AUTH` login, configured upload cap or exposed-launch
+  server-path restrictions. The dashboard example's `--host` option only
+  changes its bind address; its reference-data path input remains available.
+  Keep these examples on loopback, or add deployment controls when adapting them.
 - **API keys are not remembered in the browser.** Keys can come from
   environment variables, a local `.env` (only `ANALYZE_*` and `LABEL_*` keys
   are read from it), or dashboard Settings. Keys entered in Settings stay in

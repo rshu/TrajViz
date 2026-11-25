@@ -87,9 +87,14 @@ def page_html(page: Path, title: str, body: str, version: str, label: str, base_
 
 
 def rewrite_markdown_links(rendered: str) -> str:
+    """Keep README API links inside the generated page's documentation version."""
     def replace(match):
         target = html.unescape(match.group(2))
         parts = urlsplit(target)
+        if parts.scheme == "https" and parts.netloc == "rshu.github.io" and parts.path.startswith("/TrajViz/stable/api/"):
+            # The absolute stable URL works on GitHub and PyPI. Generated guides
+            # live at a version root and must use that version's own reference.
+            target = urlunsplit(("", "", parts.path.removeprefix("/TrajViz/stable/"), parts.query, parts.fragment))
         if not parts.scheme and not parts.netloc and parts.path.endswith(".md"):
             target = urlunsplit(("", "", parts.path[:-3] + ".html", parts.query, parts.fragment))
         return match.group(1) + html.escape(target, quote=True) + match.group(3)

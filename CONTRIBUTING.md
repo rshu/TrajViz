@@ -32,9 +32,9 @@ run without an external checkout.
   data in `agent_trajviz/views.py`. Use `agent_trajviz.figures` for the public
   figure adapters and keep dashboard rendering based on the same data.
 - **A view's data has a schema.** `agent_trajviz/schemas/<id>.schema.json`
-  describes each view, and the suite validates every view strictly: a new
-  field, a changed type or a removed key fails with the path to fix. Update
-  the schema in the same change. Bump `VIEWS_SCHEMA_VERSION` only for an
+  describes each view, and the suite validates exported views against it.
+  Document new fields and update schemas in the same change; some objects
+  intentionally allow additional properties. Bump `VIEWS_SCHEMA_VERSION` only for an
   incompatible change (a field removed or renamed, or its type changed).
 - **Text I/O names its encoding** (`encoding="utf-8"`); a test enforces it,
   because the platform default breaks UTF-8 files on Windows.
@@ -61,7 +61,10 @@ run without an external checkout.
 ## Documentation
 
 Keep usage instructions in `README.md` and public API descriptions in docstrings.
-The documentation site is generated from those sources. The local `docs/` folder
+The documentation site is generated from those sources. Explicitly marked Python
+examples in the README run against synthetic sessions during the documentation
+build. Links to the stable API in the README resolve within the selected version
+when the site is generated. The local `docs/` folder
 stays untracked; generated HTML is built in `site/` and is never committed.
 
 ```bash

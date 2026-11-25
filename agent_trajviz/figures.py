@@ -6,8 +6,8 @@ Needs the ``charts`` extra (``pip install "agent-trajviz[charts]"``).
     >>> fig = figure(run.view("token_usage"))      # a plotly.graph_objects.Figure
     >>> fig.to_json()                               # or the full Plotly JSON spec
 
-Each figure is drawn from the view's ``data`` and nothing else -- the same
-function the dashboard uses -- so it shows exactly the exported numbers.
+Figures use the view's data, title and evidence-availability metadata, with
+the same renderers as the dashboard.
 :data:`FIGURE_VIEWS` lists the views that have one.
 """
 
@@ -115,9 +115,10 @@ def register_figure(view_id: str, draw: Callable[[Any, bool], go.Figure], *, rep
     """Draw a view of your own: ``draw(data, dark)`` returns the Plotly figure for the view's data.
 
     Typically for a view added with :func:`agent_trajviz.register_view`;
-    :func:`figure` and the dashboards then draw it. Raises :class:`ValueError`
-    for a built-in view, or one that already has a registered figure (pass
-    ``replace=True`` to replace your own).
+    :func:`figure` and the dashboards then draw it, regardless of its view
+    kind. Built-in views without a renderer can also receive one. Raises
+    :class:`ValueError` for an existing built-in renderer, or a registered
+    custom renderer (pass ``replace=True`` to replace your own).
     """
     if view_id in _BUILT_IN:
         raise ValueError(f"{view_id!r} is a built-in view with its own figure")
@@ -129,9 +130,9 @@ def register_figure(view_id: str, draw: Callable[[Any, bool], go.Figure], *, rep
 
 
 def figure(view: View, *, dark: bool = False) -> go.Figure:
-    """The Plotly figure for a chart *view*; ``dark`` selects the dark theme.
+    """The Plotly figure for a *view* with a registered renderer; ``dark`` selects the dark theme.
 
-    Raises :class:`ValueError` for a view that is not a chart.
+    Raises :class:`ValueError` when the view's id is not in :data:`FIGURE_VIEWS`.
     """
     try:
         draw = _DRAW[view.id]
@@ -159,5 +160,5 @@ def figure(view: View, *, dark: bool = False) -> go.Figure:
 
 
 def figures(views: Mapping[str, View], *, dark: bool = False) -> dict[str, go.Figure]:
-    """Figures for every chart view in *views*, keyed by view id."""
+    """Render views whose ids are in :data:`FIGURE_VIEWS`, keyed by view id."""
     return {vid: figure(v, dark=dark) for vid, v in views.items() if vid in _DRAW}
