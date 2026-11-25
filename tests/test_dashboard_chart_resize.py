@@ -76,7 +76,11 @@ function runScheduled() {
 }
 (async () => {
     // A section reveal arrives through the same mutation scheduler as Gradio.
-    mutated(); runScheduled();
+    mutated();
+    const firstPass = [...timers].find(([, timer]) => timer.delay === 60)[0];
+    for (let update = 0; update < 20; update++) mutated();
+    assert.ok(timers.has(firstPass), 'continuous loading updates must not postpone chart binding forever');
+    runScheduled();
     assert.deepEqual(calls, [left, right, timeline]);
     // Plotly resize is asynchronous: mutations caused by its own redraw must
     // not start duplicate work for the same graph.

@@ -32,12 +32,17 @@ def _opaque_string(value: str) -> bool:
     return value.lstrip().lower().startswith("data:") and ";base64," in value[:200].lower()
 
 
+def _kind(value: dict) -> str:
+    kind = value.get("type")
+    return kind if isinstance(kind, str) else ""
+
+
 def _visible(value: Any, depth: int = 0) -> Any:
     """Drop binary/encrypted fields from fallback argument/definition rendering."""
     if depth > 64:
         return None
     if isinstance(value, dict):
-        if value.get("type") in _OPAQUE_TYPES or value.get("encoding") == "base64":
+        if _kind(value) in _OPAQUE_TYPES or value.get("encoding") == "base64":
             return None
         return {key: item for key, raw in value.items() if key not in _OPAQUE_KEYS
                 and (item := _visible(raw, depth + 1)) is not None}
@@ -56,7 +61,7 @@ def _texts(value: Any, path: str, *, depth: int = 0) -> Iterator[tuple[str, str]
     elif isinstance(value, list):
         for index, item in enumerate(value):
             yield from _texts(item, _pointer(path, index), depth=depth + 1)
-    elif isinstance(value, dict) and value.get("type") not in _OPAQUE_TYPES:
+    elif isinstance(value, dict) and _kind(value) not in _OPAQUE_TYPES:
         for key in ("text", "content", "output"):
             if key in value:
                 yield from _texts(value[key], _pointer(path, key), depth=depth + 1)
@@ -87,10 +92,11 @@ def _literal_blocks(component: dict) -> Iterator[dict]:
             for index, child in enumerate(item):
                 yield from walk(child, _pointer(path, index), depth + 1)
             return
-        if not isinstance(item, dict) or item.get("type") in _OPAQUE_TYPES:
+        if not isinstance(item, dict) or _kind(item) in _OPAQUE_TYPES:
             return
-        kind = item.get("type")
+        kind = _kind(item)
         item_role = item.get("role") or role
+        item_role = item_role if isinstance(item_role, str) else role
         name = str(item.get("name") or item.get("toolName") or item.get("tool_name") or "")
         if kind in {"tool_use", "toolCall", "function_call"}:
             key = "input" if "input" in item else "arguments"

@@ -84,6 +84,43 @@ def _contains_text(value, text):
     return False
 
 
+@pytest.mark.parametrize("malformed_type", [{"invalid": "type"}, ["image"], 1, None])
+def test_malformed_native_block_types_preserve_source_and_render_literal_fallback(tmp_path, malformed_type):
+    body = [{"type": malformed_type, "text": "Recorded body <script>literal</script>"},
+            {"type": "tool_result", "tool_use_id": "call", "content": [
+                {"type": malformed_type, "text": "Recorded output"}]}]
+    records = [
+        {"type": "user", "sessionId": "malformed", "uuid": "u", "message": {"role": "user", "content": "Task"}},
+        {"type": "api-request-shape", "sessionId": "malformed", "shapeHash": "shape", "shape": {
+            "system": [{"type": malformed_type, "text": "Recorded instruction"}],
+            "tools": [{"name": "Read", "input_schema": {"type": malformed_type}}]}},
+        {"type": "api-request-blob", "sessionId": "malformed", "hash": "body",
+         "message": {"role": "user", "content": body}},
+        {"type": "api-request", "sessionId": "malformed", "id": "first", "shapeHash": "shape", "tail": ["body"]},
+        {"type": "api-request", "sessionId": "malformed", "id": "second", "shapeHash": "shape",
+         "base": "first", "keep": 0, "tail": ["body", "body"]},
+        {"type": "assistant", "sessionId": "malformed", "uuid": "a", "message": {
+            "role": "assistant", "content": "Response"}},
+    ]
+    path = tmp_path / "malformed-native-type.jsonl"
+    path.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+    run = tv.load(path)
+    data = run.view("prompt_construction").data
+    selected = data["selected_request"]
+    assert selected["messages"][0]["content"] == body
+    assert selected["system"][0]["type"] == malformed_type
+    assert selected["tools"][0]["input_schema"]["type"] == malformed_type
+    assert selected["text_evolution"]["comparison_available"]
+    assert any(block["text"] == "Recorded body <script>literal</script>"
+               for block in selected["text_evolution"]["blocks"])
+    assert sum(row["estimated_tokens"] for row in selected["composition"]["categories"]) == selected["token_estimate"]["total"]
+    output = prompt_tab.outputs(run, selected["id"])
+    assert output[-1]["id"] == selected["id"]
+    assert "could not be completed" not in output[2]
+    assert "&lt;script&gt;literal&lt;/script&gt;" in output[3]
+    assert "<script>literal</script>" not in output[3]
+
+
 @pytest.fixture
 def repository_run(tmp_path):
     """A portable native OpenCode session covering the real-session workflows."""

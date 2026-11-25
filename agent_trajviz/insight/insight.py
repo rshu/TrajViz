@@ -489,7 +489,7 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                             };
                             gd.__tvJumpHandler = handler;
                             gd.on('plotly_click', handler);
-                            gd.style.cursor = 'pointer';
+                            if (gd.style.cursor !== 'pointer') gd.style.cursor = 'pointer';
                         });
                     };
                     /* __TV_BIND_JUMPS_END__ */
@@ -511,7 +511,7 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                         };
                         gd.__tvPromptHandler = handler;
                         gd.on('plotly_click', handler);
-                        gd.style.cursor = 'pointer';
+                        if (gd.style.cursor !== 'pointer') gd.style.cursor = 'pointer';
                     };
                     /* Click a Token Usage bar -> reveal that step's pre-rendered
                        token decomposition (one hidden div per step). */
@@ -546,7 +546,7 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                         };
                         gd.__tvTokenExplainHandler = handler;
                         gd.on('plotly_click', handler);
-                        gd.style.cursor = 'pointer';
+                        if (gd.style.cursor !== 'pointer') gd.style.cursor = 'pointer';
                     };
                     // Markdown tables (Deep Dive hotspots) link steps as
                     // #tv-step-N anchors: the client-side markdown sanitizer
@@ -571,8 +571,11 @@ def build_ui(*, allow_server_paths: bool = True) -> gr.Blocks:
                     }
                     let timer = null;
                     const schedule = () => {
-                        if (timer) clearTimeout(timer);
+                        // Loading indicators can mutate continuously. Keep the
+                        // first scheduled pass so they cannot starve bindings.
+                        if (timer) return;
                         timer = setTimeout(() => {
+                            timer = null;
                             window.tvExpandFileTimeline();
                             window.tvResizeVisibleCharts();
                             window.tvBindChartWorkflowJumps();

@@ -35,7 +35,9 @@
         "selected_request",
         "limitations",
         "format",
-        "evolution"
+        "evolution",
+        "composition_history",
+        "request_order"
       ],
       "properties": {
         "available": {
@@ -173,6 +175,9 @@
                   },
                   "description": "Compact native or explicitly transcript-derived event annotation. Observed transcript records do not establish inclusion in a model request."
                 }
+              },
+              "evidence_quality": {
+                "$ref": "#/$defs/evidence_quality"
               }
             },
             "additionalProperties": true,
@@ -204,7 +209,8 @@
             "components",
             "token_estimate",
             "changes",
-            "text_evolution"
+            "text_evolution",
+            "composition"
           ],
           "properties": {
             "id": {
@@ -318,7 +324,16 @@
                   "content",
                   "estimated_tokens",
                   "source_refs",
-                  "identity"
+                  "identity",
+                  "category",
+                  "category_basis",
+                  "logical_id",
+                  "identity_basis",
+                  "content_hash",
+                  "occurrence_id",
+                  "provenance",
+                  "location",
+                  "segments"
                 ],
                 "properties": {
                   "id": {
@@ -374,6 +389,80 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "category": {
+                    "enum": [
+                      "system",
+                      "tools",
+                      "rules",
+                      "skills",
+                      "mcp",
+                      "subagents",
+                      "conversation",
+                      "tool_outputs",
+                      "summarized",
+                      "unattributed"
+                    ]
+                  },
+                  "category_basis": {
+                    "type": "string"
+                  },
+                  "logical_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Stable source/native identity scoped to recorded context; null when no safe identity is known."
+                  },
+                  "identity_basis": {
+                    "type": "string"
+                  },
+                  "content_hash": {
+                    "type": "string"
+                  },
+                  "occurrence_id": {
+                    "type": "string",
+                    "description": "The request-scoped occurrence of this component or segment."
+                  },
+                  "provenance": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "description": "Recorded native or normalized source references. Request membership references do not imply a known original file source."
+                  },
+                  "location": {
+                    "type": "object",
+                    "required": [
+                      "field",
+                      "index",
+                      "json_pointer"
+                    ],
+                    "properties": {
+                      "field": {
+                        "enum": [
+                          "system",
+                          "tools",
+                          "messages"
+                        ]
+                      },
+                      "index": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "json_pointer": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": true,
+                    "description": "Position in the reconstructed request groups; this is not a flattened provider prompt order."
+                  },
+                  "segments": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/component_segment"
+                    }
                   }
                 }
               }
@@ -884,6 +973,12 @@
                   "type": "boolean"
                 }
               }
+            },
+            "composition": {
+              "$ref": "#/$defs/composition"
+            },
+            "evidence_quality": {
+              "$ref": "#/$defs/evidence_quality"
             }
           },
           "additionalProperties": true
@@ -919,7 +1014,8 @@
               "prompt_events",
               "context_id",
               "actor_kind",
-              "actor_name"
+              "actor_name",
+              "composition"
             ],
             "properties": {
               "id": {
@@ -1052,10 +1148,80 @@
               },
               "actor_name": {
                 "type": "string"
+              },
+              "composition": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/composition"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Per-boundary visible category estimates, or null when history reconstruction was bounded/unavailable."
+              },
+              "evidence_quality": {
+                "$ref": "#/$defs/evidence_quality"
               }
             },
             "additionalProperties": true
           }
+        },
+        "composition_history": {
+          "type": "object",
+          "required": [
+            "complete",
+            "computed_requests",
+            "total_requests",
+            "limitations"
+          ],
+          "properties": {
+            "complete": {
+              "type": "boolean"
+            },
+            "computed_requests": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "total_requests": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "limitations": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "Coverage of bounded per-request composition history. Uncomputed boundaries remain present with a null composition."
+        },
+        "request_order": {
+          "type": "object",
+          "required": [
+            "basis",
+            "chronological",
+            "limitations"
+          ],
+          "properties": {
+            "basis": {
+              "enum": [
+                "recorded_timestamp",
+                "source_order"
+              ]
+            },
+            "chronological": {
+              "type": "boolean"
+            },
+            "limitations": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "description": "Presentation order is chronological only when all boundary clocks are present and agree with each context's recorded lineage."
         }
       },
       "additionalProperties": true
@@ -1122,6 +1288,276 @@
           }
         }
       }
+    }
+  },
+  "$defs": {
+    "composition": {
+      "type": "object",
+      "required": [
+        "evidence",
+        "basis",
+        "total",
+        "partial",
+        "categories",
+        "component_count"
+      ],
+      "properties": {
+        "evidence": {
+          "const": "estimated"
+        },
+        "basis": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "partial": {
+          "type": "boolean"
+        },
+        "component_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "category",
+              "label",
+              "estimated_tokens",
+              "component_count"
+            ],
+            "properties": {
+              "category": {
+                "enum": [
+                  "system",
+                  "tools",
+                  "rules",
+                  "skills",
+                  "mcp",
+                  "subagents",
+                  "conversation",
+                  "tool_outputs",
+                  "summarized",
+                  "unattributed"
+                ]
+              },
+              "label": {
+                "type": "string"
+              },
+              "estimated_tokens": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "component_count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      },
+      "description": "Estimated recorded visible component composition, kept separate from observed prompt occupancy. Category totals reconcile to total without scaling to provider usage."
+    },
+    "component_segment": {
+      "type": "object",
+      "required": [
+        "category",
+        "category_basis",
+        "logical_id",
+        "identity_basis",
+        "content_hash",
+        "occurrence_id",
+        "provenance",
+        "json_pointer",
+        "estimated_tokens",
+        "role"
+      ],
+      "properties": {
+        "category": {
+          "enum": [
+            "system",
+            "tools",
+            "rules",
+            "skills",
+            "mcp",
+            "subagents",
+            "conversation",
+            "tool_outputs",
+            "summarized",
+            "unattributed"
+          ]
+        },
+        "category_basis": {
+          "type": "string"
+        },
+        "logical_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Stable source/native identity scoped to recorded context; null when no safe identity is known."
+        },
+        "identity_basis": {
+          "type": "string"
+        },
+        "content_hash": {
+          "type": "string"
+        },
+        "occurrence_id": {
+          "type": "string",
+          "description": "The request-scoped occurrence of this component or segment."
+        },
+        "provenance": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "description": "Recorded native or normalized source references. Request membership references do not imply a known original file source."
+        },
+        "json_pointer": {
+          "type": "string",
+          "description": "JSON pointer relative to the original component content; component location identifies its request field."
+        },
+        "estimated_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "role": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "content",
+            "framing"
+          ]
+        },
+        "serialized_span": {
+          "type": "object",
+          "required": [
+            "start",
+            "end",
+            "basis"
+          ],
+          "properties": {
+            "start": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "basis": {
+              "const": "measured_component_json"
+            }
+          },
+          "description": "Optional non-overlapping source range in the measured JSON serialization; framing ranges account for wrapper tokens."
+        }
+      },
+      "additionalProperties": true,
+      "description": "A non-overlapping semantic component part, referencing original content rather than duplicating it."
+    },
+    "evidence_quality": {
+      "type": "object",
+      "required": [
+        "status",
+        "content_complete",
+        "missing_references",
+        "unsupported_settings",
+        "transport_omitted",
+        "estimation",
+        "limitations"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "complete",
+            "partial"
+          ]
+        },
+        "content_complete": {
+          "type": "boolean",
+          "description": "Whether recorded component references were recovered. This does not verify the final provider request."
+        },
+        "missing_references": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "reference",
+              "reason",
+              "source_refs"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "shape",
+                  "message",
+                  "base",
+                  "prefix",
+                  "catalog"
+                ]
+              },
+              "reference": {
+                "type": "string"
+              },
+              "reason": {
+                "enum": [
+                  "not_recorded",
+                  "invalid",
+                  "conflicting",
+                  "inspection_limit"
+                ]
+              },
+              "source_refs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "unsupported_settings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "transport_omitted": {
+          "type": "boolean"
+        },
+        "estimation": {
+          "type": "object",
+          "required": [
+            "token_counts",
+            "provider_request_verified"
+          ],
+          "properties": {
+            "token_counts": {
+              "const": "character_estimate"
+            },
+            "provider_request_verified": {
+              "const": false
+            }
+          },
+          "additionalProperties": true
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
     }
   }
 }

@@ -1,6 +1,7 @@
 """Prompt evidence presentation; imported prompt content remains unchanged."""
 
 ZH_CN = {
+    "Subagent": "子智能体",
     "Prompt Construction": "提示词构建",
     "Prompt Evolution": "提示词演变",
     "Prompt evolution": "提示词演变",
@@ -169,4 +170,80 @@ ZH_CN = {
     "No model-request or assistant-step boundary is recorded.": "未记录模型请求或助手步骤边界。",
     "Tool results without a proven completion before this boundary are omitted.": "无法确认在此边界之前完成的工具结果已省略。",
     "This child has no distinct recorded identity; earlier child context cannot be safely associated.": "此子智能体没有独立的记录标识，无法可靠关联其早期上下文。",
+    "Role": "角色",
+    "Framing in shown components: approximately {tokens} tokens across {count} segments.":
+        "已展示组成部分的序列化结构：{count} 个片段，约 {tokens} 个 Token。",
+    "Component explorer": "组成部分浏览器",
+    "Category sizes estimate serialized visible content. They do not measure billed usage or hidden provider input.":
+        "分类大小根据序列化的可见内容估算，不代表计费量，也不包含提供商内部不可见的输入。",
+    "Click a timeline point or use Previous / Next. Recorded occupancy and estimated category sizes are shown separately; unknown sizes stay blank.":
+        "点击时间线上的点，或使用上一项／下一项。已记录的上下文占用量与分类大小估算分别显示，未知大小留空。",
+    "Estimated visible-content composition": "可见内容组成估算",
+    "Estimated category tokens": "分类 Token 估算",
+    "Allocation basis": "分配依据",
+    "Partial composition": "部分组成",
+    "Partial composition: missing prompt evidence is not included in category totals.":
+        "组成信息不完整：缺失的提示词证据未计入分类总数。",
+    "Composition history includes {computed} of {total} boundaries.": "组成历史包含 {total} 个边界中的 {computed} 个。",
+    "Logical identity": "逻辑标识", "Identity basis": "标识依据", "Content version": "内容版本",
+    "Identity and provenance": "标识与来源", "Token estimate details": "Token 估算详情",
+    "Occurrence": "本次出现标识", "Field location": "字段位置", "Segment JSON pointer": "片段 JSON 指针",
+    "Category basis": "分类依据", "Provenance": "来源信息", "Prompt evidence": "提示词证据",
+    "Segment": "片段",
+    "Serialization framing contributes to the estimate and has no separate source text.":
+        "序列化结构计入估算，但没有独立的原文。",
+    "Explorer preview shortened. Evidence JSON keeps the full recorded data.": "浏览器预览已截短，证据 JSON 保留完整记录。",
+    "System prompt": "系统提示词", "Subagent definitions": "子智能体定义", "Summarized conversation": "汇总的对话",
+    "System / developer": "系统／开发者", "Tool definitions": "工具定义",
+    "Rules": "规则", "Skills": "技能", "MCP": "MCP", "Subagents": "子智能体",
+    "Conversation": "对话", "Tool outputs": "工具输出", "Summarized context": "汇总上下文",
+    "Unattributed": "未归类",
+
+    "User message": "用户消息", "Assistant message": "助手消息", "Tool call": "工具调用",
+    "{count} components": "{count} 个组成部分",
+    "{count} prompt references could not be resolved; totals cover recovered content.":
+        "有 {count} 个提示词引用无法解析；总数仅涵盖已恢复的内容。",
+    "Recorded components recovered.": "已恢复记录中的组成部分。",
+    "Unsupported request settings": "不支持的请求设置",
+    "Some components exceed the segment inspection limit; their remaining content is included in the parent category.":
+        "部分组成部分超出了片段检查上限，其余内容计入父级分类。",
+    "Transcript candidates have unverified context membership.": "候选对话内容是否进入上下文尚未验证。",
+    "Recorded prompt state precedes provider conversion.": "记录的提示词状态位于提供商适配转换之前。",
+    "Category totals estimate the visible content available at this boundary.": "分类总数根据此边界可用的可见内容估算。",
+    "line {line}": "第 {line} 行", "record {record}": "第 {record} 条记录",
+    "Workflow step #{step}": "工作流步骤 #{step}",
+    "Parent component identity": "父级组成部分标识", "Parent identity basis": "父级标识依据",
+    "Parent content version": "父级内容版本", "Parent occurrence": "父级出现标识",
+    "This segment is identified by its recorded position within the parent component.": "此片段以其在父级组成部分中的记录位置标识。",
+    "Subagent {agent}": "子智能体 {agent}",
+    "Recorded component text/JSON partitioned by semantic category; category inference is disclosed per segment.":
+        "按语义分类划分记录中的组成部分文本／JSON；每个片段均披露分类推断依据。",
+    "Boundaries ordered by recorded time": "按记录时间排列边界",
+    "Source order; chronology unavailable": "按来源顺序排列，无法确定时间顺序",
+    "Each bar belongs to one agent context.": "每个柱形属于一个智能体上下文。",
+    "Separate agent contexts": "独立的智能体上下文",
+    "Some boundaries lack timestamps; source order is preserved.": "部分边界缺少时间戳，已保留来源顺序。",
+    "Recorded timestamps conflict with source order; source order is preserved.": "记录的时间戳与来源顺序冲突，已保留来源顺序。",
+
+    "Unrecorded references: {count}.": "未记录的引用：{count} 个。",
+    "Invalid references: {count}.": "无效引用：{count} 个。",
+    "Conflicting references: {count}.": "冲突引用：{count} 个。",
+    "Reference inspection limit reached: {count}.": "达到引用检查上限：{count} 个。",
+
+    "{count} component": "{count} 个组成部分",
+    "{count} prompt reference could not be resolved; totals cover recovered content.":
+        "有 {count} 个提示词引用无法解析；总数仅涵盖已恢复的内容。",
+
+    "At least {count} prompt reference could not be resolved; totals cover recovered content.":
+        "至少有 {count} 个提示词引用无法解析；总数仅涵盖已恢复的内容。",
+    "At least {count} prompt references could not be resolved; totals cover recovered content.":
+        "至少有 {count} 个提示词引用无法解析；总数仅涵盖已恢复的内容。",
+    "Additional references were omitted after the inspection limit.": "达到检查上限后，其他引用的详细信息已省略。",
+    "The retained prefix could not be fully inspected; its unresolved reference count is unknown.":
+        "无法完整检查保留的前缀，其中无法解析的引用数量未知。",
+    "Known unrecorded references: {count}.": "已知未记录的引用：{count} 个。",
+    "Known invalid references: {count}.": "已知无效引用：{count} 个。",
+    "Known conflicting references: {count}.": "已知冲突引用：{count} 个。",
+    "Known references at inspection limit: {count}.": "已知达到检查上限的引用：{count} 个。",
+
 }

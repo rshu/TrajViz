@@ -103,6 +103,17 @@ Candidate differences do not verify actual request lineage or context membership
 Missing evidence and token estimates are marked. Python exposes the same data
 through `run.view("prompt_construction", request_id=...)`.
 
+The component explorer groups recorded content by category and exposes its
+request location, source references, stable identity where supported, and content
+version. Per-request composition history shows estimated category sizes alongside
+recorded prompt occupancy. Estimates describe visible recorded content; unavailable
+or bounded history stays marked rather than being filled with inferred context.
+Boundaries follow recorded time when all timestamps agree with source order;
+otherwise the chart explicitly preserves source order. Evidence details distinguish
+unrecorded, invalid, or conflicting references from unsupported request settings.
+A snapshot can recover all recorded components while still having unsupported
+settings; token totals remain estimates of visible content.
+
 Use **EN | 中** in the header to switch between English and Simplified Chinese. The
 browser remembers the choice and sets the default AI reply language. In
 **AI Trajectory Analysis → Settings → Request options**, choose **English** or

@@ -405,6 +405,7 @@ def _prompt_state(prefix: list[tuple[int, dict]], source_path: str) -> tuple:
         if edit is not None:
             edit_id = edit[1].get("id")
             reference["context_edit_id"] = edit_id if isinstance(edit_id, str) else ""
+            reference["context_edit_source"] = _ref(edit[0], edit[1], source_path)
         message_refs.append(reference)
         sources.append(_ref(index, entry, source_path))
     if not system_seen:
@@ -417,7 +418,8 @@ def _prompt_state(prefix: list[tuple[int, dict]], source_path: str) -> tuple:
             [section_refs.get(name, {}) for name in sections], [tool_refs.get(name, {}) for name in tools])
 
 
-def inspect_pi(raw: dict, steps: list, request_id: str | None = None) -> dict[str, Any]:
+def inspect_pi(raw: dict, steps: list, request_id: str | None = None,
+               *, detail_cache: dict | None = None) -> dict[str, Any]:
     """Inspect a Pi generation's branch-local, recorded pre-response context.
 
     Only the selected generation is materialized; catalog construction and
@@ -503,12 +505,19 @@ def inspect_pi(raw: dict, steps: list, request_id: str | None = None) -> dict[st
     selected = requests[-1] if request_id is None else next((r for r in requests if r["id"] == request_id), None)
     if selected is None:
         raise ValueError(f"Unknown prompt request id: {request_id}")
-    system, tools, messages, sources, limits, detail_missing, message_refs, system_refs, tools_refs = _prompt_state(
-        path[:selected_position[selected["id"]]], source_path)
-    detail = {**selected, "system": system, "tools": tools, "messages": messages,
-              "message_refs": message_refs, "system_refs": system_refs, "tools_refs": tools_refs,
-              "parameters": {"model": selected["model"], **settings[selected["id"]]}, "sources": sources,
-              "limitations": list(dict.fromkeys([*result["limitations"], *limits])),
-              "missing_references": list(dict.fromkeys([*missing, *detail_missing]))}
-    result["selected_request"] = detail
+    by_id = {row["id"]: row for row in requests}
+
+    def load(identifier):
+        row = by_id[identifier]
+        system, tools, messages, sources, limits, detail_missing, message_refs, system_refs, tools_refs = _prompt_state(
+            path[:selected_position[identifier]], source_path)
+        return {**row, "system": system, "tools": tools, "messages": messages,
+                "message_refs": message_refs, "system_refs": system_refs, "tools_refs": tools_refs,
+                "parameters": {"model": row["model"], **settings[identifier]}, "sources": sources,
+                "limitations": list(dict.fromkeys([*result["limitations"], *limits])),
+                "missing_references": list(dict.fromkeys([*missing, *detail_missing]))}
+
+    if detail_cache is not None:
+        detail_cache["load"] = load
+    result["selected_request"] = load(selected["id"])
     return result

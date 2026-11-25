@@ -97,6 +97,14 @@ class _Blob:
     missing: str = ""
 
 
+@dataclass(frozen=True)
+class _Definition:
+    value: Any
+    source: dict[str, Any]
+    problem: str = ""
+    problem_sources: tuple[dict[str, Any], ...] = ()
+
+
 @dataclass
 class _Request:
     catalog: dict[str, Any]
@@ -113,7 +121,32 @@ class _Request:
     message_missing: tuple[str, ...]
     message_issues: tuple[str, ...]
     prefix_issue: str
+    reference_issues: dict[str, dict] = field(default_factory=dict)
+    first_transport_omission: int | None = None
     prefix_cache: dict[int, tuple[str, ...]] = field(default_factory=dict)
+
+
+def _reference_issue(key: str, reason: str, sources: list[dict]) -> dict:
+    kind, _, reference = key.partition(":")
+    kind = {"blob": "message", "messages": "message", "references": "catalog"}.get(kind, kind)
+    return {"kind": kind, "reference": reference, "reason": reason,
+            "source_refs": copy.deepcopy(sources[:3])}
+
+
+def _quality(missing: list[str], unsupported: list[str], issues: dict[str, dict],
+             source: dict, *, transport_omitted: bool) -> dict:
+    references = [copy.deepcopy(issues.get(key) or _reference_issue(
+        key, "inspection_limit" if key in {"prefix:inspection-limit", "references:truncated"} else "not_recorded",
+        [source])) for key in missing]
+    content_complete = not missing
+    return {"status": "complete" if content_complete and not unsupported else "partial",
+            "content_complete": content_complete, "missing_references": references,
+            "unsupported_settings": list(unsupported), "transport_omitted": transport_omitted,
+            "estimation": {"token_counts": "character_estimate", "provider_request_verified": False},
+            "limitations": [_PROVIDER_LIMIT, *([_MISSING_MESSAGES] if any(
+                issue["kind"] in {"message", "base", "prefix", "catalog"} for issue in references) else []),
+                *([_MISSING_SHAPE] if any(issue["kind"] == "shape" for issue in references) else []),
+                *([_UNKNOWN_FIELDS] if unsupported else [])]}
 
 
 def _prefix_missing(state: _Request, count: int) -> list[str]:
@@ -271,8 +304,35 @@ def _prompt_events(state: _Request, baseline: _Request | None, *, keep_valid: bo
     return events, transition
 
 
+def _request_detail(selected: _Request) -> dict[str, Any]:
+    refs = _materialize(selected)
+    sources = [_source(selected.row, "request", _text(selected.native.get("id")))]
+    if selected.shape_source is not None:
+        sources.append(selected.shape_source)
+    sources.extend(blob.source for _, blob in refs if blob.message is not None)
+    system = selected.shape.get("system") if selected.shape else None
+    tools = selected.shape.get("tools") if selected.shape else None
+    return {**selected.catalog,
+            "system": copy.deepcopy(system) if _valid_system(system) else [],
+            "tools": copy.deepcopy(tools) if _valid_tools(tools) else [],
+            "messages": [copy.deepcopy(blob.message) for _, blob in refs if blob.message is not None],
+            "message_indices": [index for index, blob in refs if blob.message is not None],
+            "system_refs": [copy.deepcopy(selected.shape_source or {})
+                            for _ in range(len(system) if isinstance(system, list) else 1 if system else 0)],
+            "tools_refs": [copy.deepcopy(selected.shape_source or {})
+                           for _ in range(len(tools) if isinstance(tools, list) else 0)],
+            "message_refs": [{**copy.deepcopy(blob.source), "message_index": index,
+                              "entry_id": blob.source.get("reference", "")}
+                             for index, blob in refs if blob.message is not None],
+            "parameters": _parameters(selected.native),
+            "sources": list({(source["source_path"], source["raw_index"], source["kind"], source["reference"]): source
+                             for source in sources}.values()),
+            "limitations": list(selected.limitations),
+            "unsupported_fields": list(selected.unsupported_fields)}
+
+
 def inspect_claude(raw: dict[str, Any], steps: list[dict[str, Any]],
-                   request_id: str | None = None) -> dict[str, Any]:
+                   request_id: str | None = None, *, detail_cache: dict | None = None) -> dict[str, Any]:
     """List native requests and reconstruct the selected recorded input.
 
     A positive ``keep`` is replayed only with an explicit reference to an
@@ -302,12 +362,15 @@ def inspect_claude(raw: dict[str, Any], steps: list[dict[str, Any]],
             if not name:
                 continue
             existing = table.get(name)
-            if name in table and (existing is None or not _same_json(existing[0], value)):
-                table[name] = None  # Conflicting identities remain ambiguous.
+            source = _source(row, "shape" if shape_record else "blob", name)
+            if existing is not None and (existing.problem == "conflicting" or not _same_json(existing.value, value)):
+                # Retain both definition locations, without changing past requests.
+                table[name] = _Definition(None, existing.source, "conflicting",
+                                          (existing.source, source))
             elif isinstance(value, dict):
-                table[name] = (value, _source(row, "shape" if shape_record else "blob", name))
+                table[name] = _Definition(value, source)
             else:
-                table[name] = None
+                table[name] = _Definition(value, source, "invalid", (source,))
             continue
         if kind != "api-request":
             continue
@@ -318,6 +381,14 @@ def inspect_claude(raw: dict[str, Any], steps: list[dict[str, Any]],
         identifier = key if id_counts[key] == 1 else f"{key}:duplicate-{id_counts[key]}"
         limitations = [_NATIVE_LIMIT, _PROVIDER_LIMIT]
         missing: list[str] = []
+        reference_issues: dict[str, dict] = {}
+        request_source = _source(row, "request", native_id)
+
+        def mark(key: str, reason: str, sources: list[dict] | None = None, *,
+                 issues: dict = reference_issues, origin: dict = request_source) -> None:
+            if len(issues) < _MAX_MISSING or key in issues:
+                issues[key] = _reference_issue(key, reason, sources or [origin])
+
         message_issues: list[str] = []
         prefix_issue = ""
         unsupported = sorted(str(field) for field in record if field not in _RECORD_FIELDS
@@ -328,54 +399,84 @@ def inspect_claude(raw: dict[str, Any], steps: list[dict[str, Any]],
             limitations.append(_TRANSPORT_LIMIT)
         shape_hash = _text(record.get("shapeHash"))
         shape_entry = store["shapes"].get(shape_hash) if shape_hash else None
-        shape, shape_source = shape_entry if shape_entry is not None else (None, None)
+        shape = shape_entry.value if shape_entry is not None and not shape_entry.problem else None
+        shape_source = shape_entry.source if shape_entry is not None else None
         if shape_source is not None and shape_source.get("transport_omitted"):
             limitations.append(_TRANSPORT_LIMIT)
         if shape is None:
-            missing.append(f"shape:{shape_hash or 'unrecorded'}")
+            key = f"shape:{shape_hash or 'unrecorded'}"
+            missing.append(key)
+            mark(key, shape_entry.problem if shape_entry is not None else "not_recorded",
+                 list(shape_entry.problem_sources) if shape_entry is not None else None)
             limitations.append(_MISSING_SHAPE)
         else:
             unsupported.extend(f"shape.{key}" for key in shape if key not in {"system", "tools"})
             if not _valid_system(shape.get("system")) or not _valid_tools(shape.get("tools")):
                 missing.append(f"shape:{shape_hash}")
+                mark(f"shape:{shape_hash}", "invalid", [shape_source])
                 limitations.append(_MISSING_SHAPE)
         keep = record.get("keep", 0)
         keep_valid = isinstance(keep, int) and not isinstance(keep, bool) and 0 <= keep <= _MAX_MESSAGES
         if not keep_valid:
             missing.append("prefix:invalid")
+            mark("prefix:invalid", "invalid")
             message_issues.append("prefix:invalid")
             limitations.append(_MISSING_MESSAGES)
             keep = 0
         base = None
         native_base = _text(record.get("base"))
         reference_base = store["requests"].get(native_base) if native_base and keep_valid else None
+        base_reason = "conflicting" if native_base in store["requests"] and reference_base is None else "not_recorded"
         if reference_base is not None and keep > reference_base.length:
+            base_reason = "invalid"
             reference_base = None
         if keep:
             candidate = reference_base
             if candidate is None or keep > candidate.length:
                 prefix_issue = f"base:{native_base or 'unrecorded'}"
                 missing.append(prefix_issue)
+                mark(prefix_issue, base_reason)
                 limitations.append(_NO_BASE)
             else:
                 base = candidate
                 limitations.append(_DELTA_LIMIT)
-                missing.extend(_prefix_missing(base, keep))
+                inherited = _prefix_missing(base, keep)
+                missing.extend(inherited)
+                for key in inherited:
+                    if len(reference_issues) >= _MAX_MISSING:
+                        break
+                    issue = base.reference_issues.get(key)
+                    if issue is not None:
+                        reference_issues[key] = copy.deepcopy(issue)
+                    else:
+                        mark(key, "inspection_limit" if key in {"prefix:inspection-limit", "references:truncated"}
+                             else "not_recorded")
         tail = record.get("tail")
         tail_valid = isinstance(tail, list) and len(tail) <= _MAX_MESSAGES
         if not tail_valid:
             tail = []
             missing.append("messages:unrecorded")
+            mark("messages:unrecorded", "invalid" if "tail" in record else "not_recorded")
             message_issues.append("messages:unrecorded")
         refs = []
+        first_transport_omission = (base.first_transport_omission
+                                   if base is not None and base.first_transport_omission is not None
+                                   and base.first_transport_omission < keep else None)
         for position, name in enumerate(tail):
             identity = name if isinstance(name, str) else ""
             entry = store["blobs"].get(identity) if identity else None
-            message, source = entry if entry is not None else (None, _source(row, "blob", identity))
+            message = entry.value if entry is not None and not entry.problem else None
+            source = entry.source if entry is not None else _source(row, "blob", identity)
+            # Missing blobs use the requesting record as a placeholder source;
+            # its omitted headers do not establish a message-blob omission.
+            if entry is not None and source.get("transport_omitted") and first_transport_omission is None:
+                first_transport_omission = keep + position
             if (message is None or _text(message.get("role")) not in {"user", "assistant", "system", "developer", "tool"}
                     or not isinstance(message.get("content"), (str, list))):
                 missing_ref = f"blob:{identity or f'invalid-{position}'}"
                 missing.append(missing_ref)
+                reason = (entry.problem or "invalid") if entry is not None else "not_recorded" if identity else "invalid"
+                mark(missing_ref, reason, list(entry.problem_sources) or [source] if entry is not None else None)
                 refs.append(_Blob(None, source, missing_ref))
             else:
                 refs.append(_Blob(message, source))
@@ -393,6 +494,7 @@ def inspect_claude(raw: dict[str, Any], steps: list[dict[str, Any]],
         if len(missing) > _MAX_MISSING:
             missing = missing[:_MAX_MISSING] + ["references:truncated"]
             limitations.append("Missing reference details exceed the display limit.")
+        reference_issues = {key: reference_issues[key] for key in missing if key in reference_issues}
         catalog = {"id": identifier, "label": native_id or f"#{row.get('raw_index')}",
                    "evidence": "reconstructed", "scope": "recorded_request",
                    "model": _text(_parameters(record).get("model")),
@@ -401,12 +503,15 @@ def inspect_claude(raw: dict[str, Any], steps: list[dict[str, Any]],
                    "missing_references": missing,
                    "source_path": _text(row.get("source_path")), "raw_index": row.get("raw_index"),
                    "message_count": keep + len(refs)}
+        catalog["evidence_quality"] = _quality(missing, unsupported, reference_issues, request_source,
+            transport_omitted=bool(row.get("transport_omitted") or shape_source and shape_source.get("transport_omitted")
+                                   or first_transport_omission is not None))
         if reference_base is not None:
             catalog["previous_request_id"] = reference_base.catalog["id"]
         state = _Request(catalog, row, record, shape, shape_source, base, keep, tuple(refs),
                          keep + len(refs), list(dict.fromkeys(limitations)), unsupported,
                          tuple(item for item in missing if not item.startswith("shape:")),
-                         tuple(message_issues), prefix_issue)
+                         tuple(message_issues), prefix_issue, reference_issues, first_transport_omission)
         catalog["prompt_events"], catalog["transition"] = _prompt_events(
             state, reference_base, keep_valid=keep_valid, tail_valid=tail_valid)
         requests.append(state)
@@ -417,25 +522,10 @@ def inspect_claude(raw: dict[str, Any], steps: list[dict[str, Any]],
         requests[-1] if requests else None)
     if request_id is not None and selected is None:
         raise ValueError("Unknown prompt construction request_id")
-    detail = None
-    if selected is not None:
-        refs = _materialize(selected)
-        sources = [_source(selected.row, "request", _text(selected.native.get("id")))]
-        if selected.shape_source is not None:
-            sources.append(selected.shape_source)
-        sources.extend(blob.source for _, blob in refs if blob.message is not None)
-        system = selected.shape.get("system") if selected.shape else None
-        tools = selected.shape.get("tools") if selected.shape else None
-        detail = {**selected.catalog,
-                  "system": copy.deepcopy(system) if _valid_system(system) else [],
-                  "tools": copy.deepcopy(tools) if _valid_tools(tools) else [],
-                  "messages": [copy.deepcopy(blob.message) for _, blob in refs if blob.message is not None],
-                  "message_indices": [index for index, blob in refs if blob.message is not None],
-                  "parameters": _parameters(selected.native),
-                  "sources": list({(source["source_path"], source["raw_index"], source["kind"], source["reference"]): source
-                                   for source in sources}.values()),
-                  "limitations": selected.limitations,
-                  "unsupported_fields": selected.unsupported_fields}
+    if detail_cache is not None:
+        by_id = {item.catalog["id"]: item for item in requests}
+        detail_cache["load"] = lambda identifier: _request_detail(by_id[identifier])
+    detail = _request_detail(selected) if selected is not None else None
     return {"available": bool(requests), "requests": [item.catalog for item in requests],
             "selected_request": detail,
             "limitations": [_NATIVE_LIMIT, _PROVIDER_LIMIT] if requests else [

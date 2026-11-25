@@ -37,3 +37,27 @@ model saw. See the [verdict fixture guide](attribution_cache/README.md).
 Fixture contents must stay byte-stable: the golden tests pin the expected
 diagnosis as literals, and the identity check in `attribution.diagnose()`
 compares displayed files byte-for-byte against `reference/data/trajectory/...`.
+
+## Prompt session validation
+
+`test_prompt_session_regressions.py` uses the existing public/redacted Claude
+fixtures and generates neutral native records for missing message references,
+Pi context edits, branching, and compaction. A private local Claude session family
+can be checked without copying it into fixtures:
+
+```sh
+TRAJVIZ_CLAUDE_SESSION_FIXTURE=/path/to/session.jsonl \
+  .venv/bin/python -m pytest -q tests/test_prompt_session_regressions.py
+```
+
+The optional test reports structural schema errors and content hashes instead of
+including prompt bodies in assertion diagnostics. Associated subagent files are
+discovered through the normal loader. Leave the environment variable unset for
+the hermetic suite.
+
+`test_prompt_browser_regressions.py` starts a loopback Gradio server, uploads a
+native session ZIP, and checks selection, language changes, session replacement,
+and escaped content against the same server session. Node.js executes the actual
+served chart bindings with deterministic DOM/Plotly doubles, including continuous
+loading mutations. These tests cover browser integration contracts; they do not
+replace a real-browser layout and interaction walkthrough.

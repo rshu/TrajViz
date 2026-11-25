@@ -12,7 +12,7 @@ import gradio as gr
 
 from ...i18n import text, translate
 from ..session import MAX_STEPS
-from . import prompt_text
+from . import prompt_composition, prompt_text
 from .prompt_evolution import event_label, evolution_chart
 from .shared import SharedState, is_latest_run
 
@@ -47,7 +47,7 @@ body:has(#prompt-construction-tab-button[aria-selected="true"]) .overview-kpi-st
 .pc-bridge {display:none!important;}
 .pc-navigation {align-items:flex-end!important;}.pc-navigation>button {margin-bottom:10px;}
 @media(max-width:640px){.pc-stats,.pc-change-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.pc-summary{padding:12px;}}
-""" + prompt_text.CSS
+""" + prompt_text.CSS + prompt_composition.CSS
 
 _EVIDENCE = {"captured": "Captured", "reconstructed": "Reconstructed", "estimated": "Estimated",
              "unavailable": "Unavailable"}
@@ -74,7 +74,7 @@ def layout() -> PromptRefs:
     with gr.Tab("Prompt Evolution", elem_id="prompt-construction-tab"):
         gr.Markdown(DESCRIPTION)
         chart = gr.Plot(show_label=False, visible=False, elem_id="prompt-evolution-chart")
-        gr.Markdown("Click a timeline point or use Previous / Next. Only recorded sizes are plotted; unknown sizes stay blank.")
+        gr.Markdown("Click a timeline point or use Previous / Next. Recorded occupancy and estimated category sizes are shown separately; unknown sizes stay blank.")
         with gr.Row(elem_classes=["pc-navigation"]):
             previous = gr.Button("Previous", scale=0, min_width=90)
             request = gr.Dropdown(label="Model request or response boundary", choices=[], value=None,
@@ -105,8 +105,9 @@ def _json(value: Any) -> str:
 
 def _summary(detail: dict, run: Any) -> str:
     evidence = detail.get("evidence", "unavailable")
-    missing = detail.get("missing_references", [])
-    incomplete = bool(missing or detail.get("unsupported_fields"))
+    quality = detail.get("evidence_quality") or {}
+    missing = quality.get("missing_references", detail.get("missing_references", []))
+    incomplete = quality.get("content_complete") is False or bool(missing)
     badge = "Partial reconstruction" if incomplete and evidence == "reconstructed" else _EVIDENCE.get(evidence, "Unavailable")
     badge_class = "partial" if incomplete else str(evidence)
     scope = _SCOPES.get(detail.get("scope"), "Unavailable")
@@ -117,19 +118,22 @@ def _summary(detail: dict, run: Any) -> str:
         tokens = estimate
     if tokens is None and detail.get("components"):
         tokens = sum(c.get("estimated_tokens", 0) or 0 for c in detail.get("components", []))
-    token_label = f"≈ {tokens:,}" if isinstance(tokens, (float, int)) and not isinstance(tokens, bool) else "—"
+    token_label = "≈ " + prompt_composition.compact_count(tokens) if isinstance(tokens, (float, int)) and not isinstance(tokens, bool) else "—"
     if incomplete and not detail.get("components"):
         token_label = "—"
     message_count = len(detail.get("messages", []))
     tool_count = len(detail.get("tools", []))
-    if not message_count and any(str(ref).startswith(("blob:", "messages:", "base:", "prefix:")) for ref in missing):
+    if not message_count and any((ref.get("kind") in {"message", "base", "prefix", "catalog"} if isinstance(ref, dict)
+                                  else str(ref).startswith(("blob:", "messages:", "base:", "prefix:", "catalog:"))) for ref in missing):
         message_count = "—"
-    if not tool_count and any(str(ref).startswith("shape:") for ref in missing):
+    if not tool_count and any((ref.get("kind") == "shape" if isinstance(ref, dict)
+                              else str(ref).startswith("shape:")) for ref in missing):
         tool_count = "—"
     counts = [("Messages", message_count), ("Tools", tool_count),
               ("Components", len(detail.get("components", []))), ("Estimated visible tokens", token_label)]
-    stats = "".join("<div><small>" + text(label) + "</small><b>" + html.escape(str(value)) + "</b></div>"
-                    for label, value in counts)
+    stats = "".join("<div><small>" + text(label) + "</small><b title='"
+                    + html.escape(str(tokens if label == "Estimated visible tokens" and type(tokens) in (int, float) else value), quote=True)
+                    + "'>" + html.escape(prompt_composition.compact_count(value)) + "</b></div>" for label, value in counts)
     step = detail.get("step_index")
     shown = {s.get("index") for s in run.steps[:MAX_STEPS]}
     link = (f"<a href='#tv-step-{step}'>" + text("Open step #{step} in Workflow", step=step) + "</a>"
@@ -139,37 +143,12 @@ def _summary(detail: dict, run: Any) -> str:
     return ("<div class='pc-summary'><div class='pc-heading'><strong>" + text(scope)
             + "</strong><span class='pc-badge pc-" + html.escape(badge_class, quote=True) + "'>"
             + text(badge) + "</span></div><div class='pc-stats'>"
-            + stats + "</div><div class='pc-meta'>" + meta + link + "</div></div>")
+            + stats + "</div><div class='pc-meta'>" + meta + link + "</div>"
+            + prompt_composition.quality_note(detail) + "</div>")
 
 
-def _components(detail: dict) -> str:
-    parts = detail.get("components", [])
-    if not parts:
-        return "<div class='pc-note'>" + text("No prompt components could be recovered.") + "</div>"
-    visible = list(enumerate(parts))
-    note = ""
-    if len(visible) > 40:
-        visible = visible[:20] + visible[-20:]
-        note = "<div class='pc-note'>" + text(
-            "Showing {shown} of {total} components. Request JSON contains the full recorded data.",
-            shown=len(visible), total=len(parts)) + "</div>"
-    body = []
-    for index, part in visible:
-        kind = str(part.get("kind") or "message")
-        name = {"system": "System instructions", "tool": "Tool definition", "message": "Message",
-                "summary": "Context summary"}.get(kind, "Component")
-        role = part.get("role")
-        role_html = (" · " + text({"user": "User", "assistant": "Assistant", "system": "System",
-                                   "developer": "Developer", "toolResult": "Tool result"}.get(role, str(role)))) if role else ""
-        tokens = part.get("estimated_tokens")
-        token_text = "≈ " + f"{tokens:,}" if isinstance(tokens, (int, float)) else "—"
-        source = part.get("sources", part.get("source_refs", []))
-        body.append("<details><summary><b>" + text(name) + " " + str(index + 1) + "</b>" + role_html
-                    + "<small>" + html.escape(token_text) + " tok</small></summary>"
-                    + prompt_text.render_component_text(part, detail)
-                    + ("<div class='pc-source'>" + text("Source") + ": <code>"
-                       + html.escape(_json(source)) + "</code></div>" if source else "") + "</details>")
-    return note + prompt_text.legend() + "<div class='pc-parts'>" + "".join(body) + "</div>"
+def _components(detail: dict, history: dict | None = None) -> str:
+    return prompt_text.legend() + prompt_composition.render_component_explorer(detail, history)
 
 
 def _recorded_events(detail: dict) -> str:
@@ -271,14 +250,22 @@ def outputs(run: Any, request_id: str | None = None, language: str = "en") -> tu
             return (empty[0], empty[1], "<div class='pc-note'>" + text("Prompt evidence is unavailable for this trajectory.")
                     + "</div>", "", "", None)
         choices = []
+        actors = {row["id"]: row for row in data.get("evolution", [])}
         for index, row in enumerate(rows):
             scope = translate(_SCOPES.get(row.get("scope"), "Unavailable"), language)
-            agent = row.get("agent_id") or row.get("session_id") or "main"
+            actor = actors.get(row["id"], row)
+            name = actor.get("actor_name") or actor.get("agent_id")
+            if actor.get("actor_kind") == "unknown_child":
+                agent = translate("Unidentified subagent", language)
+            elif actor.get("actor_kind") == "main" or not name or name == "main":
+                agent = translate("Main agent", language)
+            else:
+                agent = translate("Subagent {agent}", language, agent=str(name)[:48])
             choices.append((f"#{index + 1} · {agent} · {scope}", row["id"]))
         figure = evolution_chart(data, detail["id"], language)
         return (gr.update(choices=choices, value=detail["id"], interactive=True),
                 gr.update(value=figure, visible=figure is not None), _summary(detail, run),
-                _components(detail), _changes(detail), detail)
+                _components(detail, data.get("composition_history")), _changes(detail), detail)
     except Exception:  # noqa: BLE001 -- never leave stale evidence from another loaded run
         logger.exception("Prompt construction inspection failed")
         return (empty[0], empty[1], "<div class='pc-note' role='status'>" + text(

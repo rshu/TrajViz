@@ -112,3 +112,39 @@ def test_large_prompt_preview_is_bounded_without_truncating_export_data():
     assert len(values[3]) < 350000
     assert len(values[-1]["components"]) == 100
     assert len(values[-1]["components"][50]["content"]) == 20000
+
+
+def test_unsupported_settings_keep_recovered_content_distinct_from_missing_inputs():
+    data = _data()
+    data["selected_request"].update(unsupported_fields=["cacheControl"], evidence_quality={
+        "status": "partial", "content_complete": True, "missing_references": [],
+        "unsupported_settings": ["cacheControl"],
+    })
+    summary = prompt_tab.outputs(Run(data))[2]
+    assert "Partial reconstruction" not in summary and "Recorded components recovered" in summary
+    assert "Unsupported request settings" in summary and "cacheControl" in summary
+
+
+def test_boundary_selector_uses_agent_labels_instead_of_main_session_uuid():
+    data = _data()
+    data["requests"][0].update(agent_id="", session_id="01234567-raw-session-uuid")
+    label = prompt_tab.outputs(Run(data))[0]["choices"][0][0]
+    assert "Main agent" in label and "raw-session-uuid" not in label
+
+
+def test_structured_missing_refs_keep_empty_message_and_tool_counts_unknown():
+    data = _data()
+    data["selected_request"].update(components=[], messages=[], tools=[], token_estimate={"total": 0},
+        evidence_quality={"content_complete": False, "missing_references": [
+            {"kind": "message", "reference": "body", "reason": "not_recorded"},
+            {"kind": "shape", "reference": "shape", "reason": "not_recorded"}]})
+    summary = prompt_tab.outputs(Run(data))[2]
+    assert "Partial reconstruction" in summary and summary.count("—") >= 3
+    assert "≈ 0" not in summary
+
+
+def test_compact_token_summary_preserves_exact_number_in_tooltip():
+    data = _data()
+    data["selected_request"]["token_estimate"]["total"] = 251204
+    summary = prompt_tab.outputs(Run(data))[2]
+    assert "≈ 251.2k" in summary and "title='251204'" in summary

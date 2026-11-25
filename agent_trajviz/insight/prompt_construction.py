@@ -36,6 +36,8 @@ _TRANSCRIPT_EVENT_LABELS = {
     "transcript_compaction": "Compaction checkpoint recorded in transcript",
 }
 _EVENT_SOURCE_LIMIT = 8
+_MAX_HISTORY_REQUESTS = 200
+_MAX_HISTORY_COMPONENTS = 20_000
 
 
 def _number(value: Any) -> int | float | None:
@@ -98,15 +100,23 @@ def _tool_observed(call: dict, field: str) -> bool:
     return tool_field_observed({"metadata": metadata}, field)
 
 
-def _step_messages(step: dict, before_ms: int | float | None = None, omissions: list[str] | None = None) -> list[dict]:
+def _step_messages(step: dict, before_ms: int | float | None = None, omissions: list[str] | None = None,
+                   *, position: int = 0, provenance: list[dict] | None = None) -> list[dict]:
     role = str(step.get("role") or "")
     if role not in {"user", "assistant", "system", "developer", "tool"}:
         return []
     completed = _number(step.get("time_completed_ms"))
     content = ([] if role == "assistant" and completed is not None and before_ms is not None and completed > before_ms
                else _step_text(step))
+    base_source = {"record": "normalized_step", **_source(step, position)}
+    content_refs = [{**base_source, "field": "parts", "index": index} for index, part in enumerate(step.get("parts", []))
+                    if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)
+                    and part["text"]] if content else []
+    if content and not step.get("parts"):
+        content_refs = [{**base_source, "field": "text_preview"}]
     results = []
-    for call in step.get("tool_calls", []):
+    result_refs = []
+    for call_index, call in enumerate(step.get("tool_calls", [])):
         if not isinstance(call, dict):
             continue
         started = _number(call.get("time_start"))
@@ -115,16 +125,25 @@ def _step_messages(step: dict, before_ms: int | float | None = None, omissions: 
         if _tool_observed(call, "tool_inputs"):
             content.append({"type": "tool_use", "id": str(call.get("tool_id") or ""),
                             "name": str(call.get("tool_name") or ""), "input": call.get("input", {})})
+            content_refs.append({**base_source, "field": "tool_calls", "index": call_index, "value_field": "input",
+                                 "tool_name": str(call.get("tool_name") or ""), "tool_id": str(call.get("tool_id") or "")})
         end = _number(call.get("time_end"))
         if _tool_observed(call, "tool_outputs") and call.get("output") not in (None, ""):
             if end is not None and before_ms is not None and end <= before_ms:
                 results.append({"type": "tool_result", "tool_use_id": str(call.get("tool_id") or ""),
                                 "content": call["output"]})
+                result_refs.append({**base_source, "field": "tool_calls", "index": call_index, "value_field": "output",
+                                    "tool_name": str(call.get("tool_name") or ""), "tool_id": str(call.get("tool_id") or "")})
             elif omissions is not None and _OMITTED_RESULT not in omissions:
                 omissions.append(_OMITTED_RESULT)
     messages = [{"role": role, "content": content}] if content else []
     if results:
         messages.append({"role": "user", "content": results})
+    if provenance is not None:
+        if content:
+            provenance.append({**base_source, "field": "message", "content_refs": content_refs})
+        if results:
+            provenance.append({**base_source, "field": "tool_results", "content_refs": result_refs})
     return messages
 
 
@@ -275,6 +294,7 @@ def _transcript_detail(steps: list[dict], row: dict) -> dict:
     target = steps[position]
     identity = _identity(target, position)
     system, messages, system_sources, message_sources = [], [], [], []
+    system_refs, message_refs = [], []
     compacted = False
     omissions: list[str] = []
     before_ms = _number(target.get("time_created_ms"))
@@ -288,17 +308,22 @@ def _transcript_detail(steps: list[dict], row: dict) -> dict:
             compacted = True
             messages = []
             message_sources = []
+            message_refs = []
             summary = _summary(step)
             if summary:
                 messages.append({"role": "user", "content": [{"type": "text", "text": summary}],
                                  "_prompt_source": "compaction_summary"})
                 message_sources.append(_source(step, prior_position))
+                message_refs.append({"record": "normalized_step", **_source(step, prior_position), "field": "parts",
+                                     "origin": "compaction_summary"})
             continue
-        additions = _step_messages(step, before_ms, omissions)
+        refs: list[dict] = []
+        additions = _step_messages(step, before_ms, omissions, position=prior_position, provenance=refs)
         if additions:
             instructions = step.get("role") in {"system", "developer"}
             (system if instructions else messages).extend(additions)
             (system_sources if instructions else message_sources).append(_source(step, prior_position))
+            (system_refs if instructions else message_refs).extend(refs)
     limitations = [*_ESTIMATE_LIMITATIONS, *omissions]
     if identity[4].startswith("unidentified-child"):
         limitations.append("This child has no distinct recorded identity; earlier child context cannot be safely associated.")
@@ -308,16 +333,21 @@ def _transcript_detail(steps: list[dict], row: dict) -> dict:
         limitations.append("No earlier readable input was recorded for this boundary; an empty list does not mean an empty prompt.")
     return {**{key: value for key, value in row.items() if key != "_position"}, "system": system, "tools": [],
             "messages": messages, "parameters": {}, "sources": system_sources + message_sources,
+            "system_refs": system_refs, "tools_refs": [], "message_refs": message_refs,
             "limitations": limitations}
 
 
-def _inspect_transcript(raw: dict, steps: list[dict], request_id: str | None = None) -> dict:
+def _inspect_transcript(raw: dict, steps: list[dict], request_id: str | None = None,
+                        *, detail_cache: dict | None = None) -> dict:
     del raw
     rows = _transcript_catalog(steps)
     wanted = request_id if request_id is not None else rows[-1]["id"] if rows else None
     row = next((row for row in rows if row["id"] == wanted), None)
     if request_id is not None and row is None:
         raise ValueError(f"Unknown prompt request id: {request_id}")
+    if detail_cache is not None:
+        by_id = {item["id"]: item for item in rows}
+        detail_cache["load"] = lambda identifier: _transcript_detail(steps, by_id[identifier])
     detail = _transcript_detail(steps, row) if row is not None else None
     catalog = [{key: value for key, value in row.items() if key != "_position"} for row in rows]
     return {"available": bool(rows), "requests": catalog, "selected_request": detail,
@@ -331,7 +361,8 @@ def _json_text(value: Any) -> str:
 def _measurable(value: Any) -> tuple[Any, bool]:
     """Keep non-text content intact in the view, but do not count base64 as tokens."""
     if isinstance(value, dict):
-        if value.get("type") in {"image", "image_url", "input_image", "audio", "input_audio", "video", "document"}:
+        kind = value.get("type")
+        if isinstance(kind, str) and kind in {"image", "image_url", "input_image", "audio", "input_audio", "video", "document"}:
             return None, True
         result, partial = {}, False
         for key, item in value.items():
@@ -354,7 +385,12 @@ def _measurable(value: Any) -> tuple[Any, bool]:
 
 
 def _components(detail: dict) -> tuple[list[dict], dict]:
+    from .prompt_components import enrich_component, record_tool_associations
+
     components, seen, totals = [], Counter(), {"system": 0, "tools": 0, "messages": 0}
+    associations: dict = {}
+    tool_counts = Counter(tool.get("name") for tool in detail.get("tools", [])
+                          if isinstance(tool, dict) and isinstance(tool.get("name"), str))
     partial = bool(detail.get("missing_references") or detail.get("unsupported_fields")
                    or detail.get("scope") != "recorded_request")
     for field, kind in (("system", "system"), ("tools", "tool"), ("messages", "message")):
@@ -386,9 +422,15 @@ def _components(detail: dict) -> tuple[list[dict], dict]:
                     ref = refs[position] if isinstance(refs, list) and position < len(refs) else None
                     if isinstance(ref, dict) and isinstance(ref.get("entry_id"), str) and ref["entry_id"]:
                         identity = f"pi:message:{ref.get('origin', '')}:{ref['entry_id']}"
-            components.append({"id": component_id, "identity": identity, "kind": kind, "label": label, "role": role,
-                               "content": value, "estimated_tokens": estimate,
-                               "source_refs": [{"request_id": detail["id"], "field": field, "index": position}]})
+            component = {"id": component_id, "identity": identity, "kind": kind, "label": label, "role": role,
+                         "content": value, "estimated_tokens": estimate,
+                         "source_refs": [{"request_id": detail["id"], "field": field, "index": position}]}
+            components.append(enrich_component(component, detail, field=field, index=position,
+                                               measurable=measurable, measured_text=text, measure=_measurable,
+                                               associations=associations, tool_counts=tool_counts))
+            if field == "messages":
+                record_tool_associations(value, associations)
+            partial |= bool(component.get("segmentation_partial"))
             totals[field] += estimate
     return components, {"evidence": "estimated", "total": sum(totals.values()), **totals,
                         "partial": partial, "basis": _TOKEN_BASIS}
@@ -428,8 +470,10 @@ def _changes(selected: dict, previous: dict | None, *, estimated_candidates: boo
     if selected.get("missing_references") or previous.get("missing_references"):
         return {"available": False, "previous_request_id": previous["id"], **candidate_basis,
                 "reason": "Unresolved references prevent a reliable prompt delta."}
-    before, before_estimate = _components(previous)
-    after, after_estimate = _components(selected)
+    before, before_estimate = ((previous["components"], previous["token_estimate"])
+                               if "components" in previous else _components(previous))
+    after, after_estimate = ((selected["components"], selected["token_estimate"])
+                             if "components" in selected else _components(selected))
     before_ids, after_ids = [part["id"] for part in before], [part["id"] for part in after]
     before_set, after_set = set(before_ids), set(after_ids)
     retained = before_set & after_set
@@ -504,6 +548,35 @@ def _observed_prompt(step: dict | None) -> tuple[int | None, str | None]:
     return readings.pop(), "validated_recorded_input_and_cache_counts"
 
 
+def _order_requests(rows: list[dict]) -> tuple[list[dict], dict]:
+    """Merge native streams by time only when their recorded order agrees.
+
+    Native adapters resolve references in source order before this presentation
+    step. Sorting never changes which definitions were visible at a boundary.
+    Missing clocks or clock inversions keep the original order explicit.
+    """
+    ordering = {"basis": "source_order", "chronological": False, "limitations": []}
+    if not rows:
+        return rows, ordering
+    clocks = {row["id"]: _number(row.get("timestamp_ms")) for row in rows}
+    if any(clock is None for clock in clocks.values()):
+        ordering["limitations"] = ["Some boundaries lack timestamps; source order is preserved."]
+        return rows, ordering
+    contexts = {}
+    for row in rows:
+        context = row.get("context_id") or (row.get("session_id"), row.get("agent_id"),
+                                            row.get("branch_id"), row.get("source_path"))
+        clock = clocks[row["id"]]
+        previous = contexts.get(context)
+        baseline = clocks.get(row.get("previous_request_id") or row.get("previous_candidate_id"))
+        if previous is not None and clock < previous or baseline is not None and clock < baseline:
+            ordering["limitations"] = ["Recorded timestamps conflict with source order; source order is preserved."]
+            return rows, ordering
+        contexts[context] = clock
+    return sorted(rows, key=lambda row: clocks[row["id"]]), {
+        "basis": "recorded_timestamp", "chronological": True, "limitations": []}
+
+
 def _evolution(rows: list[dict], steps: list[dict]) -> list[dict]:
     mapped: dict[int, dict | None] = {}
     for position, step in enumerate(steps):
@@ -533,8 +606,53 @@ def _evolution(rows: list[dict], steps: list[dict]) -> list[dict]:
                           "actor_name": str(row.get("actor_name") or row.get("agent_id") or ""),
                           "observed_prompt_tokens": occupancy, "observed_prompt_basis": basis,
                           "prompt_events": row.get("prompt_events", []),
-                          **({"transition": row["transition"]} if "transition" in row else {})})
+                          **({"transition": row["transition"]} if "transition" in row else {}),
+                          **({"evidence_quality": row["evidence_quality"]} if "evidence_quality" in row else {})})
     return evolution
+
+
+def _composition_history(data: dict, load: Callable[[str], dict] | None,
+                         materialized: list[dict]) -> None:
+    """Summarize bounded snapshots without exporting their growing contents.
+
+    Selected and comparable previous requests are already materialized. Reuse
+    those first, then visit earlier boundaries in order. Native adapters keep a
+    request-local loader so history does not repeatedly rebuild the catalog.
+    Unknown or omitted summaries remain null, never zero-filled measurements.
+    """
+    from .prompt_components import composition_summary
+
+    summaries = {}
+    component_count = 0
+    for detail in materialized:
+        if detail["id"] not in summaries:
+            summaries[detail["id"]] = composition_summary(detail["components"], detail["token_estimate"])
+            component_count += len(detail["components"])
+    rows = data.get("evolution", [])
+    for row in rows:
+        identifier = row["id"]
+        if identifier in summaries:
+            continue
+        if load is None or len(summaries) >= _MAX_HISTORY_REQUESTS or component_count >= _MAX_HISTORY_COMPONENTS:
+            break
+        detail = load(identifier)
+        # Check size before expensive component hashing and semantic splitting.
+        size = sum(len(value) if isinstance(value, list) else int(bool(value))
+                   for value in (detail.get("system"), detail.get("tools"), detail.get("messages")))
+        if component_count + size > _MAX_HISTORY_COMPONENTS:
+            break
+        components, estimate = _components(detail)
+        summaries[identifier] = composition_summary(components, estimate)
+        component_count += len(components)
+    for row in rows:
+        row["composition"] = summaries.get(row["id"])
+    complete = len(summaries) == len(rows)
+    data["composition_history"] = {
+        "complete": complete, "computed_requests": len(summaries), "total_requests": len(rows),
+        "limitations": ([] if complete else [
+            "Composition history is bounded to 200 requests and 20,000 components; selected and previous "
+            "snapshots are retained. Uncomputed boundaries have unknown composition."]),
+    }
 
 
 def inspect_prompt_construction(raw: dict, steps: list[dict], request_id: str | None = None,
@@ -556,14 +674,22 @@ def inspect_prompt_construction(raw: dict, steps: list[dict], request_id: str | 
         from .prompt_pi import inspect_pi
 
         inspect = inspect_pi
-    data = inspect(raw, steps, request_id)
+    detail_cache: dict = {}
+    data = inspect(raw, steps, request_id, detail_cache=detail_cache)
     data = dict(data)
+    data["requests"], data["request_order"] = _order_requests(data.get("requests", []))
     selected = data.get("selected_request")
+    if request_id is None and data["requests"] and isinstance(selected, dict):
+        latest_id = data["requests"][-1]["id"]
+        if latest_id != selected["id"]:
+            selected = detail_cache["load"](latest_id)
+            data["selected_request"] = selected
     if request_id is not None and (not isinstance(selected, dict) or selected.get("id") != request_id):
         raise ValueError(f"Unknown prompt request id: {request_id}")
     metadata = raw.get("metadata")
     data["format"] = format_name or (str(metadata.get("source") or "") if isinstance(metadata, dict) else "")
     data["evolution"] = _evolution(data.get("requests", []), steps)
+    materialized = []
     if isinstance(selected, dict):
         selected = dict(selected)
         selected["components"], selected["token_estimate"] = _components(selected)
@@ -574,10 +700,18 @@ def inspect_prompt_construction(raw: dict, steps: list[dict], request_id: str | 
                                  and row.get("scope") == "trajectory_estimate"), None)
         else:
             previous_row = _previous_row(data.get("requests", []), selected)
-        previous = inspect(raw, steps, previous_row["id"]).get("selected_request") if previous_row else None
+        load = detail_cache.get("load")
+        previous = load(previous_row["id"]) if previous_row and load is not None else None
+        if previous is not None:
+            previous["components"], previous["token_estimate"] = _components(previous)
+            materialized.append(previous)
         selected["changes"] = _changes(selected, previous, estimated_candidates=candidates)
         from .prompt_text import build_text_evolution
+        from .prompt_components import composition_summary
 
-        selected["text_evolution"] = build_text_evolution(selected, _components(previous)[0] if previous else [])
+        selected["text_evolution"] = build_text_evolution(selected, previous["components"] if previous else [])
+        selected["composition"] = composition_summary(selected["components"], selected["token_estimate"])
         data["selected_request"] = selected
+        materialized.insert(0, selected)
+    _composition_history(data, detail_cache.get("load"), materialized)
     return data

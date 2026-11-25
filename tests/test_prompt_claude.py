@@ -313,3 +313,99 @@ def test_uncached_adversarial_prefix_walk_is_bounded_and_explicit(monkeypatch):
     detail = inspect(*records)["selected_request"]
     assert "prefix:inspection-limit" in detail["missing_references"]
     assert any("safety limit" in line for line in detail["limitations"])
+
+
+def test_evidence_quality_separates_absent_blobs_from_unsupported_settings_and_estimation():
+    value = inspect(shape(), blob("known", "Known input"),
+                    request("initial", ["known"], cacheControl={"type": "ephemeral"}),
+                    request("second", ["absent-one", "absent-two"], base="initial", keep=1),
+                    request("third", ["absent-three"], base="second", keep=3))
+    initial, second, third = value["requests"]
+    quality = initial["evidence_quality"]
+    assert quality["status"] == "partial" and quality["content_complete"]
+    assert quality["missing_references"] == []
+    assert quality["unsupported_settings"] == ["cacheControl"]
+    assert quality["estimation"] == {"token_counts": "character_estimate", "provider_request_verified": False}
+    second_issues = second["evidence_quality"]["missing_references"]
+    assert {(issue["kind"], issue["reference"], issue["reason"]) for issue in second_issues} == {
+        ("message", "absent-one", "not_recorded"), ("message", "absent-two", "not_recorded")}
+    third_issues = third["evidence_quality"]["missing_references"]
+    assert len(third_issues) == 3 and not third["evidence_quality"]["content_complete"]
+    assert third_issues[:2] == second_issues  # Sources remain where the absent references originated.
+    assert third_issues[0]["source_refs"][0]["reference"] == "second"
+    assert third_issues[2]["source_refs"][0]["reference"] == "third"
+    assert value["selected_request"]["evidence_quality"] == third["evidence_quality"]
+    assert value["selected_request"]["messages"][0]["content"][0]["text"] == "Known input"
+
+
+def test_evidence_quality_distinguishes_invalid_conflicting_and_future_definitions():
+    value = inspect(request("early", ["future"]), shape(), blob("future", "Future input"),
+                    blob("invalid", "Unused", message={"role": "user"}),
+                    blob("conflict", "First input"), blob("conflict", "Second input"),
+                    request("late", ["future", "invalid", "conflict"]))
+    early_quality = value["requests"][0]["evidence_quality"]
+    assert {(issue["kind"], issue["reason"]) for issue in early_quality["missing_references"]} == {
+        ("shape", "not_recorded"), ("message", "not_recorded")}
+    quality = value["selected_request"]["evidence_quality"]
+    assert {(issue["reference"], issue["reason"]) for issue in quality["missing_references"]} == {
+        ("invalid", "invalid"), ("conflict", "conflicting")}
+    collision = next(issue for issue in quality["missing_references"] if issue["reason"] == "conflicting")
+    assert len(collision["source_refs"]) == 2
+    assert len({source["raw_index"] for source in collision["source_refs"]}) == 2
+    assert "First input" not in json.dumps(quality) and "Second input" not in json.dumps(quality)
+    assert [message["content"][0]["text"] for message in value["selected_request"]["messages"]] == ["Future input"]
+
+
+@pytest.mark.parametrize("record,kind,reason", [
+    (request("r", [], base="absent", keep=1), "base", "not_recorded"),
+    (request("r", [], keep=-1), "prefix", "invalid"),
+    (request("r", "invalid"), "message", "invalid"),
+])
+def test_evidence_quality_distinguishes_missing_lineage_and_invalid_record_shapes(record, kind, reason):
+    quality = inspect(shape(), record)["selected_request"]["evidence_quality"]
+    assert not quality["content_complete"]
+    assert any(issue["kind"] == kind and issue["reason"] == reason for issue in quality["missing_references"])
+
+
+def test_evidence_quality_marks_duplicate_base_conflicts_and_oversized_prefixes():
+    value = inspect(shape(), blob("known", "Known input"), request("same", ["known"]),
+                    request("same", []), request("r", [], base="same", keep=1))
+    assert value["selected_request"]["evidence_quality"]["missing_references"][0]["reason"] == "conflicting"
+    oversized = inspect(shape(), request("first", []), request("second", [], base="first", keep=1))
+    issue = oversized["selected_request"]["evidence_quality"]["missing_references"][0]
+    assert issue["kind"] == "base" and issue["reason"] == "invalid"
+
+
+def test_evidence_quality_discards_unretained_gaps_and_bounds_details(monkeypatch):
+    from agent_trajviz.insight import prompt_claude
+
+    value = inspect(shape(), blob("known", "Known input"), request("first", ["known", "absent"]),
+                    request("second", [], base="first", keep=1))
+    assert value["selected_request"]["evidence_quality"]["content_complete"]
+    assert value["selected_request"]["evidence_quality"]["missing_references"] == []
+    monkeypatch.setattr(prompt_claude, "_MAX_MISSING", 3)
+    many = inspect(shape(), request("r", [f"absent-{index}" for index in range(20)]))
+    issues = many["selected_request"]["evidence_quality"]["missing_references"]
+    assert len(issues) == 4
+    assert issues[-1]["kind"] == "catalog" and issues[-1]["reason"] == "inspection_limit"
+    assert all(len(issue["source_refs"]) <= 3 for issue in issues)
+
+
+def test_evidence_quality_reports_transport_omission_without_missing_prompt_content():
+    quality = inspect(shape(headers={"authorization": "placeholder"}), blob("known", "Known input"),
+                      request("r", ["known"]))["selected_request"]["evidence_quality"]
+    assert quality["status"] == "complete" and quality["content_complete"]
+    assert quality["transport_omitted"] and not quality["missing_references"]
+    assert "placeholder" not in json.dumps(quality)
+
+
+def test_evidence_quality_transport_flag_follows_only_retained_blob_prefixes():
+    value = inspect(shape(), blob("clean", "Clean input"),
+                    blob("omitted", "Recorded input", headers={"authorization": "placeholder"}),
+                    request("first", ["clean", "omitted"]),
+                    request("retained", [], base="first", keep=2),
+                    request("discarded", [], base="retained", keep=1),
+                    request("reset", ["clean"], base="retained", keep=0))
+    assert [row["evidence_quality"]["transport_omitted"] for row in value["requests"]] == [True, True, False, False]
+    assert all(row["evidence_quality"]["content_complete"] for row in value["requests"])
+    assert "placeholder" not in json.dumps(value)
