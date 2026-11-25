@@ -12,8 +12,9 @@ import gradio as gr
 
 from ...i18n import text, translate
 from ..session import MAX_STEPS
+from . import prompt_text
 from .prompt_evolution import event_label, evolution_chart
-from .shared import SharedState
+from .shared import SharedState, is_latest_run
 
 logger = logging.getLogger(__name__)
 
@@ -43,15 +44,10 @@ body:has(#prompt-construction-tab-button[aria-selected="true"]) .overview-kpi-st
 .pc-parts .pc-source {font-size:11px;color:#475569;overflow-wrap:anywhere;margin-top:8px;}
 .pc-change-grid {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;}
 .pc-change-grid section {border:1px solid #dce3ef;border-radius:8px;padding:14px;overflow-wrap:anywhere;}
-.pc-change-grid section:has(details[open]) {grid-column:1 / -1;}
-.pc-change-grid pre {max-height:250px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#f8fafc;color:#0f172a;padding:12px;}
-.pc-rewrite {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;}
-.pc-rewrite pre {max-height:250px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#f8fafc;padding:12px;color:#0f172a;}
 .pc-bridge {display:none!important;}
 .pc-navigation {align-items:flex-end!important;}.pc-navigation>button {margin-bottom:10px;}
 @media(max-width:640px){.pc-stats,.pc-change-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.pc-summary{padding:12px;}}
-@media(max-width:520px){.pc-rewrite{grid-template-columns:1fr;}}
-"""
+""" + prompt_text.CSS
 
 _EVIDENCE = {"captured": "Captured", "reconstructed": "Reconstructed", "estimated": "Estimated",
              "unavailable": "Unavailable"}
@@ -159,9 +155,6 @@ def _components(detail: dict) -> str:
             shown=len(visible), total=len(parts)) + "</div>"
     body = []
     for index, part in visible:
-        content = _json(part.get("content", ""))
-        shortened = len(content) > 6000
-        content = content[:6000] if shortened else content
         kind = str(part.get("kind") or "message")
         name = {"system": "System instructions", "tool": "Tool definition", "message": "Message",
                 "summary": "Context summary"}.get(kind, "Component")
@@ -172,12 +165,11 @@ def _components(detail: dict) -> str:
         token_text = "≈ " + f"{tokens:,}" if isinstance(tokens, (int, float)) else "—"
         source = part.get("sources", part.get("source_refs", []))
         body.append("<details><summary><b>" + text(name) + " " + str(index + 1) + "</b>" + role_html
-                    + "<small>" + html.escape(token_text) + " tok</small></summary><pre>"
-                    + html.escape(content) + "</pre>" + ("<p>" + text(
-                        "Preview shortened. Request JSON contains the full recorded data.") + "</p>" if shortened else "")
+                    + "<small>" + html.escape(token_text) + " tok</small></summary>"
+                    + prompt_text.render_component_text(part, detail)
                     + ("<div class='pc-source'>" + text("Source") + ": <code>"
                        + html.escape(_json(source)) + "</code></div>" if source else "") + "</details>")
-    return note + "<div class='pc-parts'>" + "".join(body) + "</div>"
+    return note + prompt_text.legend() + "<div class='pc-parts'>" + "".join(body) + "</div>"
 
 
 def _recorded_events(detail: dict) -> str:
@@ -246,10 +238,7 @@ def _changes(detail: dict) -> str:
         for component in summaries[:25]:
             kind = component.get("kind")
             component_label = "Tool definition" if kind == "tool" else "System instructions" if kind == "system" else "Message"
-            preview = component.get("preview")
-            listed.append("<li>" + text(component_label) + " " + _component_label_html(component)
-                          + ("<details><summary>" + text("Content preview") + "</summary><pre>"
-                             + html.escape(str(preview)) + "</pre></details>" if preview else "") + "</li>")
+            listed.append("<li>" + text(component_label) + " " + _component_label_html(component) + "</li>")
         pieces.append("<section><strong>" + text(label) + "</strong><p>" + str(count) + "</p>"
                       + ("<ul>" + "".join(listed) + "</ul>" if listed else "") + "</section>")
     pieces.append("</div><p>" + text(
@@ -257,16 +246,7 @@ def _changes(detail: dict) -> str:
     rewritten = changes.get("rewritten_components", [])
     if rewritten:
         pieces.append("<p>" + text("Rewrites also appear in the added and removed content counts.") + "</p>")
-    for component in rewritten[:12]:
-        pieces.append("<details class='pc-parts'><summary>" + text("Rewritten component") + " "
-                      + _component_label_html(component) + "</summary><div class='pc-rewrite'>")
-        for key, label in (("before", "Before rewrite"), ("after", "After rewrite")):
-            content = _json(component.get(key))
-            pieces.append("<div><strong>" + text(label) + "</strong><pre>" + html.escape(content[:6000])
-                          + "</pre>" + ("<p>" + text("Preview shortened. Request JSON contains the full recorded data.")
-                                        + "</p>" if len(content) > 6000 else "") + "</div>")
-        pieces.append("</div></details>")
-    return "".join(pieces)
+    return "".join(pieces) + prompt_text.legend() + prompt_text.render_text_evolution(detail)
 
 
 def outputs(run: Any, request_id: str | None = None, language: str = "en") -> tuple:
@@ -275,7 +255,16 @@ def outputs(run: Any, request_id: str | None = None, language: str = "en") -> tu
     if run is None:
         return empty
     try:
-        data = run.view("prompt_construction", **({"request_id": request_id} if request_id else {})).data
+        try:
+            data = run.view("prompt_construction", **({"request_id": request_id} if request_id else {})).data
+        except ValueError as exc:
+            # A queued selector/language event can still carry the old run's id.
+            # Recover against the current run rather than emptying valid choices.
+            unknown = (str(exc).startswith("Unknown prompt request id:")
+                       or str(exc) == "Unknown prompt construction request_id")
+            if not request_id or not unknown:
+                raise
+            data = run.view("prompt_construction").data
         rows = data.get("requests", [])
         detail = data.get("selected_request")
         if not detail:
@@ -301,28 +290,39 @@ def bind(refs: PromptRefs, shared: SharedState, load_events, *, language: Any) -
     """Refresh after loads, explicit request selections and language changes."""
     targets = [refs.request, refs.chart, refs.summary, refs.components, refs.changes, refs.detail]
 
-    def on_prompt_load(run, locale="en"):
-        return outputs(run, language=locale)
+    def current(run, request):
+        return is_latest_run(getattr(request, "session_hash", None), run)
 
-    def on_prompt_select(run, request_id, locale="en"):
-        return outputs(run, request_id, locale)
+    def show(run, request_id, locale, request):
+        if not current(run, request):
+            return tuple(gr.skip() for _ in targets)
+        result = outputs(run, request_id, locale)
+        return result if current(run, request) else tuple(gr.skip() for _ in targets)
 
-    def move(run, request_id, locale, offset):
+    def on_prompt_load(run, locale="en", request: gr.Request | None = None):
+        return show(run, None, locale, request)
+
+    def on_prompt_select(run, request_id, locale="en", request: gr.Request | None = None):
+        return show(run, request_id, locale, request)
+
+    def move(run, request_id, locale, offset, request):
+        if not current(run, request):
+            return tuple(gr.skip() for _ in targets)
         if run is None:
-            return outputs(None)
+            return show(None, None, locale, request)
         data = run.view("prompt_construction").data
         rows = data.get("requests", [])
         if not rows:
-            return outputs(run, language=locale)
+            return show(run, None, locale, request)
         index = next((i for i, row in enumerate(rows) if row["id"] == request_id), len(rows) - 1)
         wanted = rows[min(max(index + offset, 0), len(rows) - 1)]["id"]
-        return outputs(run, wanted, locale)
+        return show(run, wanted, locale, request)
 
-    def on_prompt_previous(run, request_id, locale="en"):
-        return move(run, request_id, locale, -1)
+    def on_prompt_previous(run, request_id, locale="en", request: gr.Request | None = None):
+        return move(run, request_id, locale, -1, request)
 
-    def on_prompt_next(run, request_id, locale="en"):
-        return move(run, request_id, locale, 1)
+    def on_prompt_next(run, request_id, locale="en", request: gr.Request | None = None):
+        return move(run, request_id, locale, 1, request)
 
     for event in load_events:
         event.then(fn=on_prompt_load, inputs=[shared.state_run, language], outputs=targets,

@@ -85,7 +85,7 @@ def _step_text(step: dict) -> list[dict]:
     parts = [{"type": "text", "text": part["text"]} for part in step.get("parts", [])
              if isinstance(part, dict) and part.get("type") == "text"
              and isinstance(part.get("text"), str) and part["text"]]
-    if not parts and isinstance(step.get("text_preview"), str) and step["text_preview"]:
+    if not step.get("parts") and isinstance(step.get("text_preview"), str) and step["text_preview"]:
         parts = [{"type": "text", "text": step["text_preview"]}]
     return parts
 
@@ -576,5 +576,8 @@ def inspect_prompt_construction(raw: dict, steps: list[dict], request_id: str | 
             previous_row = _previous_row(data.get("requests", []), selected)
         previous = inspect(raw, steps, previous_row["id"]).get("selected_request") if previous_row else None
         selected["changes"] = _changes(selected, previous, estimated_candidates=candidates)
+        from .prompt_text import build_text_evolution
+
+        selected["text_evolution"] = build_text_evolution(selected, _components(previous)[0] if previous else [])
         data["selected_request"] = selected
     return data

@@ -42,6 +42,20 @@ ZH_CN = {
     "No prompt assembly events were recorded for this boundary.": "此边界未记录提示词组装事件。",
     "Recorded changes before this boundary": "此边界之前记录的变化",
     "Rewritten components": "改写部分", "Rewritten component": "改写内容",
+    "Added text": "新增文本", "Removed text": "移除文本", "Retained text": "保留文本",
+    "Uncompared text": "未对比文本", "Repeated content": "重复内容", "Recorded rewrite": "记录中的改写",
+    "Tool arguments": "工具参数",
+    "No readable text was recorded for this component.": "此组成部分没有记录可读文本。",
+    "No changed prompt text is available.": "暂无可显示的提示词文本变化。",
+    "Preview shortened. Evidence JSON keeps the full recorded data.": "预览已截短，证据 JSON 保留完整记录。",
+    "Showing {shown} of {total} text changes. Evidence JSON keeps the full recorded data.":
+        "当前显示 {total} 项文本变化中的 {shown} 项，证据 JSON 保留完整记录。",
+    "Inline diff exceeds the preview budget; before and after previews are shown.":
+        "文本超过行内差异预览上限，已显示改写前后的片段。",
+    "Matches {count} earlier recorded blocks.": "与先前记录的 {count} 个文本块相同。",
+    "Repeat markers describe matching recorded text; they do not establish unnecessary work.":
+        "重复标记表示记录中的文本相同，无法据此判断工作是否多余。",
+    "Repeats content from": "重复来源",
     "Content preview": "内容预览", "Before": "改写前", "After": "改写后",
     "Before rewrite": "改写前", "After rewrite": "改写后", "Branch summary": "分支摘要",
     "Rewrites also appear in the added and removed content counts.": "改写内容也计入新增和移除内容的数量。",

@@ -203,7 +203,8 @@
             "limitations",
             "components",
             "token_estimate",
-            "changes"
+            "changes",
+            "text_evolution"
           ],
           "properties": {
             "id": {
@@ -692,6 +693,196 @@
                   }
                 },
                 "description": "Compact native or explicitly transcript-derived event annotation. Observed transcript records do not establish inclusion in a model request."
+              }
+            },
+            "text_evolution": {
+              "type": "object",
+              "description": "Literal selected-pair text previews. Repetition counts earlier matching blocks in the comparable previous snapshot only; it does not prove model context membership. Only native stable identities permit rewrite pairing.",
+              "additionalProperties": false,
+              "required": [
+                "comparison_available",
+                "evidence",
+                "scope",
+                "comparison_basis",
+                "blocks",
+                "rewrites",
+                "limitations",
+                "blocks_truncated"
+              ],
+              "properties": {
+                "comparison_available": {
+                  "type": "boolean"
+                },
+                "evidence": {
+                  "enum": [
+                    "captured",
+                    "reconstructed",
+                    "estimated",
+                    "unavailable"
+                  ]
+                },
+                "scope": {
+                  "enum": [
+                    "recorded_request",
+                    "native_prompt_state",
+                    "trajectory_estimate"
+                  ]
+                },
+                "comparison_basis": {
+                  "type": "string"
+                },
+                "blocks": {
+                  "type": "array",
+                  "maxItems": 80,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "component_id",
+                      "path",
+                      "kind",
+                      "role",
+                      "tool_name",
+                      "text",
+                      "text_truncated",
+                      "source_refs",
+                      "change",
+                      "repeated",
+                      "repeat_count",
+                      "repeat_kind",
+                      "repeat_source_component_ids",
+                      "repeat_sources_truncated"
+                    ],
+                    "properties": {
+                      "component_id": {
+                        "type": "string"
+                      },
+                      "path": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "enum": [
+                          "text",
+                          "tool_arguments",
+                          "tool_result"
+                        ]
+                      },
+                      "role": {
+                        "type": "string"
+                      },
+                      "tool_name": {
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string",
+                        "maxLength": 6000
+                      },
+                      "text_truncated": {
+                        "type": "boolean"
+                      },
+                      "source_refs": {
+                        "type": "array",
+                        "maxItems": 8,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": true
+                        }
+                      },
+                      "change": {
+                        "enum": [
+                          "added",
+                          "removed"
+                        ]
+                      },
+                      "repeated": {
+                        "type": "boolean"
+                      },
+                      "repeat_count": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "repeat_kind": {
+                        "enum": [
+                          "same_text",
+                          "same_tool_arguments",
+                          "same_tool_result",
+                          null
+                        ]
+                      },
+                      "repeat_source_component_ids": {
+                        "type": "array",
+                        "maxItems": 8,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "repeat_sources_truncated": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                },
+                "rewrites": {
+                  "type": "array",
+                  "maxItems": 80,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "before_id",
+                      "after_id",
+                      "label",
+                      "before_text",
+                      "after_text",
+                      "before_truncated",
+                      "after_truncated",
+                      "source_refs"
+                    ],
+                    "properties": {
+                      "before_id": {
+                        "type": "string"
+                      },
+                      "after_id": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "before_text": {
+                        "type": "string",
+                        "maxLength": 6000
+                      },
+                      "after_text": {
+                        "type": "string",
+                        "maxLength": 6000
+                      },
+                      "before_truncated": {
+                        "type": "boolean"
+                      },
+                      "after_truncated": {
+                        "type": "boolean"
+                      },
+                      "source_refs": {
+                        "type": "array",
+                        "maxItems": 8,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": true
+                        }
+                      }
+                    }
+                  }
+                },
+                "limitations": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "blocks_truncated": {
+                  "type": "boolean"
+                }
               }
             }
           },
