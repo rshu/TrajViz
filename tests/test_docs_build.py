@@ -26,6 +26,16 @@ def test_markdown_links_become_html_without_rewriting_external_urls():
     assert 'href="https://example.test/guide.md"' in output
 
 
+def test_readme_stable_api_links_stay_within_the_generated_version():
+    rendered = ('<a href="https://rshu.github.io/TrajViz/stable/api/agent_trajviz/awe.html?mode=api#SavedRun">AWE</a>'
+                '<a href="https://rshu.github.io/TrajViz/">Documentation</a>'
+                '<a href="https://other.example/stable/api.html">External reference</a>')
+    output = builder.rewrite_markdown_links(rendered)
+    assert 'href="api/agent_trajviz/awe.html?mode=api#SavedRun"' in output
+    assert 'href="https://rshu.github.io/TrajViz/"' in output
+    assert 'href="https://other.example/stable/api.html"' in output
+
+
 def test_nested_api_navigation_stays_relative_to_version_root():
     output = builder.header(Path("api/agent_trajviz/figures.html"), "0.3.1", "stable", "../")
     assert 'href="../../quickstart.html"' in output
@@ -126,6 +136,10 @@ def test_full_public_site_build_has_all_exports_schemas_and_no_source(tmp_path):
     assert report["api_modules"] == list(builder.PUBLIC_MODULES)
     assert report["catalog_views"] == len(tv.VIEW_CATALOG)
     assert report["schemas"] == len(tv.view_schemas())
+    for page in ("index.html", "guides.html", "awe.html"):
+        text = (output / page).read_text(encoding="utf-8")
+        assert 'href="api/agent_trajviz/awe.html"' in text
+        assert 'href="https://rshu.github.io/TrajViz/dev/api/agent_trajviz/awe.html"' not in text
     assert sorted(path.relative_to(output / "api").as_posix() for path in (output / "api").rglob("*.html")) == [
         "agent_trajviz.html", "agent_trajviz/attribution.html", "agent_trajviz/awe.html", "agent_trajviz/dashboard.html",
         "agent_trajviz/figures.html", "agent_trajviz/llm.html", "index.html",

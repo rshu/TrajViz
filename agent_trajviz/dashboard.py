@@ -147,10 +147,11 @@ def _cell(value: Any) -> Any:
 def view_component(view: View, *, dark: bool = False, **kwargs: Any) -> gr.components.Component:
     """A Gradio component showing *view*: a plot, a table, or JSON.
 
-    Chart views become ``gr.Plot`` (the dashboard's own figure), lists of
-    records become ``gr.Dataframe`` (nested values as JSON text), anything
-    else ``gr.JSON``. Call it inside a ``gr.Blocks`` context to place the
-    component; keyword arguments go to the component.
+    Views with a renderer in :data:`agent_trajviz.figures.FIGURE_VIEWS` become
+    ``gr.Plot``. Otherwise, nonempty lists of records become ``gr.Dataframe``
+    (nested values as JSON text), and other data becomes ``gr.JSON``. Call it
+    inside a ``gr.Blocks`` context to place the component; keyword arguments
+    go to the component.
     """
     kwargs.setdefault("label", view.title)
     if view.id in FIGURE_VIEWS:

@@ -163,8 +163,8 @@ class Trajectory:
         """Public chart and table data as JSON-serializable :class:`View` objects, keyed by id.
 
         *only* restricts the result to those ids (see :data:`VIEW_CATALOG`);
-        an unknown id raises :class:`KeyError`. Results are computed once per
-        trajectory and shared between views.
+        an unknown id raises :class:`KeyError`. Shared session analysis is
+        cached per trajectory; view results are built on demand.
         """
         from .views import build_views
 
@@ -184,9 +184,9 @@ class Trajectory:
         """A JSON-serializable copy: format, provenance, warnings and steps.
 
         ``include_raw=True`` adds the converted export (:attr:`raw`), which
-        some analyses read (session metadata, timing, sub-agent links); the
-        result then reloads with :meth:`from_dict` or :func:`load` to
-        identical views.
+        some analyses read for session metadata, timing, sub-agent links and
+        native prompt-request/state evidence. Retaining it allows the result
+        to reload with :meth:`from_dict` or :func:`load` to identical views.
         """
         from .views import _jsonable
 
@@ -223,7 +223,9 @@ class Trajectory:
         use :meth:`from_steps`. Without ``raw`` (``to_dict()`` without ``include_raw``) the
         steps are restored; OTLP exports also retain their selection, timing
         and evidence metadata. Other formats may lose analyses that read raw
-        export metadata.
+        export metadata. Native prompt reconstruction requires the preserved
+        raw evidence; without it, prompt inspection uses estimated transcript
+        candidates.
         """
         if not isinstance(data, Mapping) or not isinstance(data.get("steps"), list):
             raise ValueError("not an agent-trajviz trajectory: no steps")

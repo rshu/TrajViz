@@ -24,10 +24,13 @@ Requires Python 3.11+.
 pip install "agent-trajviz[app]"   # dashboards, figures, reports and LLM features
 ```
 
+To upgrade an existing Python installation, run `pip install --upgrade "agent-trajviz[app]"`.
+
 For the library and collection tools alone: `pip install agent-trajviz`.
 
 [Homebrew](https://github.com/rshu/homebrew-trajviz) installs the dashboards,
 CLI, and Python runtime. Tap once and trust the formula on Homebrew 6 or later.
+On older Homebrew versions, skip the `brew trust` command.
 
 ```sh
 brew tap rshu/trajviz
@@ -93,26 +96,56 @@ and select **Load Trajectory**. Compressed DeepSeek Harness logs need the
 Patterns snapshot that loads Plotly from a CDN. Use `--inline-plotly` with
 `--report` to embed the chart runtime for offline viewing.
 
-**Prompt Evolution** follows recorded request boundaries and shows additions,
-removals, proven rewrites, and native context-change events. Select a boundary
-to inspect color-coded text changes, repeated content, and source references.
-Claude Code request records and Pi prompt state support reconstruction;
-other inputs show explicit transcript estimates
-and recorded transcript events in separate lanes. Unrecorded lanes stay marked.
-Candidate differences do not verify actual request lineage or context membership.
-Missing evidence and token estimates are marked. Python exposes the same data
-through `run.view("prompt_construction", request_id=...)`.
+**Prompt Evolution** shows captured model requests and response-based transcript
+candidates:
 
-The component explorer groups recorded content by category and exposes its
-request location, source references, stable identity where supported, and content
-version. Per-request composition history shows estimated category sizes alongside
-recorded prompt occupancy. Estimates describe visible recorded content; unavailable
-or bounded history stays marked rather than being filled with inferred context.
-Boundaries follow recorded time when all timestamps agree with source order;
-otherwise the chart explicitly preserves source order. Evidence details distinguish
-unrecorded, invalid, or conflicting references from unsupported request settings.
-A snapshot can recover all recorded components while still having unsupported
-settings; token totals remain estimates of visible content.
+1. Load a trajectory, open **Prompt Evolution**, and select a boundary
+   in the chart or request selector.
+2. Inspect additions, removals, proven rewrites, repeated text, and recorded
+   context-change events. Open **Prompt snapshot** for the component explorer.
+3. Expand a category and component to inspect its recorded text, request location,
+   identity, content version, and source references. **Evidence JSON** contains
+   the recovered selected snapshot and missing-reference details; visible text
+   previews are bounded.
+
+Categories describe content independently of message roles: system prompt, tool
+definitions, rules, skills, MCP, subagent definitions, summarized conversation,
+conversation, tool outputs, and unattributed content. Classification inferred from
+recorded names or markers is labeled separately from native evidence. A component's
+`logical_id` identifies it within its context when supported by the recording;
+`content_hash` identifies its content version and `occurrence_id` its appearance in
+one request. An unavailable logical identity stays `null`.
+
+Composition history shows estimated category sizes separately from recorded prompt
+occupancy. Claude Code request captures and Pi prompt-state records support native
+reconstruction; other inputs expose transcript candidates whose prompt membership
+and request lineage remain unverified. Missing references, unsupported request
+settings, and unknown measurements stay explicit. Recovering recorded content does
+not verify provider-side prompt conversion or exact tokenization.
+
+Boundaries merge by recorded time when every timestamp is present and agrees with
+the order within each agent context and its recorded predecessor. Otherwise the
+chart preserves source order and explains why. History includes up to 200 request
+summaries. A 20,000-component budget limits additional history work; the selected
+and comparable previous snapshots are retained even if they exceed that budget.
+Uncomputed compositions stay `null`, rather than becoming zero-sized prompts.
+
+Python exposes the same inspection data:
+
+<!-- trajviz:run -->
+```python
+prompt = run.view("prompt_construction").data
+if prompt["requests"]:
+    request_id = prompt["requests"][0]["id"]
+    selected = run.view("prompt_construction", request_id=request_id).data
+    print(selected["selected_request"]["composition"])
+    print(selected["composition_history"])
+```
+
+`tv.export_json(run, "out/")` retains native prompt evidence in `trajectory.json`. For an
+in-memory round trip, use `tv.Trajectory.from_dict(run.to_dict(include_raw=True))`;
+the default lightweight `to_dict()` omits raw request/state records and may reload
+as transcript candidates instead.
 
 Use **EN | 中** in the header to switch between English and Simplified Chinese. The
 browser remembers the choice and sets the default AI reply language. In
@@ -352,7 +385,7 @@ Workflow steps. Optional failure attribution uses the bundled evaluation engine
 and canonical reference data. **Saved runs & evaluation** provides provenance
 graphs, symptoms, recommendations and reports. Evaluation settings configure
 explicit operations and optional model connections. See the
-[AWE API reference](https://rshu.github.io/TrajViz/dev/api/agent_trajviz/awe.html)
+[AWE API reference](https://rshu.github.io/TrajViz/stable/api/agent_trajviz/awe.html)
 for Python interfaces and `agent-trajviz-awe --help` for the CLI.
 
 ## Development

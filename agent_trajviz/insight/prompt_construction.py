@@ -1,8 +1,9 @@
 """Prompt evidence for one recorded request, without treating a transcript as a request archive.
 
-Native request/state readers materialize only the selected request. Other
-formats expose explicitly estimated transcript candidates: no file contents,
-tool definitions, pruning policy or hidden instructions are inferred.
+Native request/state readers build compact catalogs. Selected, comparison and
+bounded history snapshots are materialized on demand. Other formats expose
+explicitly estimated transcript candidates: no file contents, tool definitions,
+pruning policy or hidden instructions are inferred.
 """
 
 from __future__ import annotations
@@ -659,9 +660,11 @@ def inspect_prompt_construction(raw: dict, steps: list[dict], request_id: str | 
                                 *, format_name: str = "") -> dict:
     """Inspect native request evidence or explicit transcript candidates.
 
-    A missing id selects the last recorded boundary; an unknown id raises
-    ``ValueError``. Native evidence is selected from preserved raw fields, so
-    normalized JSON exports retain the same behavior after reloading.
+    A missing id selects the latest boundary in the returned request order:
+    recorded time when timestamps are complete and consistent, otherwise
+    source order. An unknown id raises ``ValueError``. Native evidence comes
+    from preserved raw fields; normalized exports that retain those fields
+    preserve the same behavior after reloading.
     """
     if request_id is not None and not isinstance(request_id, str):
         raise TypeError("request_id must be a string or None")

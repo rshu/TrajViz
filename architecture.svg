@@ -44,7 +44,7 @@
 
   <rect x="276" y="188" width="216" height="42" rx="8" fill="#eff4ff" stroke="#5b8def" stroke-width="1.5"/>
   <text x="292" y="205" font-size="14" font-weight="700" fill="#0f172a">Pi</text>
-  <text x="292" y="222" font-size="11" fill="#64748b">jsonl session log</text>
+  <text x="292" y="222" font-size="11" fill="#64748b">jsonl · zip · progress JSON</text>
 
   <rect x="512" y="188" width="216" height="42" rx="8" fill="#eff4ff" stroke="#5b8def" stroke-width="1.5"/>
   <text x="528" y="205" font-size="14" font-weight="700" fill="#0f172a">DeepSeek Harness</text>
@@ -135,7 +135,7 @@
   <rect x="60" y="684" width="252" height="66" rx="8" fill="#fbfaff" stroke="#cbb8ee" stroke-width="1.3"/>
   <text x="76" y="711" font-size="14" font-weight="700" fill="#0f172a">metrics.py</text><text x="76" y="732" font-size="11.5" fill="#64748b">tokens · timing · health</text>
   <rect x="328" y="684" width="252" height="66" rx="8" fill="#fbfaff" stroke="#cbb8ee" stroke-width="1.3"/>
-  <text x="344" y="711" font-size="14" font-weight="700" fill="#0f172a">analytics.py</text><text x="344" y="732" font-size="11.5" fill="#64748b">phase detection</text>
+  <text x="344" y="711" font-size="14" font-weight="700" fill="#0f172a">analytics.py · prompt_*</text><text x="344" y="732" font-size="11.5" fill="#64748b">phases · components · request history</text>
   <rect x="60" y="766" width="252" height="66" rx="8" fill="#fbfaff" stroke="#cbb8ee" stroke-width="1.3"/>
   <text x="76" y="793" font-size="14" font-weight="700" fill="#0f172a">diagnostics.py</text><text x="76" y="814" font-size="11.5" fill="#64748b">failure chains · root cause</text>
   <rect x="328" y="766" width="252" height="66" rx="8" fill="#fbfaff" stroke="#cbb8ee" stroke-width="1.3"/>
@@ -246,12 +246,13 @@
   <rect x="400" y="1160" width="440" height="160" rx="10" fill="#ffffff" stroke="#e07b39" stroke-width="1.5"/>
   <text x="420" y="1186" font-size="14" font-weight="700" fill="#c25f1f">Insight dashboard · [app]</text>
   <g font-size="12.5">
-    <rect x="420" y="1200" width="124" height="30" rx="15" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="482" y="1220" text-anchor="middle" fill="#0f172a">Overview</text>
-    <rect x="554" y="1200" width="124" height="30" rx="15" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="616" y="1220" text-anchor="middle" fill="#0f172a">AWE</text>
-    <rect x="688" y="1200" width="124" height="30" rx="15" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="750" y="1220" text-anchor="middle" fill="#0f172a">Comparison</text>
-    <rect x="420" y="1238" width="124" height="30" rx="15" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="482" y="1258" text-anchor="middle" fill="#0f172a">Workflow</text>
-    <rect x="554" y="1238" width="124" height="30" rx="15" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="616" y="1258" text-anchor="middle" fill="#0f172a">Raw Data</text>
-    <rect x="688" y="1238" width="124" height="30" rx="15" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="750" y="1258" text-anchor="middle" fill="#0f172a">Views (optional)</text>
+    <rect x="420" y="1198" width="124" height="24" rx="12" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="482" y="1214" text-anchor="middle" fill="#0f172a">Overview</text>
+    <rect x="554" y="1198" width="124" height="24" rx="12" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="616" y="1214" text-anchor="middle" fill="#0f172a">AWE</text>
+    <rect x="688" y="1198" width="124" height="24" rx="12" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="750" y="1214" text-anchor="middle" fill="#0f172a">Comparison</text>
+    <rect x="420" y="1226" width="124" height="24" rx="12" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="482" y="1242" text-anchor="middle" fill="#0f172a">Workflow</text>
+    <rect x="554" y="1226" width="124" height="24" rx="12" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="616" y="1242" font-size="11.5" text-anchor="middle" fill="#0f172a">Prompt Evolution</text>
+    <rect x="688" y="1226" width="124" height="24" rx="12" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="750" y="1242" text-anchor="middle" fill="#0f172a">Raw Data</text>
+    <rect x="420" y="1254" width="124" height="24" rx="12" fill="#fffaf4" stroke="#e0913a" stroke-width="1.3"/><text x="482" y="1270" text-anchor="middle" fill="#0f172a">Views (optional)</text>
   </g>
   <text x="420" y="1289" font-size="11.5" fill="#64748b">AI Trajectory Analysis sidebar · Settings</text>
   <text x="420" y="1308" font-size="11.5" fill="#64748b">agent-trajviz · 127.0.0.1:7860</text>

@@ -7,6 +7,16 @@ change the public API (the names exported from `agent_trajviz`).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-25
+
+### Fixed
+
+- Clarify prompt explorer navigation, component identities, bounded composition
+  history, request ordering, and preservation of native evidence during export.
+- Correct API documentation for analysis caching and registered figure renderers.
+- Keep generated API links within the selected documentation version, and align
+  example-app configuration and security guidance with their actual launchers.
+
 ## [0.7.0] - 2026-11-25
 
 ### Added
@@ -495,7 +505,8 @@ First release as the `agent-trajviz` package.
   passwords, authorization headers and generated-looking values of
   secret-named assignments become `[REDACTED]`.
 
-[Unreleased]: https://github.com/rshu/TrajViz/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/rshu/TrajViz/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/rshu/TrajViz/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/rshu/TrajViz/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/rshu/TrajViz/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/rshu/TrajViz/compare/v0.5.0...v0.5.1

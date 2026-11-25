@@ -347,7 +347,8 @@ _SPECS: dict[str, _Spec] = {
         "How prompt evidence evolves across recorded boundaries: request sequence, recorded changes, observed "
         "input sizes where mapped, and selected component evidence or explicitly estimated transcript candidates.",
         _prompt_construction,
-        {"request_id": "request id from `requests` (default: the last recorded boundary)"}),
+        {"request_id": "request id from `requests` (default: the latest boundary in request order; "
+                       "recorded time when consistent, otherwise source order)"}),
     "workflow": _Spec(
         "table", "Workflow",
         "One entry per step for a step browser: workflow role, what the step leads with, its agent, "
