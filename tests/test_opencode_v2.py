@@ -260,7 +260,7 @@ class NativeOpenCodeV2Tests(unittest.TestCase):
 
         run = self.load(capture())
         views = run.views()
-        self.assertEqual(len(views), 36)
+        self.assertEqual(len(views), len(tv.VIEW_CATALOG))
         for name, view in views.items():
             jsonschema.Draft202012Validator(tv.view_schema(name)).validate(json.loads(view.to_json()))
         self.assertEqual(len(figures(views)), 12)

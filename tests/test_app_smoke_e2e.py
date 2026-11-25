@@ -27,11 +27,11 @@ _FIXTURE = (
 
 # Every tab the composer builds. A tab that stops reaching the browser takes its
 # whole feature with it and raises nothing, so the set is asserted explicitly.
-EXPECTED_MAIN_TABS = {"Overview", "Patterns", "AWE", "Comparison", "Workflow", "Raw Data"}
+EXPECTED_MAIN_TABS = {"Overview", "Patterns", "AWE", "Comparison", "Workflow", "Prompt Evolution", "Raw Data"}
 EXPECTED_TABS = EXPECTED_MAIN_TABS | {
     "Trajectory", "Saved runs & evaluation",
     "Case evidence", "Provenance graph", "Symptoms", "Recommendations", "Reports & discovery",
-    "Provenance", "RSI exchange", "Analysis", "Settings",
+    "Provenance", "RSI exchange", "Analysis", "Settings", "Prompt snapshot", "Changes", "Evidence JSON",
 }
 
 

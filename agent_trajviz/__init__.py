@@ -43,7 +43,7 @@ from .views import (
     view_schemas,
 )
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 # A library never configures logging for its host application.
 logging.getLogger(__name__).addHandler(logging.NullHandler())

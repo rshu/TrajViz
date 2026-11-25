@@ -25,7 +25,7 @@ def catalog() -> dict[str, str]:
     translations: dict[str, str] = {}
     for name in ("catalog_common", "catalog_insight", "catalog_awe", "catalog_converge", "catalog_settings",
                  "catalog_comparison", "catalog_comparison_ui", "catalog_comparison_charts",
-                 "catalog_comparison_outcomes", "catalog_labels", "catalog_labels_charts"):
+                 "catalog_comparison_outcomes", "catalog_labels", "catalog_labels_charts", "catalog_prompt"):
         try:
             module = importlib.import_module(f"{__name__}.{name}")
         except ModuleNotFoundError as exc:

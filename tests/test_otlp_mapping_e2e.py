@@ -201,7 +201,7 @@ def test_interleaved_capture_matrix_public_contract(tmp_path, variant, replay):
         assert run.metrics["total_duration"] is None
         assert run.metrics["tool_fail"] is None
     views = run.views()
-    assert len(views) == 36
+    assert len(views) == len(tv.VIEW_CATALOG)
     chart_count = 0
     for view_id, view in views.items():
         document = view.to_dict()

@@ -7,6 +7,29 @@ change the public API (the names exported from `agent_trajviz`).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-25
+
+### Added
+
+- Inspect Prompt Evolution across workflow response boundaries, with readable
+  additions, removals, retained text, repetition, and source-backed native rewrites.
+- Explore prompt components by category, with source provenance, stable identities
+  where recorded, content versions, and per-request composition history.
+- Reconstruct recorded Claude Code requests and Pi prompt states. Other formats
+  expose explicitly estimated transcript candidates, with incomplete evidence and
+  token estimates distinguished from recorded provider usage.
+- Export component, composition, request ordering, and evidence-quality metadata
+  through the `prompt_construction` view and its bundled JSON Schema.
+
+### Fixed
+
+- Preserve missing Claude request references and their original source locations
+  across retained prefixes, without filling earlier requests from later records.
+- Order parent and subagent request boundaries by recorded time when comparable,
+  and explain when incomplete timestamps require source order.
+- Keep chart selection responsive during dashboard updates and preserve selections
+  when switching languages. Bound prompt previews and escape recorded source text.
+
 ## [0.6.0] - 2026-11-18
 
 ### Added
@@ -472,7 +495,8 @@ First release as the `agent-trajviz` package.
   passwords, authorization headers and generated-looking values of
   secret-named assignments become `[REDACTED]`.
 
-[Unreleased]: https://github.com/rshu/TrajViz/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/rshu/TrajViz/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/rshu/TrajViz/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/rshu/TrajViz/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/rshu/TrajViz/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/rshu/TrajViz/compare/v0.4.2...v0.5.0

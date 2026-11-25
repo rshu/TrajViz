@@ -93,6 +93,27 @@ and select **Load Trajectory**. Compressed DeepSeek Harness logs need the
 Patterns snapshot that loads Plotly from a CDN. Use `--inline-plotly` with
 `--report` to embed the chart runtime for offline viewing.
 
+**Prompt Evolution** follows recorded request boundaries and shows additions,
+removals, proven rewrites, and native context-change events. Select a boundary
+to inspect color-coded text changes, repeated content, and source references.
+Claude Code request records and Pi prompt state support reconstruction;
+other inputs show explicit transcript estimates
+and recorded transcript events in separate lanes. Unrecorded lanes stay marked.
+Candidate differences do not verify actual request lineage or context membership.
+Missing evidence and token estimates are marked. Python exposes the same data
+through `run.view("prompt_construction", request_id=...)`.
+
+The component explorer groups recorded content by category and exposes its
+request location, source references, stable identity where supported, and content
+version. Per-request composition history shows estimated category sizes alongside
+recorded prompt occupancy. Estimates describe visible recorded content; unavailable
+or bounded history stays marked rather than being filled with inferred context.
+Boundaries follow recorded time when all timestamps agree with source order;
+otherwise the chart explicitly preserves source order. Evidence details distinguish
+unrecorded, invalid, or conflicting references from unsupported request settings.
+A snapshot can recover all recorded components while still having unsupported
+settings; token totals remain estimates of visible content.
+
 Use **EN | 中** in the header to switch between English and Simplified Chinese. The
 browser remembers the choice and sets the default AI reply language. In
 **AI Trajectory Analysis → Settings → Request options**, choose **English** or
